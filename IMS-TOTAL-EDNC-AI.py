@@ -8,16 +8,14 @@ import sqlite3
 import json
 import os
 from datetime import datetime
-
-# --- 구글 최신 AI SDK (AQ 키 전용) ---
 from google import genai
 
-# 방금 발급받으신 AQ 키를 여기에 넣으시면 됩니다.
+# [중요] 사용 중인 'AQ' 키를 그대로 사용하세요.
 API_KEY = "AQ.Ab8RN6JC5-xRM0qRiuDFG3uqxlGl84qtDMh4QefLFFrpVIze9g"
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # 최신 구글 공식 SDK 방식 (AQ 키 완벽 지원)
+        # 최신 google-genai 클라이언트 초기화
         client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
@@ -27,14 +25,14 @@ def generate_ai_report(defect_results, optimized_params):
         현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
         """
         
-        # 모델 호출 방식이 달라졌습니다
+        # 'gemini-1.5-flash' 모델을 명시적으로 호출 (경로 문제 해결)
         response = client.models.generate_content(
             model='gemini-1.5-flash',
             contents=prompt
         )
         return response.text
     except Exception as e:
-        return f"리포트 생성 오류: {str(e)}"
+        return f"AI 연결 오류 (상세: {str(e)})"
 
 # --- i18n Language Dictionary Definition ---
 LANG_DICT = {
@@ -137,9 +135,11 @@ LANG_DICT = {
 # 0. High-Performance UI Theme & Custom Styling
 st.set_page_config(layout="wide", page_title="Total Injection Defect AI Solution System")
 
-if "lang" not in st.session_state:
-    st.session_state.lang = "en"
-
+if "lang" not in st.session_state: st.session_state.lang = "en"
+L = LANG_DICT = {
+    "en": {"page_title": "Total Injection Defect AI Solution System", "access_title": "Injection Molding AI System Access", "enter_pwd": "Enter Password", "connect_sys": "Connect System", "invalid_pwd": "Invalid Password. Please try again.", "data_mgmt": "Data Management", "upload_1": "1. Current Optimal Conditions Data", "upload_2": "2. Historical Cumulative Data", "upload_3": "3. CAE Analysis Data", "run_ai": "Run AI Learning & Solution", "err_load": "Error loading file: ", "err_vars": "Could not find 10 defect variables in the uploaded data.", "warn_upload": "Please upload the Current Data (1) and either Historical (2) or CAE (3) data.", "main_title_1": "Total Injection ", "main_title_2": "AI Solution System", "main_desc": "Comprehensive Defect Diagnostic & Multi-Objective Optimization System v6.6 (10 Key Defects)", "m_status": "System Status", "m_vars": "Analyzed Variables", "m_reliability": "Expert Reliability", "m_opt": "Optimization Status / Algorithm", "status_active": "Operational", "status_standby": "Standby", "info_standby": "Please upload the converted data in the sidebar and start AI learning.", "tab_diag": "[ Diagnostic & Optimization ]", "tab_master": "[ Master Data ]", "sec_a": "A. Current Injection Parameters", "sec_c": "C. Defect Weights & Expert Constraints", "sec_c_sub2": "2. Expert Constraint Settings", "lbl_constant": "Select Variables to Keep Constant", "lbl_target": " Target", "lbl_expert_rel": "Expert Guideline Reliability (%)", "sec_d": "D. Intelligent Diagnosis & Optimization", "btn_diagnose": "Diagnose Current Risk", "btn_optimize": "Optimize Conditions", "opt_converged": "Converged", "opt_failed": "Failed", "dash_title": "AI Intelligent Dashboard", "opt_success_msg": "AI Recommendation Derived Successfully", "btn_download": "Download Optimal Parameters (.csv)", "db_save_empty": "No data available to save. Please run AI Learning first.", "db_pc_download": "📥 Download Saved DB File to PC Directly", "db_export_title": "💾 External Database Export", "db_prepare_btn": "⚙️ Generate & Save DB Snapshot", "db_prepared_msg": "Prepared File: ", "db_current_latest": "✨ The file contains the latest data state."},
+    "ko": {"page_title": "통합 사출 불량 AI 솔루션 시스템", "access_title": "사출 성형 AI 시스템 접속", "enter_pwd": "비밀번호 입력", "connect_sys": "시스템 연결", "invalid_pwd": "비밀번호가 올바르지 않습니다. 다시 시도해 주세요.", "data_mgmt": "데이터 관리", "upload_1": "1. 현재 최적 조건 데이터", "upload_2": "2. 누적 이력 데이터", "upload_3": "3. CAE 해석 데이터", "run_ai": "AI 가동 및 솔루션 탐색", "err_load": "파일 로드 오류: ", "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.", "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.", "main_title_1": "통합 사출 ", "main_title_2": "AI 솔루션 시스템", "main_desc": "종합 불량 진단 및 다목적 최적화 시스템 v6.6 (10대 핵심 불량)", "m_status": "시스템 상태", "m_vars": "분석된 변수", "m_reliability": "전문가 신뢰도", "m_opt": "최적화 상태 / 사용 알고리즘", "status_active": "가동 중", "status_standby": "대기 중", "info_standby": "사이드바에 변환된 데이터를 업로드하고 AI 학습을 시작해 주세요.", "tab_diag": "[ 진단 및 최적화 ]", "tab_master": "[ 마스터 데이터 ]", "sec_a": "A. 현재 사출 조건 파라미터", "sec_c": "C. 불량 가중치 및 전문가 제약 조건", "sec_c_sub2": "2. 전문 제약 조건 설정", "lbl_constant": "고정 상태를 유지할 변수 선택", "lbl_target": " 목표치", "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)", "sec_d": "D. 지능형 진단 및 최적화", "btn_diagnose": "현재 리스크 진단", "btn_optimize": "조건 최적화", "opt_converged": "수렴 완료", "opt_failed": "최적화 실패", "dash_title": "AI 지능형 대시보드", "opt_success_msg": "AI 추천 조건 도출 완료", "btn_download": "최적 파라미터 다운로드 (.csv)", "db_save_empty": "저장할 데이터가 없습니다. 먼저 데이터 업로드 후 AI 가동을 완료해 주세요.", "db_pc_download": "📥 내보낸 DB 파일 PC로 직접 다운로드", "db_export_title": "💾 데이터베이스 외부 내보내기", "db_prepare_btn": "⚙️ DB 스냅샷 생성 및 서버 저장", "db_prepared_msg": "준비된 파일: ", "db_current_latest": "✨ 최신 데이터 상태가 파일에 이미 반영되어 있습니다."}
+}
 L = LANG_DICT[st.session_state.lang]
 
 if "authenticated" not in st.session_state:
