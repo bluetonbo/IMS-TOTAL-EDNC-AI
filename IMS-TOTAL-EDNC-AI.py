@@ -15,8 +15,11 @@ API_KEY = "AQ.Ab8RN6JC5-xRM0qRiuDFG3uqxlGl84qtDMh4QefLFFrpVIze9g"
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # 최신 google-genai 클라이언트 초기화
-        client = genai.Client(api_key=API_KEY)
+        # vertexai 라이브러리를 사용하여 직접 호출 (SDK 변경 불필요)
+        from vertexai.generative_models import GenerativeModel
+        
+        # 모델명 지정: gemini-1.5-flash-002 또는 gemini-1.5-flash
+        model = GenerativeModel("gemini-1.5-flash")
         
         prompt = f"""
         당신은 20년 경력의 사출 성형 공정 전문가입니다. 
@@ -25,14 +28,11 @@ def generate_ai_report(defect_results, optimized_params):
         현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
         """
         
-        # 'gemini-1.5-flash' 모델을 명시적으로 호출 (경로 문제 해결)
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt
-        )
+        # Vertex AI 호출 방식
+        response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"AI 연결 오류 (상세: {str(e)})"
+        return f"AI 연결 오류 (Vertex AI 모드): {str(e)}"
 
 # --- i18n Language Dictionary Definition ---
 LANG_DICT = {
