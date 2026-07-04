@@ -10,24 +10,25 @@ import os
 from datetime import datetime
 import google.generativeai as genai
 
-# [필수 설정] 사용 중인 API 키를 여기에 정확히 입력하세요
+# [핵심] Vertex AI 관련 모든 코드를 삭제하고, 아래 설정으로 통일합니다.
 API_KEY = "AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w"
 genai.configure(api_key=API_KEY)
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # 가장 안정적인 모델 호출 방식
+        # 모델 명시적 생성
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
         당신은 20년 경력의 사출 성형 공정 전문가입니다. 
-        [분석 결과]: {defect_results}
-        [파라미터]: {optimized_params}
-        현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
+        아래 분석 결과를 바탕으로 현장 작업자를 위한 핵심 조치 사항을 작성해 주세요.
+        [불량 진단 결과(위험도)]: {defect_results}
+        [최적화된 공정 조건 파라미터]: {optimized_params}
+        답변은 3줄 이내로 핵심만 작성해 주세요.
         """
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"리포트 생성 오류: {str(e)}"
+        return f"AI 리포트 생성 실패: {str(e)}"
 
 # --- i18n Language Dictionary Definition ---
 LANG_DICT = {
