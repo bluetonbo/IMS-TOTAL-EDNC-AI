@@ -116,7 +116,7 @@ if "lang" not in st.session_state:
 
 L = LANG_DICT[st.session_state.lang]
 # 여기에 아래 내용을 붙여넣으세요
-genai.configure(api_key="AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOySc....") 
+genai.configure(api_key="AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w") 
 
 def generate_ai_report(defect_results, optimized_params):
     try:
