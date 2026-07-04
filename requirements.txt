@@ -6,3 +6,5 @@ scikit-learn
 scipy
 google-generativeai
 openpyxl
+google-cloud-aiplatform
+google-generativeai
