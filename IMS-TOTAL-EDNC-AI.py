@@ -1,12 +1,18 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import MinMaxScaler
+from scipy.optimize import minimize
+import sqlite3
+import json
 import os
+from datetime import datetime
 import google.generativeai as genai
 
-# [중요] 코드 내부에서 API_KEY를 직접 설정하지 마세요. (이미 설정하셨다면 삭제하세요)
-# 시스템 환경 변수 'GOOGLE_API_KEY'를 사용하도록 변경합니다.
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# API 키 인증을 단일화합니다.
+API_KEY = "AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w"
+genai.configure(api_key=API_KEY)
 
 def generate_ai_report(defect_results, optimized_params):
     try:
@@ -320,17 +326,21 @@ with st.sidebar:
                             scaler = MinMaxScaler().fit(df_target[vars_list])
                             model = LogisticRegression(max_iter=1000).fit(scaler.transform(df_target[vars_list]), df_target[target])
                             models_dict[target], scalers_dict[target] = model, scaler
+                    
+                    # [중요] 모델 학습이 완료된 후, bounds_dict 계산도 이 블록 내부로 들어와야 안전합니다.
+                    bounds_dict = {
+                        v: (int(np.floor(df_comb[v].min())), 
+                            int(np.ceil(df_comb[v].max())) if int(np.floor(df_comb[v].min())) != int(np.ceil(df_comb[v].max())) else int(np.floor(df_comb[v].min())) + 1) 
+                        for v in vars_list
+                    }
 
-                bounds_dict = {
-                    v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) if int(np.floor(df_comb[v].min())) != int(np.ceil(df_comb[v].max())) else int(np.floor(df_comb[v].min())) + 1) for v in vars_list
-                }
-
-                st.session_state.update({
-                    'models': models_dict, 'scalers': scalers_dict, 'df_injection': df_comb, 
-                    'global_process_vars': vars_list, 'global_bounds': bounds_dict,
-                    'ui_display_vars': [c for c in df_i.columns if c not in TARGET_VARS.keys() and c != 'vars'],
-                    'prepared_db_file': None,
-                    'data_changed_since_save': True
+                    st.session_state.update({
+                        'models': models_dict, 'scalers': scalers_dict, 'df_injection': df_comb, 
+                        'global_process_vars': vars_list, 'global_bounds': bounds_dict,
+                        'ui_display_vars': [c for c in df_i.columns if c not in TARGET_VARS.keys() and c != 'vars'],
+                        'prepared_db_file': None,
+                        'data_changed_since_save': True
+                    })
                 })
                 
                 init_row = df_i.iloc[0].to_dict()
