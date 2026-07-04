@@ -8,23 +8,24 @@ import sqlite3
 import json
 import os
 from datetime import datetime
-import google.generativeai as genai
+from google import genai
 
-# API 키 인증을 단일화합니다.
+# AQ. 형식의 Gemini Auth API 키 (신규 google-genai SDK 사용)
+# pip install google-genai  으로 설치 필요
 GEMINI_API_KEY = "AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w"
-genai.configure(api_key=API_KEY)
 
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-        당신은 20년 경력의 사출 성형 공정 전문가입니다. 
-        [분석 결과]: {defect_results}
-        [파라미터]: {optimized_params}
-        현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
-        """
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
+[분석 결과]: {defect_results}
+[파라미터]: {optimized_params}
+현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요."""
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt
+        )
         return response.text
     except Exception as e:
         return f"리포트 생성 오류: {str(e)}"
