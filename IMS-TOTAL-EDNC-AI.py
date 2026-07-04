@@ -15,10 +15,14 @@ API_KEY = "AQ.Ab8RN6JC5-xRM0qRiuDFG3uqxlGl84qtDMh4QefLFFrpVIze9g"
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # vertexai 라이브러리를 사용하여 직접 호출 (SDK 변경 불필요)
+        # 함수 내부에서 확실하게 다시 초기화 (프로젝트 ID 및 위치 명시)
+        import vertexai
         from vertexai.generative_models import GenerativeModel
         
-        # 모델명 지정: gemini-1.5-flash-002 또는 gemini-1.5-flash
+        # 여기서 확실하게 프로젝트 연결을 보장합니다.
+        vertexai.init(project="294922978230", location="us-central1")
+        
+        # 모델 호출
         model = GenerativeModel("gemini-1.5-flash")
         
         prompt = f"""
@@ -28,11 +32,11 @@ def generate_ai_report(defect_results, optimized_params):
         현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
         """
         
-        # Vertex AI 호출 방식
         response = model.generate_content(prompt)
         return response.text
+        
     except Exception as e:
-        return f"AI 연결 오류 (Vertex AI 모드): {str(e)}"
+        return f"AI 연결 오류: {str(e)}"
 
 # --- i18n Language Dictionary Definition ---
 LANG_DICT = {
