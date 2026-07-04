@@ -286,7 +286,7 @@ with st.sidebar:
         df_i, df_v, df_r = load_data(u1), load_data(u2), load_data(u3)
         
         if df_i is not None and (df_v is not None or df_r is not None):
-            # 1. 데이터 정리
+            # 1. 데이터 정리 (간결하게)
             for df in [df_i, df_v, df_r]:
                 if df is not None:
                     df.rename(columns=OLD_TO_NEW_MAP, inplace=True)
@@ -318,6 +318,7 @@ with st.sidebar:
 
                     bounds_dict = {v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1) for v in vars_list}
 
+                    # 세션 상태 업데이트를 블록의 마지막에 배치
                     st.session_state.update({
                         'models': models_dict, 
                         'scalers': scalers_dict, 
