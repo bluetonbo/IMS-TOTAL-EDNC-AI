@@ -11,7 +11,7 @@ from datetime import datetime
 import google.generativeai as genai
 
 # API 키 인증을 단일화합니다.
-API_KEY = "AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w"
+GEMINI_API_KEY = "AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w"
 genai.configure(api_key=API_KEY)
 
 
