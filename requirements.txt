@@ -7,3 +7,4 @@ scipy
 openpyxl
 google-cloud-aiplatform
 google-genai
+google-generativeai==0.4.1
