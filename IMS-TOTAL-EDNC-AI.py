@@ -8,24 +8,22 @@ import sqlite3
 import json
 import os
 from datetime import datetime
-from google import genai
+import google.generativeai as genai
 
-# [중요] 사용 중인 'AQ' 키를 그대로 사용하세요.
-API_KEY = "AQ.Ab8RN6JC5-xRM0qRiuDFG3uqxlGl84qtDMh4QefLFFrpVIze9g"
+# [필수 설정] 사용 중인 API 키를 여기에 정확히 입력하세요
+API_KEY = "AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w"
+genai.configure(api_key=API_KEY)
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # 설정된 API_KEY를 사용하여 안전하게 호출
-        genai.configure(api_key=API_KEY)
+        # 가장 안정적인 모델 호출 방식
         model = genai.GenerativeModel('gemini-1.5-flash')
-        
         prompt = f"""
         당신은 20년 경력의 사출 성형 공정 전문가입니다. 
         [분석 결과]: {defect_results}
         [파라미터]: {optimized_params}
         현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
         """
-        
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
