@@ -286,51 +286,37 @@ with st.sidebar:
         df_i, df_v, df_r = load_data(u1), load_data(u2), load_data(u3)
         
         if df_i is not None and (df_v is not None or df_r is not None):
-            if df_v is not None:
-                df_v = df_v.rename(columns=OLD_TO_NEW_MAP)
-                df_v = df_v.loc[:, ~df_v.columns.duplicated()]
-            if df_r is not None:
-                df_r = df_r.rename(columns=OLD_TO_NEW_MAP)
-                df_r = df_r.loc[:, ~df_r.columns.duplicated()]
-            if df_i is not None:
-                df_i = df_i.rename(columns=OLD_TO_NEW_MAP)
-                df_i = df_i.loc[:, ~df_i.columns.duplicated()]
-
+            # 1. 데이터 정리
+            for df in [df_i, df_v, df_r]:
+                if df is not None:
+                    df.rename(columns=OLD_TO_NEW_MAP, inplace=True)
+                    df.drop(columns=df.columns[df.columns.duplicated()], inplace=True)
+            
             df_comb = pd.concat([df for df in [df_i, df_v, df_r] if df is not None], ignore_index=True)
-            df_comb = df_comb.drop_duplicates(ignore_index=True)
-            df_comb = df_comb.loc[:, ~df_comb.columns.duplicated()]
+            df_comb.drop_duplicates(ignore_index=True, inplace=True)
             
             available_targets = [t for t in TARGET_VARS.keys() if t in df_comb.columns]
 
-            if len(available_targets) == 0:
+            if not available_targets:
                 st.sidebar.error(L['err_vars'])
             else:
-                df_comb = df_comb.dropna(subset=available_targets)
+                df_comb.dropna(subset=available_targets, inplace=True)
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
 
                 if not vars_list or df_comb.empty:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
                 else:
                     models_dict, scalers_dict = {}, {}
-
                     for target in available_targets:
-                        df_target = df_comb.copy()
-                        t_series = df_target[target]
-                        if isinstance(t_series, pd.DataFrame):
-                            t_series = t_series.iloc[:, 0]
+                        t_series = df_comb[target].iloc[:, 0] if isinstance(df_comb[target], pd.DataFrame) else df_comb[target]
+                        target_vals = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
                         
-                        df_target[target] = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
-
-                        if vars_list and (int(t_series.nunique()) >= 2):
-                            scaler = MinMaxScaler().fit(df_target[vars_list])
-                            model = LogisticRegression(max_iter=1000).fit(scaler.transform(df_target[vars_list]), df_target[target])
+                        if vars_list and (len(np.unique(target_vals)) >= 2):
+                            scaler = MinMaxScaler().fit(df_comb[vars_list])
+                            model = LogisticRegression(max_iter=1000).fit(scaler.transform(df_comb[vars_list]), target_vals)
                             models_dict[target], scalers_dict[target] = model, scaler
 
-                    bounds_dict = {
-                        v: (int(np.floor(df_comb[v].min())), 
-                            int(np.ceil(df_comb[v].max())) if int(np.floor(df_comb[v].min())) != int(np.ceil(df_comb[v].max())) else int(np.floor(df_comb[v].min())) + 1) 
-                        for v in vars_list
-                    }
+                    bounds_dict = {v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1) for v in vars_list}
 
                     st.session_state.update({
                         'models': models_dict, 
