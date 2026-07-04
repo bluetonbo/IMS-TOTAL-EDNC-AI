@@ -295,15 +295,20 @@ with st.sidebar:
             df_comb = df_comb.loc[:, ~df_comb.columns.duplicated()]
             
             available_targets = [t for t in TARGET_VARS.keys() if t in df_comb.columns]
-            
+
             if len(available_targets) == 0:
                 st.sidebar.error(L['err_vars'])
             else:
                 df_comb = df_comb.dropna(subset=available_targets)
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
-                models_dict, scalers_dict = {}, {}
-                
-                for target in available_targets:
+    
+                # [추가된 안전 장치] 데이터 유효성 검사
+                if not vars_list or df_comb.empty:
+                    st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
+                else:
+                    models_dict, scalers_dict = {}, {}
+        
+                    for target in available_targets:
                     df_target = df_comb.copy()
                     t_series = df_target[target]
                     if isinstance(t_series, pd.DataFrame):
