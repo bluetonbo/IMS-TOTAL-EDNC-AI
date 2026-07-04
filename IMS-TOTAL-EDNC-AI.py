@@ -12,7 +12,7 @@ from google import genai
 
 # AQ. 형식의 Gemini Auth API 키 (신규 google-genai SDK 사용)
 # pip install google-genai  으로 설치 필요
-GEMINI_API_KEY = "AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOyScgforKBICCIZYdOpXf70w"
+GEMINI_API_KEY = "AIzaSyCBvb_YX1_KxjSPTw3yQeO42dVIYHWDDzU"
 
 
 def generate_ai_report(defect_results, optimized_params):
