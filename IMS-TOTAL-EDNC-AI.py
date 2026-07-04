@@ -309,17 +309,17 @@ with st.sidebar:
                     models_dict, scalers_dict = {}, {}
         
                     for target in available_targets:
-                    df_target = df_comb.copy()
-                    t_series = df_target[target]
-                    if isinstance(t_series, pd.DataFrame):
-                        t_series = t_series.iloc[:, 0]
+                        df_target = df_comb.copy()
+                        t_series = df_target[target]
+                        if isinstance(t_series, pd.DataFrame):
+                            t_series = t_series.iloc[:, 0]
                         
-                    df_target[target] = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
+                        df_target[target] = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
                     
-                    if vars_list and (int(t_series.nunique()) >= 2):
-                        scaler = MinMaxScaler().fit(df_target[vars_list])
-                        model = LogisticRegression(max_iter=1000).fit(scaler.transform(df_target[vars_list]), df_target[target])
-                        models_dict[target], scalers_dict[target] = model, scaler
+                        if vars_list and (int(t_series.nunique()) >= 2):
+                            scaler = MinMaxScaler().fit(df_target[vars_list])
+                            model = LogisticRegression(max_iter=1000).fit(scaler.transform(df_target[vars_list]), df_target[target])
+                            models_dict[target], scalers_dict[target] = model, scaler
 
                 bounds_dict = {
                     v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) if int(np.floor(df_comb[v].min())) != int(np.ceil(df_comb[v].max())) else int(np.floor(df_comb[v].min())) + 1) for v in vars_list
