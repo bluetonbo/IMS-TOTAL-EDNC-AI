@@ -8,6 +8,7 @@ import sqlite3
 import json
 import os
 from datetime import datetime
+import google.generativeai as genai
 
 # --- i18n Language Dictionary Definition ---
 LANG_DICT = {
@@ -114,7 +115,23 @@ if "lang" not in st.session_state:
     st.session_state.lang = "en"
 
 L = LANG_DICT[st.session_state.lang]
+# 여기에 아래 내용을 붙여넣으세요
+genai.configure(api_key="AQ.Ab8RN6Ib7Cmiy1ZfxvCuxIQZ2uOySc....") 
 
+def generate_ai_report(defect_results, optimized_params):
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        당신은 20년 경력의 사출 성형 공정 전문가입니다. 
+        아래 분석 결과를 바탕으로 현장 작업자를 위한 핵심 조치 사항을 작성해 주세요.
+        [불량 진단 결과(위험도)]: {defect_results}
+        [최적화된 공정 조건 파라미터]: {optimized_params}
+        답변은 3줄 이내로 핵심만 작성해 주세요.
+        """
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"리포트 생성 오류: {str(e)}"
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -582,6 +599,13 @@ if is_active:
             
             if st.session_state['last_opt_df'] is not None:
                 st.success(L['opt_success_msg'])
+                if st.button("✨ AI 전문가 리포트 생성"):
+                    with st.spinner("분석 중..."):
+                        results = st.session_state.get('last_defect_risks', '진단 없음')
+                        params = st.session_state['last_opt_df'].to_dict(orient='records')
+                        report = generate_ai_report(results, params)
+                        st.markdown("### 📋 AI 전문가 리포트")
+                        st.info(report)
                 df = st.session_state['last_opt_df'].astype(int)
                 headers = "".join([f"<th>{c}</th>" for c in df.columns])
                 rows = "".join([f"<td>{v}</td>" for v in df.values[0]])
