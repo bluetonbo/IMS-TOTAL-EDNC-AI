@@ -1,4 +1,11 @@
 import streamlit as st
+import vertexai
+from vertexai.generative_models import GenerativeModel
+# 프로젝트 번호 (스크린샷에 있는 번호)
+PROJECT_ID = "294922978230" 
+LOCATION = "us-central1"
+vertexai.init(project=PROJECT_ID, location=LOCATION)
+# ----------------------------------
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -9,7 +16,29 @@ import json
 import os
 from datetime import datetime
 import google.generativeai as genai
+# [중요] 사용 중인 'AQ'로 시작하는 키를 여기 따옴표 안에 넣으세요.
+# 만약 AIza 키가 있다면 그 키를 넣어도 됩니다.
+API_KEY = "AQ.Ab8RN6JC5-xRM0qRiuDFG3uqxlGl84qtDMh4QefLFFrpVIze9g" 
 
+def generate_ai_report(defect_results, optimized_params):
+    try:
+        # 키 설정
+        genai.configure(api_key=API_KEY)
+        
+        # 모델 설정 (가장 안정적인 최신 버전 사용)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        prompt = f"""
+        당신은 20년 경력의 사출 성형 공정 전문가입니다. 
+        [분석 결과]: {defect_results}
+        [파라미터]: {optimized_params}
+        현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
+        """
+        
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"리포트 생성 오류: {str(e)}"
 # --- i18n Language Dictionary Definition ---
 LANG_DICT = {
     "en": {
