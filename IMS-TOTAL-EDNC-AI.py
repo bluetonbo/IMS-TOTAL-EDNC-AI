@@ -9,36 +9,29 @@ import json
 import os
 from datetime import datetime
 
-# --- Vertex AI API 설정 (중복된 설정 통합 및 정리) ---
-import vertexai
-from vertexai.generative_models import GenerativeModel
+# --- 구글 최신 AI SDK (AQ 키 전용) ---
+from google import genai
 
-# 프로젝트 번호 및 초기화
-PROJECT_ID = "294922978230" 
-LOCATION = "us-central1"
-vertexai.init(project=PROJECT_ID, location=LOCATION)
+# 방금 발급받으신 AQ 키를 여기에 넣으시면 됩니다.
+API_KEY = "AQ.Ab8RN6JC5-xRM0qRiuDFG3uqxlGl84qtDMh4QefLFFrpVIze9g"
 
-# AI 리포트 생성 함수 (단일화)
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # Vertex AI 공식 모델 호출 (GCP 환경 전용)
-        model = GenerativeModel("gemini-1.5-flash-001")
+        # 최신 구글 공식 SDK 방식 (AQ 키 완벽 지원)
+        client = genai.Client(api_key=API_KEY)
         
         prompt = f"""
         당신은 20년 경력의 사출 성형 공정 전문가입니다. 
         [분석 결과]: {defect_results}
         [파라미터]: {optimized_params}
-        현장 작업자를 위한 핵심 조치 사항 3가지를 작성해 주세요.
+        현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
         """
         
-        # 모델 생성 옵션 (안정성 확보)
-        generation_config = {
-            "max_output_tokens": 1024,
-            "temperature": 0.4,
-            "top_p": 0.95,
-        }
-        
-        response = model.generate_content(prompt, generation_config=generation_config)
+        # 모델 호출 방식이 달라졌습니다
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
         return response.text
     except Exception as e:
         return f"리포트 생성 오류: {str(e)}"
@@ -309,8 +302,6 @@ with st.sidebar:
                 df_i = df_i.rename(columns=OLD_TO_NEW_MAP)
                 df_i = df_i.loc[:, ~df_i.columns.duplicated()]
 
-            # [수정 포인트 1]: 기존에는 df_comb에 df_v와 df_r만 합쳤으나, 이제 df_i(현재 최적 조건 새로운 데이터)도 함께 병합합니다.
-            # 또한 drop_duplicates()를 추가하여 완전히 중복되는 동일 데이터는 한 번만 남기고 새로운 데이터만 추가되도록 처리합니다.
             df_comb = pd.concat([df for df in [df_i, df_v, df_r] if df is not None], ignore_index=True)
             df_comb = df_comb.drop_duplicates(ignore_index=True)
             df_comb = df_comb.loc[:, ~df_comb.columns.duplicated()]
@@ -391,7 +382,6 @@ with st.sidebar:
                 if 'vars' in df_to_save.columns:
                     df_to_save = df_to_save.drop(columns=['vars'], errors='ignore')
                 
-                # [수정 포인트 2]: DB 스냅샷 저장 시에도 drop_duplicates()를 적용하여 중복 저장을 완벽히 차단합니다.
                 if not existing_df.empty:
                     df_to_save = pd.concat([existing_df, df_to_save], ignore_index=True).drop_duplicates(ignore_index=True)
                 else:
