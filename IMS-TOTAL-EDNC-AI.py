@@ -307,13 +307,12 @@ with st.sidebar:
             else:
                 df_comb = df_comb.dropna(subset=available_targets)
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
-    
-                # [추가된 안전 장치] 데이터 유효성 검사
+
                 if not vars_list or df_comb.empty:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
                 else:
                     models_dict, scalers_dict = {}, {}
-        
+
                     for target in available_targets:
                         df_target = df_comb.copy()
                         t_series = df_target[target]
@@ -321,13 +320,12 @@ with st.sidebar:
                             t_series = t_series.iloc[:, 0]
                         
                         df_target[target] = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
-                    
+
                         if vars_list and (int(t_series.nunique()) >= 2):
                             scaler = MinMaxScaler().fit(df_target[vars_list])
                             model = LogisticRegression(max_iter=1000).fit(scaler.transform(df_target[vars_list]), df_target[target])
                             models_dict[target], scalers_dict[target] = model, scaler
-                    
-                    # [중요] 모델 학습이 완료된 후, bounds_dict 계산도 이 블록 내부로 들어와야 안전합니다.
+
                     bounds_dict = {
                         v: (int(np.floor(df_comb[v].min())), 
                             int(np.ceil(df_comb[v].max())) if int(np.floor(df_comb[v].min())) != int(np.ceil(df_comb[v].max())) else int(np.floor(df_comb[v].min())) + 1) 
@@ -335,9 +333,12 @@ with st.sidebar:
                     }
 
                     st.session_state.update({
-                        'models': models_dict, 'scalers': scalers_dict, 'df_injection': df_comb, 
-                        'global_process_vars': vars_list, 'global_bounds': bounds_dict,
-                        'ui_display_vars': [c for c in df_i.columns if c not in TARGET_VARS.keys() and c != 'vars'],
+                        'models': models_dict, 
+                        'scalers': scalers_dict, 
+                        'df_injection': df_comb, 
+                        'global_process_vars': vars_list, 
+                        'global_bounds': bounds_dict,
+                        'ui_display_vars': [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars'],
                         'prepared_db_file': None,
                         'data_changed_since_save': True
                     })
