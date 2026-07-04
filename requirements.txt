@@ -1,9 +1,6 @@
-# requirements.txt 파일 내용
 streamlit
 pandas
 numpy
 scikit-learn
 scipy
-openpyxl
-google-cloud-aiplatform
 google-generativeai==0.4.1
