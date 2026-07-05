@@ -436,8 +436,16 @@ with st.sidebar:
                 else:
                     models_dict, scalers_dict = {}, {}
                     algo_name = "N/A"
-                    
-                    for target in available_targets:
+
+                    # [추가] 입력 데이터 분석(모델 학습) 진행률 표시
+                    analysis_progress_bar = st.progress(0, text="입력 데이터 분석 준비 중...")
+                    total_targets_n = len(available_targets)
+
+                    for t_idx, target in enumerate(available_targets):
+                        analysis_progress_bar.progress(
+                            t_idx / total_targets_n,
+                            text=f"📊 데이터 분석 중 ({t_idx+1}/{total_targets_n}): {TARGET_VARS.get(target, target)}"
+                        )
                         t_series = (
                             df_comb[target].iloc[:, 0]
                             if isinstance(df_comb[target], pd.DataFrame)
@@ -475,6 +483,11 @@ with st.sidebar:
                                 
                             models_dict[target] = model
                             # ---------------------------------------------
+
+                    analysis_progress_bar.progress(
+                        1.0,
+                        text=f"✅ 입력 데이터 분석 완료 (불량 {len(models_dict)}종 학습, 자동 선택 알고리즘: {algo_name})"
+                    )
 
                     bounds_dict = {
                         v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1)
