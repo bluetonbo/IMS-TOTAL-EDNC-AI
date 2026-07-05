@@ -815,7 +815,15 @@ if is_active:
                 # 기존 학습 알고리즘 정보 보존
                 learning_algo = st.session_state.get('selected_algorithm', '')
 
-                for algo in algorithms:
+                # [추가] 최적화 탐색 진행률 표시
+                opt_progress_bar = st.progress(0, text="조건 최적화 탐색 준비 중...")
+                total_algos_n = len(algorithms)
+
+                for a_idx, algo in enumerate(algorithms):
+                    opt_progress_bar.progress(
+                        a_idx / total_algos_n,
+                        text=f"🔍 알고리즘 탐색 중 ({a_idx+1}/{total_algos_n}): {algo}"
+                    )
                     try:
                         res_temp = minimize(
                             calculate_total_risk, x0,
@@ -829,6 +837,7 @@ if is_active:
                     except Exception:
                         continue
 
+                opt_progress_bar.progress(0.9, text="🔄 다중 시작점(Multi-Start) 보조 탐색 중...")
                 try:
                     random_x0 = [np.random.uniform(b[0], b[1]) for b in bnds]
                     res_global = minimize(
@@ -841,6 +850,8 @@ if is_active:
                         chosen_algo = "Hybrid Multi-Start (L-BFGS-B)"
                 except Exception:
                     pass
+
+                opt_progress_bar.progress(1.0, text=f"✅ 최적화 완료 (선택된 알고리즘: {chosen_algo})")
 
                 if best_res is not None:
                     final_x = [
