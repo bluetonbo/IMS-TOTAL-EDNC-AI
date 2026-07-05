@@ -19,10 +19,8 @@ NUM_ACTIONS = 3
 # 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
 # 예시: "각각 불량에 대한 Trade Off 성향이 가장 낮은 조건에 대한 의견"
 PRESET_ACTIONS = [
-    # "가장 불량 가능성이 높고, 50% 이상이고, 상위 3개 불량에 대한 객관적 분석으로 해결책 도출하세요.",
-      "가장 불량 가능성이 높고, 50% 이상이고, 상위 3개의 조건을 모두 만족하는 불량에 대한 객관적 분석으로 해결책 도출하세요.",
-      "가장 불량 가능성이 높고, 50%이상이고, 상위 3개의 3개 조건을 만족하는 불량들 간의 Trade Off에 대한 분석을 하세요.",
-      "이러한 불량에 대한 유변학적이나 이론적 기술을 설명하세요.",
+    # "각각 불량에 대한 Trade Off 성향이 가장 낮은 조건에 대한 의견을 작성하세요.",
+    # "보조압력(PP_1)을 현재보다 10~15% 낮추어 Flash 불량을 줄이는 방법을 포함하세요.",
 ]
 
 
@@ -841,8 +839,38 @@ if is_active:
                     results = st.session_state.get('last_defect_risks', '진단 없음')
                     params = st.session_state['last_opt_df'].to_dict(orient='records')
                     report = generate_ai_report(results, params, num_actions=NUM_ACTIONS)
-                    st.markdown("### 📋 AI 전문가 리포트")
-                    st.info(report)
+
+                    # <br> 태그 및 공백 정리 후 보기 좋게 렌더링
+                    import re
+                    cleaned = report
+                    cleaned = re.sub(r'<br\s*/?>', '\n', cleaned)   # <br> → 줄바꿈
+                    cleaned = re.sub(r'<[^>]+>', '', cleaned)        # 기타 HTML 태그 제거
+                    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)  # 3줄 이상 공백 → 2줄
+
+                    # 줄 단위로 파싱하여 번호 항목 강조
+                    lines = cleaned.strip().split('\n')
+                    html_lines = []
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            html_lines.append('<div style="margin:6px 0;"></div>')
+                        elif re.match(r'^\d+[\.\)].', line):  # 1. 또는 1) 로 시작
+                            html_lines.append(
+                                f'<div style="margin:10px 0 4px 0; color:#00e5ff; font-weight:700; font-size:0.92rem;">{line}</div>'
+                            )
+                        else:
+                            html_lines.append(
+                                f'<div style="margin:2px 0 2px 12px; color:#e1e1e1; font-size:0.88rem; line-height:1.6;">{line}</div>'
+                            )
+
+                    report_html = f"""
+                    <div style="background-color:#12141d; border:1px solid #2d3142;
+                                border-radius:10px; padding:20px 24px; margin-top:12px;">
+                        <div style="color:#94a3b8; font-size:0.8rem; margin-bottom:12px;
+                                    letter-spacing:0.05em;">📋 AI 전문가 리포트</div>
+                        {''.join(html_lines)}
+                    </div>"""
+                    st.markdown(report_html, unsafe_allow_html=True)
 
         if st.session_state['last_res_val'] is not None:
             st.divider()
