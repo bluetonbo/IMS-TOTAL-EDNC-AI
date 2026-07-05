@@ -15,12 +15,12 @@ GROQ_API_KEY = "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"
 # ✏️ AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
 NUM_ACTIONS = 3
 
-# ✏️ 핵심 조치 사항에 미리 포함할 내용 — 각 항목을 원하는 내용으로 수정하세요
+# ✏️ 핵심 조치 사항에 미리 포함할 내용 — 원하는 지시문을 자유롭게 입력하세요
 # 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
+# 예시: "각각 불량에 대한 Trade Off 성향이 가장 낮은 조건에 대한 의견"
 PRESET_ACTIONS = [
-    # "1. 보조압력(PP_1)을 현재보다 10~15% 낮추어 Flash 불량을 줄이세요.",
-    # "2. 사출 말단 속도를 15~20% 감속하고 금형 벤트를 청소하세요.",
-    # "3. 배럴 온도를 재료 스펙 기준으로 재검증하고 필요 시 5~10°C 낮추세요.",
+    # "각각 불량에 대한 Trade Off 성향이 가장 낮은 조건에 대한 의견을 작성하세요.",
+    # "보조압력(PP_1)을 현재보다 10~15% 낮추어 Flash 불량을 줄이는 방법을 포함하세요.",
 ]
 
 
@@ -42,11 +42,11 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3):
 생각 과정(thinking)은 출력하지 말고 최종 답변만 작성하세요."""
 
         response = client.chat.completions.create(
-            model="qwen/qwen3.6-27b",
+            model="openai/gpt-oss-120b",
             messages=[
                 {
                     "role": "system",
-                    "content": "모든 답변을 반드시 한국어로만 작성하세요. 영어 사용 금지. 생각 과정 출력 금지. Only respond in Korean."
+                    "content": "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. 영어를 절대 사용하지 마세요."
                 },
                 {"role": "user", "content": prompt}
             ],
