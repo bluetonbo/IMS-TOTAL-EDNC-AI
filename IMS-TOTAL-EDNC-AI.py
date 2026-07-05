@@ -23,7 +23,14 @@ def generate_ai_report(defect_results, optimized_params):
 
         response = client.chat.completions.create(
             model="qwen/qwen3.6-27b",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You must respond exclusively in Korean (한국어). Do not use any English. Do not show thinking process."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            extra_body={"thinking": {"type": "disabled"}}
         )
         return response.choices[0].message.content
     except Exception as e:
