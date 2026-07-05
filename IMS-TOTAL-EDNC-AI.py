@@ -5,7 +5,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from scipy.optimize import minimize
 import sqlite3
 import json
@@ -460,7 +460,7 @@ with st.sidebar:
 
                         if vars_list and (len(np.unique(target_vals)) >= 2):
 
-                            # --- [입력 데이터 분석 알고리즘] 후보 모델 학습 후 성능(ROC-AUC) 비교하여 자동 채택 ---
+                            # --- [입력 데이터 분석 알고리즘] 교차검증으로 후보 모델 성능을 비교하여 자동 채택 ---
                             X_scaled = global_scaler.transform(df_comb[vars_list])
 
                             candidates = {
@@ -469,23 +469,38 @@ with st.sidebar:
                                 "XGBoost": XGBClassifier(n_estimators=100, learning_rate=0.1, use_label_encoder=False, eval_metric='logloss')
                             }
 
-                            scores = {}
-                            for cand_name, cand_model in candidates.items():
-                                try:
-                                    cand_model.fit(X_scaled, target_vals)
-                                    pred_proba = cand_model.predict_proba(X_scaled)[:, 1]
-                                    scores[cand_name] = roc_auc_score(target_vals, pred_proba)
-                                except Exception:
-                                    scores[cand_name] = -1.0  # 학습/평가 실패 시 최하위로 처리
+                            # 클래스별 최소 샘플 수를 기준으로 폴드 수 결정 (최대 5, 최소 2)
+                            minority_count = int(np.bincount(target_vals).min())
+                            n_splits = min(5, minority_count)
 
-                            # 성능(ROC-AUC)이 가장 높은 모델을 해당 불량의 대표 모델로 자동 채택
+                            scores = {}
+                            if n_splits >= 2:
+                                skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+                                for cand_name, cand_model in candidates.items():
+                                    try:
+                                        cv_scores = cross_val_score(
+                                            cand_model, X_scaled, target_vals,
+                                            cv=skf, scoring='roc_auc'
+                                        )
+                                        scores[cand_name] = cv_scores.mean()
+                                    except Exception:
+                                        scores[cand_name] = -1.0  # 학습/평가 실패 시 최하위로 처리
+                                cv_note = f"{n_splits}-Fold 교차검증"
+                            else:
+                                # 클래스당 샘플이 너무 적어 교차검증이 불가능한 경우
+                                # 과적합 위험이 큰 트리 모델 대신 가장 안정적인 선형 모델로 안전하게 대체
+                                scores = {"LogisticRegression": 0.0, "RandomForest": -1.0, "XGBoost": -1.0}
+                                cv_note = "데이터 부족으로 교차검증 생략(LogisticRegression 사용)"
+
+                            # 교차검증 평균 성능(ROC-AUC)이 가장 높은 모델을 해당 불량의 대표 모델로 자동 채택
                             best_algo_name = max(scores, key=scores.get)
                             model = candidates[best_algo_name]
+                            model.fit(X_scaled, target_vals)  # 채택된 모델은 전체 데이터로 최종 재학습
                             algo_name = best_algo_name
 
                             models_dict[target] = model
                             scalers_dict[target] = global_scaler
-                            model_metadata[target] = {"algo": best_algo_name, "scores": scores}
+                            model_metadata[target] = {"algo": best_algo_name, "scores": scores, "cv": cv_note}
                             # ---------------------------------------------------------------------------
 
                     analysis_progress_bar.progress(
