@@ -5,6 +5,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import roc_auc_score
 from scipy.optimize import minimize
 import sqlite3
 import json
@@ -436,10 +437,14 @@ with st.sidebar:
                 else:
                     models_dict, scalers_dict = {}, {}
                     algo_name = "N/A"
+                    model_metadata = {}  # 타깃별 자동 선택 알고리즘 및 성능 점수 기록
 
                     # [추가] 입력 데이터 분석(모델 학습) 진행률 표시
                     analysis_progress_bar = st.progress(0, text="입력 데이터 분석 준비 중...")
                     total_targets_n = len(available_targets)
+
+                    # 모든 후보 모델이 공유하는 스케일러 (JOINT-AI-APP-5 방식과 동일)
+                    global_scaler = MinMaxScaler().fit(df_comb[vars_list])
 
                     for t_idx, target in enumerate(available_targets):
                         analysis_progress_bar.progress(
@@ -454,40 +459,41 @@ with st.sidebar:
                         target_vals = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
 
                         if vars_list and (len(np.unique(target_vals)) >= 2):
-                            
-                            # --- 데이터 기반 알고리즘 자동 선택 로직 ---
-                            n_samples = len(df_comb)
-                            
-                            if n_samples < 50:
-                                # 데이터가 매우 적을 때는 선형 모델이 가장 안정적
-                                model = LogisticRegression(max_iter=1000)
-                                algo_name = "LogisticRegression"
-                                scaler = MinMaxScaler().fit(df_comb[vars_list])
-                                X_train = scaler.transform(df_comb[vars_list])
-                                model.fit(X_train, target_vals)
-                                scalers_dict[target] = scaler
-                            
-                            elif n_samples < 500:
-                                # 중간 크기 데이터는 RandomForest가 범용적
-                                model = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
-                                algo_name = "RandomForest"
-                                model.fit(df_comb[vars_list], target_vals)
-                                scalers_dict[target] = None  # 트리 모델은 스케일링 불필요
-                                
-                            else:
-                                # 대용량 데이터는 XGBoost가 성능 및 속도 최적
-                                model = XGBClassifier(n_estimators=100, learning_rate=0.1, use_label_encoder=False, eval_metric='logloss')
-                                algo_name = "XGBoost"
-                                model.fit(df_comb[vars_list], target_vals)
-                                scalers_dict[target] = None
-                                
+
+                            # --- [입력 데이터 분석 알고리즘] 후보 모델 학습 후 성능(ROC-AUC) 비교하여 자동 채택 ---
+                            X_scaled = global_scaler.transform(df_comb[vars_list])
+
+                            candidates = {
+                                "LogisticRegression": LogisticRegression(max_iter=1000),
+                                "RandomForest": RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42),
+                                "XGBoost": XGBClassifier(n_estimators=100, learning_rate=0.1, use_label_encoder=False, eval_metric='logloss')
+                            }
+
+                            scores = {}
+                            for cand_name, cand_model in candidates.items():
+                                try:
+                                    cand_model.fit(X_scaled, target_vals)
+                                    pred_proba = cand_model.predict_proba(X_scaled)[:, 1]
+                                    scores[cand_name] = roc_auc_score(target_vals, pred_proba)
+                                except Exception:
+                                    scores[cand_name] = -1.0  # 학습/평가 실패 시 최하위로 처리
+
+                            # 성능(ROC-AUC)이 가장 높은 모델을 해당 불량의 대표 모델로 자동 채택
+                            best_algo_name = max(scores, key=scores.get)
+                            model = candidates[best_algo_name]
+                            algo_name = best_algo_name
+
                             models_dict[target] = model
-                            # ---------------------------------------------
+                            scalers_dict[target] = global_scaler
+                            model_metadata[target] = {"algo": best_algo_name, "scores": scores}
+                            # ---------------------------------------------------------------------------
 
                     analysis_progress_bar.progress(
                         1.0,
-                        text=f"✅ 입력 데이터 분석 완료 (불량 {len(models_dict)}종 학습, 자동 선택 알고리즘: {algo_name})"
+                        text=f"✅ 입력 데이터 분석 완료 (불량 {len(models_dict)}종 학습, 최근 자동 선택 알고리즘: {algo_name})"
                     )
+                    st.session_state['model_metadata'] = model_metadata
+
 
                     bounds_dict = {
                         v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1)
