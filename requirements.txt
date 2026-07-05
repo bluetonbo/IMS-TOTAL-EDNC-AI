@@ -3,5 +3,5 @@ pandas
 numpy
 scikit-learn
 scipy
-google-genai
+google-generativeai
 openpyxl
