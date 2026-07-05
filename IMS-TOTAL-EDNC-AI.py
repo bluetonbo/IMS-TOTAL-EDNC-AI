@@ -5,7 +5,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from scipy.optimize import minimize
 import sqlite3
 import json
@@ -460,7 +460,7 @@ with st.sidebar:
 
                         if vars_list and (len(np.unique(target_vals)) >= 2):
 
-                            # --- [입력 데이터 분석 알고리즘] 후보 모델 학습 후 성능(ROC-AUC) 비교하여 자동 채택 ---
+                            # --- [입력 데이터 분석 알고리즘] 교차검증으로 후보 모델 성능을 비교하여 자동 채택 ---
                             X_scaled = global_scaler.transform(df_comb[vars_list])
 
                             candidates = {
@@ -469,23 +469,38 @@ with st.sidebar:
                                 "XGBoost": XGBClassifier(n_estimators=100, learning_rate=0.1, use_label_encoder=False, eval_metric='logloss')
                             }
 
-                            scores = {}
-                            for cand_name, cand_model in candidates.items():
-                                try:
-                                    cand_model.fit(X_scaled, target_vals)
-                                    pred_proba = cand_model.predict_proba(X_scaled)[:, 1]
-                                    scores[cand_name] = roc_auc_score(target_vals, pred_proba)
-                                except Exception:
-                                    scores[cand_name] = -1.0  # 학습/평가 실패 시 최하위로 처리
+                            # 클래스별 최소 샘플 수를 기준으로 폴드 수 결정 (최대 5, 최소 2)
+                            minority_count = int(np.bincount(target_vals).min())
+                            n_splits = min(5, minority_count)
 
-                            # 성능(ROC-AUC)이 가장 높은 모델을 해당 불량의 대표 모델로 자동 채택
+                            scores = {}
+                            if n_splits >= 2:
+                                skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+                                for cand_name, cand_model in candidates.items():
+                                    try:
+                                        cv_scores = cross_val_score(
+                                            cand_model, X_scaled, target_vals,
+                                            cv=skf, scoring='roc_auc'
+                                        )
+                                        scores[cand_name] = cv_scores.mean()
+                                    except Exception:
+                                        scores[cand_name] = -1.0  # 학습/평가 실패 시 최하위로 처리
+                                cv_note = f"{n_splits}-Fold 교차검증"
+                            else:
+                                # 클래스당 샘플이 너무 적어 교차검증이 불가능한 경우
+                                # 과적합 위험이 큰 트리 모델 대신 가장 안정적인 선형 모델로 안전하게 대체
+                                scores = {"LogisticRegression": 0.0, "RandomForest": -1.0, "XGBoost": -1.0}
+                                cv_note = "데이터 부족으로 교차검증 생략(LogisticRegression 사용)"
+
+                            # 교차검증 평균 성능(ROC-AUC)이 가장 높은 모델을 해당 불량의 대표 모델로 자동 채택
                             best_algo_name = max(scores, key=scores.get)
                             model = candidates[best_algo_name]
+                            model.fit(X_scaled, target_vals)  # 채택된 모델은 전체 데이터로 최종 재학습
                             algo_name = best_algo_name
 
                             models_dict[target] = model
                             scalers_dict[target] = global_scaler
-                            model_metadata[target] = {"algo": best_algo_name, "scores": scores}
+                            model_metadata[target] = {"algo": best_algo_name, "scores": scores, "cv": cv_note}
                             # ---------------------------------------------------------------------------
 
                     analysis_progress_bar.progress(
@@ -752,8 +767,10 @@ if is_active:
 
         # D. 지능형 진단 및 최적화
         def calculate_total_risk(input_vals_list):
+            # [속도 개선] 최적화 루프에서 수천 번 호출되므로, 매번 DataFrame을 만드는 대신
+            # numpy 배열을 직접 사용해 오버헤드를 줄임
+            input_arr = np.asarray(input_vals_list, dtype=float).reshape(1, -1)
             all_v = st.session_state['global_process_vars']
-            df_input = pd.DataFrame([input_vals_list], columns=all_v)
             total_weighted_risk = 0.0
             weight_sum = 0.0
             for target_key, model in st.session_state['models'].items():
@@ -761,10 +778,10 @@ if is_active:
                     scaler = st.session_state['scalers'].get(target_key)
                     # 스케일러가 있는 경우(LogisticRegression)와 없는 경우(Tree 모델)를 구분하여 처리
                     if scaler is not None:
-                        input_data = scaler.transform(df_input)
+                        input_data = scaler.transform(input_arr)
                     else:
-                        input_data = df_input
-                        
+                        input_data = input_arr
+
                     prob = model.predict_proba(input_data)[0, 1]
                     weight = st.session_state['defect_weights'][target_key]
                     total_weighted_risk += prob * weight
@@ -779,16 +796,15 @@ if is_active:
             return min(1.0, avg_defect_risk + (penalty * st.session_state['expert_reliability']))
 
         def get_individual_risks(input_vals_list):
-            all_v = st.session_state['global_process_vars']
-            df_input = pd.DataFrame([input_vals_list], columns=all_v)
+            input_arr = np.asarray(input_vals_list, dtype=float).reshape(1, -1)
             risks = {}
             for target_key, model in st.session_state['models'].items():
                 scaler = st.session_state['scalers'].get(target_key)
                 # 스케일러 유무에 따른 처리 로직 추가
                 if scaler is not None:
-                    input_data = scaler.transform(df_input)
+                    input_data = scaler.transform(input_arr)
                 else:
-                    input_data = df_input
+                    input_data = input_arr
                 risks[target_key] = model.predict_proba(input_data)[0, 1]
             return risks
 
@@ -821,12 +837,26 @@ if is_active:
                 st.rerun()
 
         with c_btn2:
+            precise_mode = st.checkbox(
+                "🔬 정밀 탐색 모드 (느리지만 더 폭넓게 탐색)",
+                value=False,
+                key="precise_opt_mode"
+            )
             if st.button(L['btn_optimize']):
                 all_v = st.session_state['global_process_vars']
                 x0 = [float(st.session_state['current_inputs'].get(v, 0.0)) for v in all_v]
                 bnds = [st.session_state['global_bounds'].get(v, (0, 100)) for v in all_v]
 
-                algorithms = ['L-BFGS-B', 'SLSQP', 'Powell', 'Nelder-Mead']
+                # [속도 개선] 기본은 미분 기반의 빠른 알고리즘 2개만 사용.
+                # Powell/Nelder-Mead는 미분 정보 없이 무작정 탐색하는 방식이라 변수가 많을수록
+                # 급격히 느려지므로, 필요할 때만("정밀 탐색 모드") 추가로 실행함
+                if precise_mode:
+                    algorithms = ['L-BFGS-B', 'SLSQP', 'Powell', 'Nelder-Mead']
+                    max_iter_opt = 500
+                else:
+                    algorithms = ['L-BFGS-B', 'SLSQP']
+                    max_iter_opt = 300
+
                 best_fun = float('inf')
                 best_res = None
                 chosen_algo = "None"
@@ -847,7 +877,7 @@ if is_active:
                         res_temp = minimize(
                             calculate_total_risk, x0,
                             method=algo, bounds=bnds,
-                            options={'maxiter': 500}
+                            options={'maxiter': max_iter_opt}
                         )
                         if res_temp.success and res_temp.fun < best_fun:
                             best_fun = res_temp.fun
