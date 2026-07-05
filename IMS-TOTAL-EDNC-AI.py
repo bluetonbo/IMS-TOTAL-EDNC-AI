@@ -22,7 +22,7 @@ def generate_ai_report(defect_results, optimized_params):
 현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요."""
 
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="gemma2-9b-it",
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
