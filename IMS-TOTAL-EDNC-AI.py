@@ -8,39 +8,26 @@ import sqlite3
 import json
 import os
 from datetime import datetime
-import google.generativeai as genai
+from groq import Groq
 
-# API 키 설정
-GEMINI_API_KEY = "AIzaSyCBvb_YX1_KxjSPTw3yQeO42dVIYHWDDzU"
-genai.configure(api_key=GEMINI_API_KEY)
+GROQ_API_KEY = "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"
+
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # 모델 탐색을 위해 genai.list_models()를 사용할 수도 있지만,
-        # 'gemini-1.5-flash' 대신 더 범용적인 'gemini-pro' 또는 
-        # 설정 없이 가장 기본 모델을 호출하도록 변경합니다.
-        model = genai.GenerativeModel(model_name='models/gemini-2.0-flash')
-        
-        prompt = f"""
-        당신은 20년 경력의 사출 성형 공정 전문가입니다. 
-        [분석 결과]: {defect_results}
-        [파라미터]: {optimized_params}
-        현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요.
-        """
-        response = model.generate_content(prompt)
-        return response.text
+        client = Groq(api_key=GROQ_API_KEY)
+        prompt = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
+[분석 결과]: {defect_results}
+[파라미터]: {optimized_params}
+현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요."""
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        # 오류 발생 시 어떤 모델이 가능한지 확인하는 로그를 남기지 않고 
-        # 에러 메시지만 깔끔하게 표시합니다.
         return f"리포트 생성 오류: {str(e)}"
-
-# --- [이하 기존 코드 로직과 동일] ---
-# (이전 파일에 사용하시던 나머지 코드를 이 아래에 그대로 이어 붙이시면 됩니다.)
-
-# --- [이하 기존 코드 로직과 동일] ---
-# 아래부터는 기존 파일에 있던 코드들을 그대로 두시면 됩니다.
-
-
 
 
 # --- i18n 언어 사전 정의 ---
