@@ -6,3 +6,4 @@ scipy
 google-generativeai
 openpyxl
 groq
+xgboost
