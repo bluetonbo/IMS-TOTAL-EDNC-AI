@@ -10,15 +10,14 @@ import os
 from datetime import datetime
 import google.generativeai as genai
 
-# --- 수정된 부분 ---
+# API 키 설정
 GEMINI_API_KEY = "AIzaSyCBvb_YX1_KxjSPTw3yQeO42dVIYHWDDzU"
 genai.configure(api_key=GEMINI_API_KEY)
-# ------------------
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # 기존 모델 호출 방식 유지 (이 키와 호환됨)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 모델명을 gemini-pro로 변경 (가장 범용적이고 안정적인 모델)
+        model = genai.GenerativeModel('gemini-pro')
         prompt = f"""
         당신은 20년 경력의 사출 성형 공정 전문가입니다. 
         [분석 결과]: {defect_results}
@@ -29,6 +28,9 @@ def generate_ai_report(defect_results, optimized_params):
         return response.text
     except Exception as e:
         return f"리포트 생성 오류: {str(e)}"
+
+# --- [이하 기존 코드 로직과 동일] ---
+# 아래부터는 기존 파일에 있던 코드들을 그대로 두시면 됩니다.
 
 
 
