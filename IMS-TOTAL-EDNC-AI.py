@@ -12,21 +12,41 @@ from groq import Groq
 
 GROQ_API_KEY = "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"
 
+# ✏️ AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
+NUM_ACTIONS = 3
+
+# ✏️ 핵심 조치 사항에 미리 포함할 내용 — 각 항목을 원하는 내용으로 수정하세요
+# 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
+PRESET_ACTIONS = [
+    # "1. 보조압력(PP_1)을 현재보다 10~15% 낮추어 Flash 불량을 줄이세요.",
+    # "2. 사출 말단 속도를 15~20% 감속하고 금형 벤트를 청소하세요.",
+    # "3. 배럴 온도를 재료 스펙 기준으로 재검증하고 필요 시 5~10°C 낮추세요.",
+]
+
+
 
 def generate_ai_report(defect_results, optimized_params, num_actions=3):
     try:
         client = Groq(api_key=GROQ_API_KEY)
+
+        # 미리 입력된 조치 사항이 있으면 프롬프트에 포함
+        preset_text = ""
+        if PRESET_ACTIONS:
+            preset_text = "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
+            preset_text += "\n".join(PRESET_ACTIONS)
+
         prompt = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
 [분석 결과]: {defect_results}
-[파라미터]: {optimized_params}
-현장 작업자를 위한 핵심 조치 사항 {num_actions}가지만 작성해 주세요."""
+[파라미터]: {optimized_params}{preset_text}
+반드시 한국어로만 답하세요. 현장 작업자를 위한 핵심 조치 사항 {num_actions}가지만 작성해 주세요.
+생각 과정(thinking)은 출력하지 말고 최종 답변만 작성하세요."""
 
         response = client.chat.completions.create(
             model="qwen/qwen3.6-27b",
             messages=[
                 {
                     "role": "system",
-                    "content": "You must respond exclusively in Korean (한국어). Do not use any English. Do not show thinking process."
+                    "content": "모든 답변을 반드시 한국어로만 작성하세요. 영어 사용 금지. 생각 과정 출력 금지. Only respond in Korean."
                 },
                 {"role": "user", "content": prompt}
             ],
@@ -809,10 +829,6 @@ if is_active:
 
         # AI 전문가 리포트 — 항상 표시
         st.divider()
-        num_actions = st.number_input(
-            "📋 핵심 조치 사항 개수",
-            min_value=1, max_value=10, value=3, step=1
-        )
         if st.session_state['last_opt_df'] is None:
             st.warning("⚠️ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.")
             st.button("✨ AI 전문가 리포트 생성", disabled=True, key="btn_report_disabled")
@@ -822,7 +838,7 @@ if is_active:
                 with st.spinner("분석 중..."):
                     results = st.session_state.get('last_defect_risks', '진단 없음')
                     params = st.session_state['last_opt_df'].to_dict(orient='records')
-                    report = generate_ai_report(results, params, num_actions=num_actions)
+                    report = generate_ai_report(results, params, num_actions=NUM_ACTIONS)
                     st.markdown("### 📋 AI 전문가 리포트")
                     st.info(report)
 
