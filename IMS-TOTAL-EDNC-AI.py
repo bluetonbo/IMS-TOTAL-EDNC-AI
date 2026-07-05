@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.preprocessing import MinMaxScaler
 from scipy.optimize import minimize
 import sqlite3
@@ -433,6 +435,8 @@ with st.sidebar:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
                 else:
                     models_dict, scalers_dict = {}, {}
+                    algo_name = "N/A"
+                    
                     for target in available_targets:
                         t_series = (
                             df_comb[target].iloc[:, 0]
@@ -442,12 +446,35 @@ with st.sidebar:
                         target_vals = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
 
                         if vars_list and (len(np.unique(target_vals)) >= 2):
-                            scaler = MinMaxScaler().fit(df_comb[vars_list])
-                            model = LogisticRegression(max_iter=1000).fit(
-                                scaler.transform(df_comb[vars_list]), target_vals
-                            )
+                            
+                            # --- 데이터 기반 알고리즘 자동 선택 로직 ---
+                            n_samples = len(df_comb)
+                            
+                            if n_samples < 50:
+                                # 데이터가 매우 적을 때는 선형 모델이 가장 안정적
+                                model = LogisticRegression(max_iter=1000)
+                                algo_name = "LogisticRegression"
+                                scaler = MinMaxScaler().fit(df_comb[vars_list])
+                                X_train = scaler.transform(df_comb[vars_list])
+                                model.fit(X_train, target_vals)
+                                scalers_dict[target] = scaler
+                            
+                            elif n_samples < 500:
+                                # 중간 크기 데이터는 RandomForest가 범용적
+                                model = RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42)
+                                algo_name = "RandomForest"
+                                model.fit(df_comb[vars_list], target_vals)
+                                scalers_dict[target] = None  # 트리 모델은 스케일링 불필요
+                                
+                            else:
+                                # 대용량 데이터는 XGBoost가 성능 및 속도 최적
+                                model = XGBClassifier(n_estimators=100, learning_rate=0.1, use_label_encoder=False, eval_metric='logloss')
+                                algo_name = "XGBoost"
+                                model.fit(df_comb[vars_list], target_vals)
+                                scalers_dict[target] = None
+                                
                             models_dict[target] = model
-                            scalers_dict[target] = scaler
+                            # ---------------------------------------------
 
                     bounds_dict = {
                         v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1)
@@ -464,6 +491,7 @@ with st.sidebar:
                             c for c in df_comb.columns
                             if c not in TARGET_VARS.keys() and c != 'vars'
                         ],
+                        'selected_algorithm': algo_name,
                         'prepared_db_file': None,
                         'data_changed_since_save': True
                     })
@@ -711,8 +739,14 @@ if is_active:
             weight_sum = 0.0
             for target_key, model in st.session_state['models'].items():
                 if st.session_state['defect_switches'].get(target_key, True):
-                    scaler = st.session_state['scalers'][target_key]
-                    prob = model.predict_proba(scaler.transform(df_input))[0, 1]
+                    scaler = st.session_state['scalers'].get(target_key)
+                    # 스케일러가 있는 경우(LogisticRegression)와 없는 경우(Tree 모델)를 구분하여 처리
+                    if scaler is not None:
+                        input_data = scaler.transform(df_input)
+                    else:
+                        input_data = df_input
+                        
+                    prob = model.predict_proba(input_data)[0, 1]
                     weight = st.session_state['defect_weights'][target_key]
                     total_weighted_risk += prob * weight
                     weight_sum += weight
@@ -730,8 +764,13 @@ if is_active:
             df_input = pd.DataFrame([input_vals_list], columns=all_v)
             risks = {}
             for target_key, model in st.session_state['models'].items():
-                scaler = st.session_state['scalers'][target_key]
-                risks[target_key] = model.predict_proba(scaler.transform(df_input))[0, 1]
+                scaler = st.session_state['scalers'].get(target_key)
+                # 스케일러 유무에 따른 처리 로직 추가
+                if scaler is not None:
+                    input_data = scaler.transform(df_input)
+                else:
+                    input_data = df_input
+                risks[target_key] = model.predict_proba(input_data)[0, 1]
             return risks
 
         st.markdown(
@@ -748,7 +787,8 @@ if is_active:
                 st.session_state['last_defect_risks'] = get_individual_risks(input_vals)
                 st.session_state['last_opt_df'] = None
                 st.session_state['optimization_success'] = "N/A"
-                st.session_state['selected_algorithm'] = "N/A"
+                # 선택된 알고리즘 정보가 덮어써지지 않도록 기존 정보를 유지
+                # st.session_state['selected_algorithm'] = "N/A" (제거)
 
                 new_row = {v: st.session_state['current_inputs'].get(v, 0.0) for v in all_v}
                 for target_key, r_val in st.session_state['last_defect_risks'].items():
@@ -771,6 +811,9 @@ if is_active:
                 best_fun = float('inf')
                 best_res = None
                 chosen_algo = "None"
+                
+                # 기존 학습 알고리즘 정보 보존
+                learning_algo = st.session_state.get('selected_algorithm', '')
 
                 for algo in algorithms:
                     try:
@@ -812,7 +855,7 @@ if is_active:
                         {v: opt_dict.get(v, 0) for v in st.session_state['ui_display_vars']}
                     ])
                     st.session_state['optimization_success'] = "Converged"
-                    st.session_state['selected_algorithm'] = chosen_algo
+                    st.session_state['selected_algorithm'] = f"{learning_algo} + {chosen_algo}"
 
                     new_row = {v: opt_dict.get(v, 0) for v in all_v}
                     for target_key, r_val in st.session_state['last_defect_risks'].items():
@@ -826,7 +869,7 @@ if is_active:
                     st.rerun()
                 else:
                     st.session_state['optimization_success'] = "Failed"
-                    st.session_state['selected_algorithm'] = "N/A"
+                    st.session_state['selected_algorithm'] = learning_algo
 
         # AI 전문가 리포트 — 항상 표시
         st.divider()
