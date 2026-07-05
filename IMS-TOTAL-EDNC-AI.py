@@ -10,13 +10,13 @@ import os
 from datetime import datetime
 import google.generativeai as genai
 
-# API 설정 (v1 버전 API 사용 명시)
+# API 키 설정 (오류 발생의 원인이었던 client_options를 제거했습니다)
 GEMINI_API_KEY = "AIzaSyCBvb_YX1_KxjSPTw3yQeO42dVIYHWDDzU"
-genai.configure(api_key=GEMINI_API_KEY, client_options={'api_version': 'v1'})
+genai.configure(api_key=GEMINI_API_KEY)
 
 def generate_ai_report(defect_results, optimized_params):
     try:
-        # 모델 명칭을 v1에서 가장 안정적인 'gemini-1.5-flash'로 호출
+        # gemini-1.5-flash 모델이 v1 API와 가장 잘 맞습니다.
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
         당신은 20년 경력의 사출 성형 공정 전문가입니다. 
