@@ -807,6 +807,25 @@ if is_active:
                     st.session_state['optimization_success'] = "Failed"
                     st.session_state['selected_algorithm'] = "N/A"
 
+        # AI 전문가 리포트 — 항상 표시
+        st.divider()
+        num_actions = st.number_input(
+            "📋 핵심 조치 사항 개수",
+            min_value=1, max_value=10, value=3, step=1
+        )
+        if st.session_state['last_opt_df'] is None:
+            st.warning("⚠️ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.")
+            st.button("✨ AI 전문가 리포트 생성", disabled=True, key="btn_report_disabled")
+        else:
+            st.success(L['opt_success_msg'])
+            if st.button("✨ AI 전문가 리포트 생성", key="btn_report_active"):
+                with st.spinner("분석 중..."):
+                    results = st.session_state.get('last_defect_risks', '진단 없음')
+                    params = st.session_state['last_opt_df'].to_dict(orient='records')
+                    report = generate_ai_report(results, params, num_actions=num_actions)
+                    st.markdown("### 📋 AI 전문가 리포트")
+                    st.info(report)
+
         if st.session_state['last_res_val'] is not None:
             st.divider()
             val = st.session_state['last_res_val']
@@ -852,19 +871,6 @@ if is_active:
                     )
 
             if st.session_state['last_opt_df'] is not None:
-                st.success(L['opt_success_msg'])
-                num_actions = st.number_input(
-                    "📋 핵심 조치 사항 개수",
-                    min_value=1, max_value=10, value=3, step=1
-                )
-                if st.button("✨ AI 전문가 리포트 생성"):
-                    with st.spinner("분석 중..."):
-                        results = st.session_state.get('last_defect_risks', '진단 없음')
-                        params = st.session_state['last_opt_df'].to_dict(orient='records')
-                        report = generate_ai_report(results, params, num_actions=num_actions)
-                        st.markdown("### 📋 AI 전문가 리포트")
-                        st.info(report)
-
                 df = st.session_state['last_opt_df'].astype(int)
                 headers = "".join([f"<th>{c}</th>" for c in df.columns])
                 rows = "".join([f"<td>{v}</td>" for v in df.values[0]])
