@@ -13,13 +13,13 @@ from groq import Groq
 GROQ_API_KEY = "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"
 
 
-def generate_ai_report(defect_results, optimized_params):
+def generate_ai_report(defect_results, optimized_params, num_actions=3):
     try:
         client = Groq(api_key=GROQ_API_KEY)
         prompt = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
 [분석 결과]: {defect_results}
 [파라미터]: {optimized_params}
-현장 작업자를 위한 핵심 조치 사항 3가지만 작성해 주세요."""
+현장 작업자를 위한 핵심 조치 사항 {num_actions}가지만 작성해 주세요."""
 
         response = client.chat.completions.create(
             model="qwen/qwen3.6-27b",
@@ -30,7 +30,6 @@ def generate_ai_report(defect_results, optimized_params):
                 },
                 {"role": "user", "content": prompt}
             ],
-            extra_body={"thinking": {"type": "disabled"}}
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -854,11 +853,15 @@ if is_active:
 
             if st.session_state['last_opt_df'] is not None:
                 st.success(L['opt_success_msg'])
+                num_actions = st.number_input(
+                    "📋 핵심 조치 사항 개수",
+                    min_value=1, max_value=10, value=3, step=1
+                )
                 if st.button("✨ AI 전문가 리포트 생성"):
                     with st.spinner("분석 중..."):
                         results = st.session_state.get('last_defect_risks', '진단 없음')
                         params = st.session_state['last_opt_df'].to_dict(orient='records')
-                        report = generate_ai_report(results, params)
+                        report = generate_ai_report(results, params, num_actions=num_actions)
                         st.markdown("### 📋 AI 전문가 리포트")
                         st.info(report)
 
