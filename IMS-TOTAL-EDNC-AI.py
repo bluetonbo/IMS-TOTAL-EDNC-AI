@@ -19,7 +19,7 @@ def generate_ai_report(defect_results, optimized_params):
         # 모델 탐색을 위해 genai.list_models()를 사용할 수도 있지만,
         # 'gemini-1.5-flash' 대신 더 범용적인 'gemini-pro' 또는 
         # 설정 없이 가장 기본 모델을 호출하도록 변경합니다.
-        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
+        model = genai.GenerativeModel(model_name='models/gemini-2.0-flash')
         
         prompt = f"""
         당신은 20년 경력의 사출 성형 공정 전문가입니다. 
