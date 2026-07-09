@@ -90,6 +90,7 @@ LANG_DICT = {
         "lbl_target": " Target",
         "lbl_expert_rel": "Expert Guideline Reliability (%)",
         "sec_d": "D. Intelligent Diagnosis & Optimization",
+        "strict_mode": "Strict Mode (Target All Active Defects ≤ 50%)",
         "btn_diagnose": "Diagnose Current Risk",
         "btn_optimize": "Optimize Conditions",
         "opt_converged": "Converged",
@@ -149,6 +150,7 @@ LANG_DICT = {
         "lbl_target": " 목표치",
         "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)",
         "sec_d": "D. 지능형 진단 및 최적화",
+        "strict_mode": "엄격 제약 모드 (모든 활성 불량률 50% 이하 강제)",
         "btn_diagnose": "현재 리스크 진단",
         "btn_optimize": "역추론 최적화 탐색 실행",
         "opt_converged": "수렴 완료",
@@ -273,7 +275,8 @@ if 'models' not in st.session_state:
         'selected_algorithm': "N/A",
         'prepared_db_file': None,
         'data_changed_since_save': False,
-        'show_feature_guide': False
+        'show_feature_guide': False,
+        'strict_optimization': False
     })
 
 st.markdown("""
@@ -775,6 +778,14 @@ if is_active:
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_d"]}</div>',
             unsafe_allow_html=True
         )
+        
+        # 엄격 모드 토글 (체크박스) 추가
+        st.session_state['strict_optimization'] = st.checkbox(
+            L['strict_mode'], 
+            value=st.session_state.get('strict_optimization', False)
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+        
         c_btn1, c_btn2 = st.columns(2)
 
         with c_btn1:
@@ -815,37 +826,74 @@ if is_active:
                 opt_prog_text = st.empty()
                 opt_prog_bar = st.progress(0)
 
-                for i, algo in enumerate(algorithms):
-                    pct = int(((i + 1) / len(algorithms)) * 100)
-                    opt_prog_text.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
-                    opt_prog_bar.progress((i + 1) / len(algorithms))
-                    time.sleep(0.2) # 시각적 피드백
+                # 엄격 제약 모드가 활성화된 경우
+                if st.session_state.get('strict_optimization', False):
+                    opt_prog_text.markdown(f"🔍 **{L['opt_progress']}: SLSQP (Strict Constraints Mode)**")
+                    opt_prog_bar.progress(0.5)
+                    time.sleep(0.2)
+                    
+                    def constraint_all_under_threshold(input_vals_list):
+                        df_input_temp = pd.DataFrame([input_vals_list], columns=all_v)
+                        violations = []
+                        for target_key, model in st.session_state['models'].items():
+                            if st.session_state['defect_switches'].get(target_key, True):
+                                scaler = st.session_state['scalers'][target_key]
+                                prob = model.predict_proba(scaler.transform(df_input_temp))[0, 1]
+                                violations.append(0.5 - prob) # >= 0 이면 조건 만족
+                        return violations
+                        
+                    cons = {'type': 'ineq', 'fun': constraint_all_under_threshold}
                     
                     try:
                         res_temp = minimize(
                             calculate_total_risk, x0,
-                            method=algo, bounds=bnds,
-                            options={'maxiter': 500}
+                            method='SLSQP', bounds=bnds,
+                            constraints=cons,
+                            options={'maxiter': 1000}
                         )
-                        if res_temp.success and res_temp.fun < best_fun:
+                        if res_temp.success:
                             best_fun = res_temp.fun
                             best_res = res_temp
-                            chosen_algo = algo
+                            chosen_algo = "SLSQP (Strict Mode)"
                     except Exception:
-                        continue
+                        pass
+                    
+                    opt_prog_bar.progress(1.0)
+                    time.sleep(0.2)
+                
+                # 엄격 제약 모드가 꺼진 경우 (기존 다중 알고리즘 탐색)
+                else:
+                    for i, algo in enumerate(algorithms):
+                        pct = int(((i + 1) / len(algorithms)) * 100)
+                        opt_prog_text.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
+                        opt_prog_bar.progress((i + 1) / len(algorithms))
+                        time.sleep(0.2) # 시각적 피드백
+                        
+                        try:
+                            res_temp = minimize(
+                                calculate_total_risk, x0,
+                                method=algo, bounds=bnds,
+                                options={'maxiter': 500}
+                            )
+                            if res_temp.success and res_temp.fun < best_fun:
+                                best_fun = res_temp.fun
+                                best_res = res_temp
+                                chosen_algo = algo
+                        except Exception:
+                            continue
 
-                try:
-                    random_x0 = [np.random.uniform(b[0], b[1]) for b in bnds]
-                    res_global = minimize(
-                        calculate_total_risk, random_x0,
-                        method='L-BFGS-B', bounds=bnds
-                    )
-                    if res_global.success and res_global.fun < best_fun:
-                        best_fun = res_global.fun
-                        best_res = res_global
-                        chosen_algo = "Hybrid Multi-Start (L-BFGS-B)"
-                except Exception:
-                    pass
+                    try:
+                        random_x0 = [np.random.uniform(b[0], b[1]) for b in bnds]
+                        res_global = minimize(
+                            calculate_total_risk, random_x0,
+                            method='L-BFGS-B', bounds=bnds
+                        )
+                        if res_global.success and res_global.fun < best_fun:
+                            best_fun = res_global.fun
+                            best_res = res_global
+                            chosen_algo = "Hybrid Multi-Start (L-BFGS-B)"
+                    except Exception:
+                        pass
                 
                 opt_prog_text.empty()
                 opt_prog_bar.empty()
