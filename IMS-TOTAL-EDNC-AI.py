@@ -846,40 +846,67 @@ if is_active:
                 x0 = [float(st.session_state['current_inputs'].get(v, 0.0)) for v in all_v]
                 bnds = [st.session_state['global_bounds'].get(v, (0, 100)) for v in all_v]
 
-                # ---------------------------------------------------------
-                # [변경] 최적화부: 5개 알고리즘 기반 전역/국소 최적해 동시 탐색
-                # ---------------------------------------------------------
                 algorithms = ['SLSQP', 'L-BFGS-B', 'Powell', 'Differential_Evolution', 'Dual_Annealing']
                 best_fun = float('inf')
                 best_res = None
                 chosen_algo = "None"
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                opt_prog_text = st.empty()
+                opt_prog_title = st.empty()
                 opt_prog_bar = st.progress(0)
+                opt_prog_text = st.empty() # 실시간 진행 상황 텍스트 출력용
 
                 for i, algo in enumerate(algorithms):
                     pct = int(((i + 1) / len(algorithms)) * 100)
-                    opt_prog_text.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
+                    opt_prog_title.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
                     opt_prog_bar.progress((i + 1) / len(algorithms))
-                    time.sleep(0.1) 
+                    
+                    state = {'iter': 0}
+                    
+                    # ---------------------------------------------------------
+                    # [변경] 조기 종료(Early Stopping) 및 실시간 UI 콜백 구현
+                    # ---------------------------------------------------------
+                    def callback_min(xk, *args):
+                        state['iter'] += 1
+                        if state['iter'] % 5 == 0:
+                            val = calculate_total_risk(xk)
+                            opt_prog_text.markdown(f"&nbsp;&nbsp; ↳ 🔄 **[{algo}]** 미세 정밀 조정 중 (Step: {state['iter']}) | 현재 위험도: <span style='color:#00e5ff;'>{val*100:.2f}%</span>", unsafe_allow_html=True)
+                            time.sleep(0.01)
+
+                    def callback_de(xk, convergence=0.0, *args):
+                        state['iter'] += 1
+                        val = calculate_total_risk(xk)
+                        opt_prog_text.markdown(f"&nbsp;&nbsp; ↳ 🧬 **[{algo}]** 전역 탐색 중 (세대: {state['iter']}) | 수렴도: <span style='color:#a3e635;'>{convergence*100:.1f}%</span> | 현재 위험도: <span style='color:#00e5ff;'>{val*100:.2f}%</span>", unsafe_allow_html=True)
+                        if convergence >= 0.99 or val <= 0.005:
+                            return True # 조기 종료
+
+                    def callback_da(x, f, context, *args):
+                        state['iter'] += 1
+                        if state['iter'] % 10 == 0:
+                            opt_prog_text.markdown(f"&nbsp;&nbsp; ↳ 🔥 **[{algo}]** 열처리 탐색 중 (Step: {state['iter']}) | 현재 위험도: <span style='color:#00e5ff;'>{f*100:.2f}%</span>", unsafe_allow_html=True)
+                        if f <= 0.005:
+                            return True # 조기 종료
                     
                     try:
                         if algo in ['SLSQP', 'L-BFGS-B', 'Powell']:
                             res_temp = minimize(
                                 calculate_total_risk, x0,
                                 method=algo, bounds=bnds,
-                                options={'maxiter': 500}
+                                callback=callback_min,
+                                options={'maxiter': 1000, 'ftol': 1e-6} # 정밀도 우선: maxiter 증가, ftol 하향
                             )
                         elif algo == 'Differential_Evolution':
                             res_temp = differential_evolution(
                                 calculate_total_risk, bounds=bnds,
-                                maxiter=20, popsize=10, mutation=(0.5, 1.5), recombination=0.7, seed=42
+                                maxiter=100, popsize=15, mutation=(0.5, 1.5), recombination=0.7, seed=42,
+                                tol=0.01, # 99% 수렴 시 조기 종료
+                                callback=callback_de
                             )
                         elif algo == 'Dual_Annealing':
                             res_temp = dual_annealing(
                                 calculate_total_risk, bounds=bnds,
-                                maxiter=20, seed=42
+                                maxiter=200, seed=42,
+                                callback=callback_da
                             )
 
                         if res_temp.success and res_temp.fun < best_fun:
@@ -889,8 +916,9 @@ if is_active:
                     except Exception:
                         continue
                 
-                opt_prog_text.empty()
+                opt_prog_title.empty()
                 opt_prog_bar.empty()
+                opt_prog_text.empty()
 
                 if best_res is not None:
                     final_x = [
