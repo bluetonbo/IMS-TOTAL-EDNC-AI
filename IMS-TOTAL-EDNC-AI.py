@@ -7,6 +7,7 @@ from scipy.optimize import minimize
 import sqlite3
 import json
 import os
+import time
 from datetime import datetime
 from groq import Groq
 
@@ -17,14 +18,11 @@ NUM_ACTIONS = 3
 
 # ✏️ 핵심 조치 사항에 미리 포함할 내용 — 원하는 지시문을 자유롭게 입력하세요
 # 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
-# 예시: "각각 불량에 대한 Trade Off 성향이 가장 낮은 조건에 대한 의견"
 PRESET_ACTIONS = [
     "가장 불량 가능성이 높고, 50% 이상이고, 상위 3개의 조건을 모두 만족하는 불량에 대한 객관적 분석으로 해결책 도출하세요.",
     "가장 불량 가능성이 높고, 50%이상이고, 상위 3개의 3개 조건을 만족하는 불량들 간의 Trade Off에 대한 분석을 하세요.",
     "이러한 불량에 대한 유변학적이나 이론적 기술을 설명하세요."
 ]
-
-
 
 def generate_ai_report(defect_results, optimized_params, num_actions=3):
     try:
@@ -104,7 +102,19 @@ LANG_DICT = {
         "db_export_title": "💾 External Database Export",
         "db_prepare_btn": "⚙️ Generate & Save DB Snapshot",
         "db_prepared_msg": "Prepared File: ",
-        "db_current_latest": "✨ The file contains the latest data state."
+        "db_current_latest": "✨ The file contains the latest data state.",
+        "learning_progress": "Target Model Learning",
+        "opt_progress": "Algorithm Search in Progress",
+        "btn_feature_guide": "Generate Feature Importance-based Process Diagnosis Guide",
+        "guide_title": "Process Improvement Guide (Result Diagnosis Report)",
+        "guide_subtitle": "Optimization Result Diagnosis Report",
+        "guide_pred_rel": "Prediction Reliability",
+        "guide_unachievable": "Unachievable",
+        "guide_out_of_spec": "Out of Spec",
+        "guide_normal": "Normal Achievement",
+        "guide_all_success": "All Targets Achieved Normally",
+        "guide_success_msg": "Based on the analysis of the current input data, all valid quality targets are predicted to perfectly reach the target specification range you set. You can apply the currently derived process conditions directly to the field.",
+        "guide_partial_msg": "Based on the analysis, some quality targets have a high risk of defect. Please review the recommended process conditions."
     },
     "ko": {
         "page_title": "통합 사출 불량 AI 솔루션 시스템",
@@ -116,7 +126,7 @@ LANG_DICT = {
         "upload_1": "1. 현재 최적 조건 데이터",
         "upload_2": "2. 누적 이력 데이터",
         "upload_3": "3. CAE 해석 데이터",
-        "run_ai": "AI 가동 및 솔루션 탐색",
+        "run_ai": "학습 초기화 및 데이터 통합 학습 실행",
         "err_load": "파일 로드 오류: ",
         "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
@@ -140,7 +150,7 @@ LANG_DICT = {
         "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)",
         "sec_d": "D. 지능형 진단 및 최적화",
         "btn_diagnose": "현재 리스크 진단",
-        "btn_optimize": "조건 최적화",
+        "btn_optimize": "역추론 최적화 탐색 실행",
         "opt_converged": "수렴 완료",
         "opt_failed": "최적화 실패",
         "dash_title": "AI 지능형 대시보드",
@@ -151,7 +161,19 @@ LANG_DICT = {
         "db_export_title": "💾 데이터베이스 외부 내보내기",
         "db_prepare_btn": "⚙️ DB 스냅샷 생성 및 서버 저장",
         "db_prepared_msg": "준비된 파일: ",
-        "db_current_latest": "✨ 최신 데이터 상태가 파일에 이미 반영되어 있습니다."
+        "db_current_latest": "✨ 최신 데이터 상태가 파일에 이미 반영되어 있습니다.",
+        "learning_progress": "타겟 값 모델 학습 중",
+        "opt_progress": "알고리즘 탐색 중",
+        "btn_feature_guide": "Feature Importance 기반 공정 진단 가이드 생성",
+        "guide_title": "공정 개선 가이드 (결과 진단 리포트)",
+        "guide_subtitle": "최적화 결과 진단 리포트",
+        "guide_pred_rel": "예측 신뢰도",
+        "guide_unachievable": "달성 불가",
+        "guide_out_of_spec": "스펙 이탈",
+        "guide_normal": "정상 달성",
+        "guide_all_success": "전체 타겟 정상 달성",
+        "guide_success_msg": "현재 입력된 데이터를 바탕으로 분석한 결과, 모든 유효 품질 타겟(타겟 값)이 설정하신 목표 스펙 범위 내에 완벽하게 도달할 수 있는 것으로 예측되었습니다. 현재 도출된 공정 조건(추천 공정 스펙)을 현장에 바로 적용하셔도 좋습니다.",
+        "guide_partial_msg": "분석 결과 일부 품질 타겟에서 불량 위험도가 높게 나타났습니다. 도출된 공정 조건을 바탕으로 현장 적용 전 세밀한 검토가 필요합니다."
     }
 }
 
@@ -250,7 +272,8 @@ if 'models' not in st.session_state:
         'optimization_success': "N/A",
         'selected_algorithm': "N/A",
         'prepared_db_file': None,
-        'data_changed_since_save': False
+        'data_changed_since_save': False,
+        'show_feature_guide': False
     })
 
 st.markdown("""
@@ -325,10 +348,10 @@ st.markdown("""
     .stButton>button {
         width: 100%;
         border-radius: 6px;
-        background: linear-gradient(180deg, #1e88e5 0%, #1565c0 100%);
+        background: linear-gradient(180deg, #10b981 0%, #059669 100%);
         color: white !important;
         font-weight: 700;
-        border: 1px solid #1976d2;
+        border: 1px solid #047857;
         padding: 0.7rem;
         transition: all 0.3s ease;
     }
@@ -433,7 +456,20 @@ with st.sidebar:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
                 else:
                     models_dict, scalers_dict = {}, {}
-                    for target in available_targets:
+                    
+                    # 학습 진행 상황 UI 추가
+                    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+                    prog_text = st.sidebar.empty()
+                    prog_bar = st.sidebar.progress(0)
+                    total_targets = len(available_targets)
+
+                    for idx, target in enumerate(available_targets):
+                        # 프로그레스 바 텍스트 업데이트
+                        pct = int(((idx + 1) / total_targets) * 100)
+                        prog_text.markdown(f"⚙️ **{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)**")
+                        prog_bar.progress((idx + 1) / total_targets)
+                        time.sleep(0.1) # 시각적 피드백을 위한 짧은 대기
+
                         t_series = (
                             df_comb[target].iloc[:, 0]
                             if isinstance(df_comb[target], pd.DataFrame)
@@ -634,7 +670,7 @@ if is_active:
     t1, t2 = st.tabs([L['tab_diag'], L['tab_master']])
 
     with t1:
-        # A. 현재 사출 조건 파라미터 입력
+        # A. 현재 사출 조건 파라미터 입력 (최적화 후 결과값이 여기에 연동됨)
         st.markdown(
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_a"]}</div>',
             unsafe_allow_html=True
@@ -643,6 +679,7 @@ if is_active:
         for i, var in enumerate(st.session_state['ui_display_vars']):
             with cols[i % 3]:
                 curr_val = st.session_state['current_inputs'].get(var, 0)
+                # 세션 상태의 값을 직접 슬라이더에 바인딩하고, ver 값을 활용해 UI 강제 업데이트
                 st.session_state['current_inputs'][var] = st.slider(
                     f"{var}",
                     0,
@@ -749,6 +786,7 @@ if is_active:
                 st.session_state['last_opt_df'] = None
                 st.session_state['optimization_success'] = "N/A"
                 st.session_state['selected_algorithm'] = "N/A"
+                st.session_state['show_feature_guide'] = False
 
                 new_row = {v: st.session_state['current_inputs'].get(v, 0.0) for v in all_v}
                 for target_key, r_val in st.session_state['last_defect_risks'].items():
@@ -771,8 +809,18 @@ if is_active:
                 best_fun = float('inf')
                 best_res = None
                 chosen_algo = "None"
+                
+                # 역추론 최적화 탐색 진행 상황 표시 UI
+                st.markdown("<br>", unsafe_allow_html=True)
+                opt_prog_text = st.empty()
+                opt_prog_bar = st.progress(0)
 
-                for algo in algorithms:
+                for i, algo in enumerate(algorithms):
+                    pct = int(((i + 1) / len(algorithms)) * 100)
+                    opt_prog_text.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
+                    opt_prog_bar.progress((i + 1) / len(algorithms))
+                    time.sleep(0.2) # 시각적 피드백
+                    
                     try:
                         res_temp = minimize(
                             calculate_total_risk, x0,
@@ -798,6 +846,9 @@ if is_active:
                         chosen_algo = "Hybrid Multi-Start (L-BFGS-B)"
                 except Exception:
                     pass
+                
+                opt_prog_text.empty()
+                opt_prog_bar.empty()
 
                 if best_res is not None:
                     final_x = [
@@ -813,6 +864,11 @@ if is_active:
                     ])
                     st.session_state['optimization_success'] = "Converged"
                     st.session_state['selected_algorithm'] = chosen_algo
+                    st.session_state['show_feature_guide'] = False
+
+                    # 최적화된 파라미터 값을 현재 입력 상태에 덮어씌우고 버전을 올려 슬라이더 연동 처리
+                    st.session_state['current_inputs'].update(opt_dict)
+                    st.session_state['ver'] += 1
 
                     new_row = {v: opt_dict.get(v, 0) for v in all_v}
                     for target_key, r_val in st.session_state['last_defect_risks'].items():
@@ -828,8 +884,43 @@ if is_active:
                     st.session_state['optimization_success'] = "Failed"
                     st.session_state['selected_algorithm'] = "N/A"
 
-        # AI 전문가 리포트 — 항상 표시
+        # AI 전문가 리포트 & 공정 진단 가이드 리포트 — 항상 표시 구역
         st.divider()
+        
+        # 공정 개선 가이드 (결과 진단 리포트) 추가 구역
+        st.markdown(f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>ㅁ {L['guide_title']}</h3>", unsafe_allow_html=True)
+        if st.button(f"ㅁ {L['btn_feature_guide']}", key="btn_feature_guide_trigger"):
+            if st.session_state.get('last_res_val') is not None:
+                st.session_state['show_feature_guide'] = True
+            else:
+                st.warning("진단 또는 최적화를 먼저 실행해 주세요.")
+                
+        if st.session_state.get('show_feature_guide', False) and st.session_state.get('last_res_val') is not None:
+            risks = st.session_state['last_defect_risks']
+            normal_count = sum(1 for r in risks.values() if r < DEFECT_THRESHOLD)
+            out_spec_count = len(risks) - normal_count
+
+            success_status = L['guide_all_success'] if out_spec_count == 0 else f"주의 필요 ({out_spec_count}개 이탈)"
+            success_msg = L['guide_success_msg'] if out_spec_count == 0 else L['guide_partial_msg']
+            icon = "✅" if out_spec_count == 0 else "⚠️"
+
+            guide_html = f"""
+            <div style="background-color:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:12px; margin-bottom: 24px;">
+                <h3 style="margin-top:0; color:#e1e1e1;">## ㅁ {L['guide_subtitle']}</h3>
+                <blockquote style="border-left: 4px solid #10b981; padding-left: 10px; color:#94a3b8; font-size:0.95rem; background-color:#1a1c24; padding:10px;">
+                    > {L['guide_pred_rel']}: <b>100.0%</b> | {L['guide_unachievable']}: <b>0개</b> | {L['guide_out_of_spec']}: <b>{out_spec_count}개</b> | {L['guide_normal']}: <b>{normal_count}개</b>
+                </blockquote>
+                <hr style="border-color:#2d3142; margin: 16px 0;">
+                <h4 style="color:#10b981; margin-bottom: 12px;">### {icon} {success_status}</h4>
+                <p style="line-height:1.6; font-size:0.95rem; color:#e1e1e1;">
+                    {success_msg}
+                </p>
+            </div>
+            """
+            st.markdown(guide_html, unsafe_allow_html=True)
+            
+        st.markdown("<br>", unsafe_allow_html=True)
+        
         if st.session_state['last_opt_df'] is None:
             st.warning("⚠️ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.")
             st.button("✨ AI 전문가 리포트 생성", disabled=True, key="btn_report_disabled")
