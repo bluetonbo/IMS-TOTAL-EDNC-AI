@@ -119,6 +119,10 @@ LANG_DICT = {
         "db_current_latest": "✨ The file contains the latest data state.",
         "learning_progress": "Target Model Learning",
         "opt_progress": "Algorithm Search in Progress",
+        "complexity_label": "Data Complexity",
+        "complexity_low": "Low ⚡ Fast Local Search",
+        "complexity_high": "High 🌐 Global Search Included",
+        "complexity_algo_used": "Algorithms Used",
         "btn_feature_guide": "Generate Feature Importance-based Process Diagnosis Guide",
         "guide_title": "Process Improvement Guide (Result Diagnosis Report)",
         "guide_subtitle": "Optimization Result Diagnosis Report",
@@ -178,6 +182,10 @@ LANG_DICT = {
         "db_current_latest": "✨ 최신 데이터 상태가 파일에 이미 반영되어 있습니다.",
         "learning_progress": "타겟 값 모델 학습 중",
         "opt_progress": "알고리즘 탐색 중",
+        "complexity_label": "데이터 복잡도",
+        "complexity_low": "낮음 ⚡ 고속 국소 탐색",
+        "complexity_high": "높음 🌐 전역 탐색 포함",
+        "complexity_algo_used": "사용 알고리즘",
         "btn_feature_guide": "Feature Importance 기반 공정 진단 가이드 생성",
         "guide_title": "공정 개선 가이드 (결과 진단 리포트)",
         "guide_subtitle": "최적화 결과 진단 리포트",
@@ -535,10 +543,27 @@ with st.sidebar:
                         for v in vars_list
                     }
 
+                    # ---------------------------------------------------------
+                    # [추가] 데이터 복잡도 판단 (알고리즘 최적화 - 속도 중심)
+                    # 학습부에서 타겟별로 선택된 최적 모델 종류를 근거로 판단합니다.
+                    # RandomForest/XGBoost/LightGBM 같은 트리 기반 앙상블 모델이
+                    # 하나라도 선택되면, 예측 확률 표면이 계단형(비매끄러움)이라
+                    # 국소 최적화(SLSQP/L-BFGS-B)만으로는 최적해를 놓치기 쉬우므로
+                    # '복잡도 높음'으로 판단해 전역 탐색 알고리즘까지 포함합니다.
+                    # 전부 LogisticRegression(선형/매끄러운 경계)처럼 단순한 모델로만
+                    # 충분했다면 '복잡도 낮음'으로 판단해 빠른 국소 알고리즘만 사용합니다.
+                    # ---------------------------------------------------------
+                    ensemble_model_names = {"RandomForest", "XGBoost", "LightGBM"}
+                    is_complex = any(
+                        name in ensemble_model_names for name in best_models_info.values()
+                    )
+                    data_complexity = "high" if is_complex else "low"
+
                     st.session_state.update({
                         'models': models_dict,
                         'scalers': scalers_dict,
                         'best_models_info': best_models_info,
+                        'data_complexity': data_complexity,
                         'df_injection': df_comb,
                         'global_process_vars': vars_list,
                         'global_bounds': bounds_dict,
@@ -846,12 +871,26 @@ if is_active:
                 x0 = [float(st.session_state['current_inputs'].get(v, 0.0)) for v in all_v]
                 bnds = [st.session_state['global_bounds'].get(v, (0, 100)) for v in all_v]
 
-                algorithms = ['SLSQP', 'L-BFGS-B', 'Powell', 'Differential_Evolution', 'Dual_Annealing']
+                # ---------------------------------------------------------
+                # [변경] 알고리즘 최적화 (속도 중심)
+                # 모든 알고리즘을 항상 다 돌리지 않고, 데이터 학습부에서 판단한
+                # '데이터의 복잡도'(data_complexity)에 따라 실행할 알고리즘을 자동 선택합니다.
+                #  - 복잡도 낮음: SLSQP, L-BFGS-B만 실행 (국소 탐색, 빠르게 완료)
+                #  - 복잡도 높음: Differential_Evolution / Dual_Annealing 포함 전체 실행 (전역 탐색)
+                # ---------------------------------------------------------
+                data_complexity = st.session_state.get('data_complexity', 'high')
+                if data_complexity == 'low':
+                    algorithms = ['SLSQP', 'L-BFGS-B']
+                else:
+                    algorithms = ['SLSQP', 'L-BFGS-B', 'Powell', 'Differential_Evolution', 'Dual_Annealing']
+
                 best_fun = float('inf')
                 best_res = None
                 chosen_algo = "None"
                 
                 st.markdown("<br>", unsafe_allow_html=True)
+                complexity_label = L['complexity_low'] if data_complexity == 'low' else L['complexity_high']
+                st.caption(f"{L['complexity_label']}: **{complexity_label}** · {L['complexity_algo_used']}: {', '.join(algorithms)}")
                 opt_prog_title = st.empty()
                 opt_prog_bar = st.progress(0)
                 opt_prog_text = st.empty() # 실시간 진행 상황 텍스트 출력용
@@ -865,13 +904,13 @@ if is_active:
                     
                     # ---------------------------------------------------------
                     # [변경] 조기 종료(Early Stopping) 및 실시간 UI 콜백 구현
+                    # (속도 중심: 매 스텝 인위적 sleep 제거 — UI 갱신 자체의 지연만으로 충분)
                     # ---------------------------------------------------------
                     def callback_min(xk, *args):
                         state['iter'] += 1
                         if state['iter'] % 5 == 0:
                             val = calculate_total_risk(xk)
                             opt_prog_text.markdown(f"&nbsp;&nbsp; ↳ 🔄 **[{algo}]** 미세 정밀 조정 중 (Step: {state['iter']}) | 현재 위험도: <span style='color:#00e5ff;'>{val*100:.2f}%</span>", unsafe_allow_html=True)
-                            time.sleep(0.01)
 
                     def callback_de(xk, convergence=0.0, *args):
                         state['iter'] += 1
