@@ -872,17 +872,35 @@ if is_active:
                 st.markdown("<br>", unsafe_allow_html=True)
                 opt_prog_text = st.empty()
                 opt_prog_bar = st.progress(0)
+                opt_prog_detail = st.empty()  # 스텝별 상세 진행 상황(현재 위험도 등) 출력용
 
                 for i, algo in enumerate(algorithms):
                     pct = int(((i + 1) / len(algorithms)) * 100)
                     opt_prog_text.markdown(f"▸ **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
                     opt_prog_bar.progress((i + 1) / len(algorithms))
+                    opt_prog_detail.empty()  # 이전 알고리즘의 상세 로그가 남아있지 않도록 초기화
                     time.sleep(0.2) # 시각적 피드백
-                    
+
+                    state = {'iter': 0}
+
+                    # ---------------------------------------------------------
+                    # [추가] 실시간 상세 진행 콜백 — 매 스텝마다 현재 위험도를 보여줍니다.
+                    # ---------------------------------------------------------
+                    def callback_min(xk, *args):
+                        state['iter'] += 1
+                        if state['iter'] % 5 == 0:
+                            val = calculate_total_risk(xk)
+                            opt_prog_detail.markdown(
+                                f"&nbsp;&nbsp; ↳ → **[{algo}]** {L['opt_step_local']} ({L['opt_step_label']}: {state['iter']}) "
+                                f"| {L['opt_current_risk']}: <span style='color:#00e5ff;'>{val*100:.2f}%</span>",
+                                unsafe_allow_html=True
+                            )
+
                     try:
                         res_temp = minimize(
                             calculate_total_risk, x0,
                             method=algo, bounds=bnds,
+                            callback=callback_min,
                             options={'maxiter': 500}
                         )
                         if res_temp.success and res_temp.fun < best_fun:
@@ -892,11 +910,27 @@ if is_active:
                     except Exception:
                         continue
 
+                # 하이브리드 멀티스타트(무작위 시작점) 단계도 동일하게 상세 진행 표시
+                opt_prog_text.markdown(f"▸ **{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)**")
+                opt_prog_detail.empty()  # 이전 알고리즘의 상세 로그 초기화
+                state = {'iter': 0}
+
+                def callback_global(xk, *args):
+                    state['iter'] += 1
+                    if state['iter'] % 5 == 0:
+                        val = calculate_total_risk(xk)
+                        opt_prog_detail.markdown(
+                            f"&nbsp;&nbsp; ↳ ⇒ **[Hybrid Multi-Start]** {L['opt_step_global']} ({L['opt_step_label']}: {state['iter']}) "
+                            f"| {L['opt_current_risk']}: <span style='color:#a3e635;'>{val*100:.2f}%</span>",
+                            unsafe_allow_html=True
+                        )
+
                 try:
                     random_x0 = [np.random.uniform(b[0], b[1]) for b in bnds]
                     res_global = minimize(
                         calculate_total_risk, random_x0,
-                        method='L-BFGS-B', bounds=bnds
+                        method='L-BFGS-B', bounds=bnds,
+                        callback=callback_global
                     )
                     if res_global.success and res_global.fun < best_fun:
                         best_fun = res_global.fun
@@ -907,6 +941,7 @@ if is_active:
                 
                 opt_prog_text.empty()
                 opt_prog_bar.empty()
+                opt_prog_detail.empty()
 
                 if best_res is not None:
                     final_x = [
