@@ -66,7 +66,7 @@ def _build_fact_block(defect_results):
 
 
 
-def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko"):
+def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko", is_optimized=True):
     try:
         client = Groq(api_key=GROQ_API_KEY)
 
@@ -78,16 +78,26 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko
 
         fact_block = _build_fact_block(defect_results)
 
+        # [파라미터]가 최적화 결과인지, 아직 최적화하지 않은 현재 진단 조건인지 명시
+        # (혼동 방지: 진단 조건을 최적화된 추천값처럼 서술하지 않도록)
+        params_label = "[최적화된 추천 파라미터]" if is_optimized else "[현재 진단 조건 파라미터 - 아직 최적화되지 않은 값입니다]"
+        params_note = (
+            "" if is_optimized else
+            "\n(주의: 아래 파라미터는 '조건 최적화'를 실행하기 전, 현재 설정된 진단 조건입니다. "
+            "최적화된 추천값이 아니므로, 리포트에서 이를 '최적화 결과'나 '추천 조건'처럼 서술하지 말고 "
+            "'현재 조건' 또는 '진단 조건'이라고 명확히 구분해서 표현하세요.)"
+        )
+
         prompt_ko = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
 
 {fact_block}
 
-[파라미터]: {optimized_params}{preset_text}
+{params_label}: {optimized_params}{params_note}{preset_text}
 
 <중요 - 반드시 지켜야 할 원칙>
 - 위 [사실 확인]에 없는 내용을 추측하거나 새로 만들어내지 마세요.
 - 확실하지 않은 내용은 "데이터 부족으로 판단 불가"라고 답하세요.
-- 본문에 등장하는 모든 수치(%, 값)는 위 [사실 확인]/[파라미터]에 있는 값과 정확히 일치해야 하며,
+- 본문에 등장하는 모든 수치(%, 값)는 위 [사실 확인]/{params_label}에 있는 값과 정확히 일치해야 하며,
   임의로 새로운 수치를 만들거나 반올림 외의 방식으로 바꾸지 마세요.
 - 위험(≥{int(DEFECT_THRESHOLD*100)}%) 불량이 "없음"이라고 되어 있다면, 잠재적 위험이나 향후 가능성을
   추측해서 서술하지 말고 사실 그대로만 전달하세요.
@@ -197,7 +207,8 @@ LANG_DICT = {
         "opt_failed": "Failed",
         "dash_title": "AI Intelligent Dashboard",
         "opt_success_msg": "AI Recommendation Derived Successfully",
-        "warn_need_optimize": "⚠ To generate the AI Expert Report, please click the 'Optimize Conditions' button above first to complete optimization.",
+        "diag_success_msg": "Diagnosis Complete (based on current, not-yet-optimized conditions)",
+        "warn_need_diagnose": "⚠ To generate the AI Expert Report, please run 'Diagnose Current Risk' or 'Optimize Conditions' above first.",
         "btn_ai_report": "▸ Generate AI Expert Report",
         "report_box_title": "AI Expert Report",
         "spinner_analyzing": "Analyzing...",
@@ -264,7 +275,8 @@ LANG_DICT = {
         "opt_failed": "최적화 실패",
         "dash_title": "AI 지능형 대시보드",
         "opt_success_msg": "AI 추천 조건 도출 완료",
-        "warn_need_optimize": "⚠ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.",
+        "diag_success_msg": "진단 완료 (아직 최적화되지 않은 현재 조건 기준)",
+        "warn_need_diagnose": "⚠ AI 전문가 리포트를 생성하려면 먼저 위의 '현재 리스크 진단' 또는 '조건 최적화'를 실행해 주세요.",
         "btn_ai_report": "▸ AI 전문가 리포트 생성",
         "report_box_title": "AI 전문가 리포트",
         "spinner_analyzing": "분석 중...",
@@ -1071,19 +1083,27 @@ if is_active:
             
         st.markdown("<br>", unsafe_allow_html=True)
         
-        if st.session_state['last_opt_df'] is None:
-            st.warning(L['warn_need_optimize'])
+        if st.session_state['last_res_val'] is None:
+            st.warning(L['warn_need_diagnose'])
             st.button(L['btn_ai_report'], disabled=True, key="btn_report_disabled")
         else:
-            st.success(L['opt_success_msg'])
+            is_optimized = st.session_state['last_opt_df'] is not None
+            st.success(L['opt_success_msg'] if is_optimized else L['diag_success_msg'])
             if st.button(L['btn_ai_report'], key="btn_report_active"):
                 with st.spinner(L['spinner_analyzing']):
                     no_diag_text = "No diagnosis" if st.session_state.lang == "en" else "진단 없음"
                     results = st.session_state.get('last_defect_risks', no_diag_text)
-                    params = st.session_state['last_opt_df'].to_dict(orient='records')
+                    if is_optimized:
+                        params = st.session_state['last_opt_df'].to_dict(orient='records')
+                    else:
+                        # 최적화 전 — 현재 진단 조건(슬라이더 값)을 그대로 파라미터로 사용
+                        params = [{
+                            v: st.session_state['current_inputs'].get(v, 0)
+                            for v in st.session_state['ui_display_vars']
+                        }]
                     report = generate_ai_report(
                         results, params, num_actions=NUM_ACTIONS,
-                        lang=st.session_state.lang
+                        lang=st.session_state.lang, is_optimized=is_optimized
                     )
 
                     # <br> 태그 및 공백 정리 후 보기 좋게 렌더링
