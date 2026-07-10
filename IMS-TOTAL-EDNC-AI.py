@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import accuracy_score
-from scipy.optimize import minimize, differential_evolution, dual_annealing
+from scipy.optimize import minimize
 import sqlite3
 import json
 import os
@@ -13,26 +11,13 @@ import time
 from datetime import datetime
 from groq import Groq
 
-# ---------------------------------------------------------
-# [추가] 고급 AI 모델 라이브러리 로드 (없을 경우 예외 처리)
-# ---------------------------------------------------------
-try:
-    from xgboost import XGBClassifier
-except ImportError:
-    XGBClassifier = None
-
-try:
-    from lightgbm import LGBMClassifier
-except ImportError:
-    LGBMClassifier = None
-
-
 GROQ_API_KEY = "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"
 
 #  AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
 NUM_ACTIONS = 3
 
 #  핵심 조치 사항에 미리 포함할 내용 — 원하는 지시문을 자유롭게 입력하세요
+# 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
 PRESET_ACTIONS = [
     "가장 불량 가능성이 높고, 50% 이상이고, 상위 3개의 조건을 모두 만족하는 불량에 대한 객관적 분석으로 해결책 도출하세요.",
     "가장 불량 가능성이 높고, 50%이상이고, 상위 3개의 3개 조건을 만족하는 불량들 간의 Trade Off에 대한 분석을 하세요.",
@@ -43,6 +28,7 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3):
     try:
         client = Groq(api_key=GROQ_API_KEY)
 
+        # 미리 입력된 조치 사항이 있으면 프롬프트에 포함
         preset_text = ""
         if PRESET_ACTIONS:
             preset_text = "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
@@ -110,6 +96,10 @@ LANG_DICT = {
         "opt_failed": "Failed",
         "dash_title": "AI Intelligent Dashboard",
         "opt_success_msg": "AI Recommendation Derived Successfully",
+        "warn_need_optimize": "⚠️ To generate the AI Expert Report, please click the 'Optimize Conditions' button above first to complete optimization.",
+        "btn_ai_report": "✨ Generate AI Expert Report",
+        "report_box_title": "AI Expert Report",
+        "spinner_analyzing": "Analyzing...",
         "btn_download": "Download Optimal Parameters (.csv)",
         "db_save_empty": "No data available to save. Please run AI Learning first.",
         "db_pc_download": "📥 Download Saved DB File to PC Directly",
@@ -119,10 +109,6 @@ LANG_DICT = {
         "db_current_latest": "✨ The file contains the latest data state.",
         "learning_progress": "Target Model Learning",
         "opt_progress": "Algorithm Search in Progress",
-        "complexity_label": "Data Complexity",
-        "complexity_low": "Low ⚡ Fast Local Search",
-        "complexity_high": "High Global Search Included",
-        "complexity_algo_used": "Algorithms Used",
         "btn_feature_guide": "Generate Feature Importance-based Process Diagnosis Guide",
         "guide_title": "Process Improvement Guide (Result Diagnosis Report)",
         "guide_subtitle": "Optimization Result Diagnosis Report",
@@ -173,6 +159,10 @@ LANG_DICT = {
         "opt_failed": "최적화 실패",
         "dash_title": "AI 지능형 대시보드",
         "opt_success_msg": "AI 추천 조건 도출 완료",
+        "warn_need_optimize": "⚠️ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.",
+        "btn_ai_report": "✨ AI 전문가 리포트 생성",
+        "report_box_title": "AI 전문가 리포트",
+        "spinner_analyzing": "분석 중...",
         "btn_download": "최적 파라미터 다운로드 (.csv)",
         "db_save_empty": "저장할 데이터가 없습니다. 먼저 데이터 업로드 후 AI 가동을 완료해 주세요.",
         "db_pc_download": "📥 내보낸 DB 파일 PC로 직접 다운로드",
@@ -182,10 +172,6 @@ LANG_DICT = {
         "db_current_latest": "✨ 최신 데이터 상태가 파일에 이미 반영되어 있습니다.",
         "learning_progress": "타겟 값 모델 학습 중",
         "opt_progress": "알고리즘 탐색 중",
-        "complexity_label": "데이터 복잡도",
-        "complexity_low": "낮음 ⚡ 고속 국소 탐색",
-        "complexity_high": "높음 🌐 전역 탐색 포함",
-        "complexity_algo_used": "사용 알고리즘",
         "btn_feature_guide": "Feature Importance 기반 공정 진단 가이드 생성",
         "guide_title": "공정 개선 가이드 (결과 진단 리포트)",
         "guide_subtitle": "최적화 결과 진단 리포트",
@@ -295,8 +281,7 @@ if 'models' not in st.session_state:
         'selected_algorithm': "N/A",
         'prepared_db_file': None,
         'data_changed_since_save': False,
-        'show_feature_guide': False,
-        'best_models_info': {} # 모델 선택 정보 저장용
+        'show_feature_guide': False
     })
 
 st.markdown("""
@@ -478,7 +463,7 @@ with st.sidebar:
                 if not vars_list or df_comb.empty:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
                 else:
-                    models_dict, scalers_dict, best_models_info = {}, {}, {}
+                    models_dict, scalers_dict = {}, {}
                     
                     # 학습 진행 상황 UI 추가
                     st.sidebar.markdown("<br>", unsafe_allow_html=True)
@@ -487,10 +472,11 @@ with st.sidebar:
                     total_targets = len(available_targets)
 
                     for idx, target in enumerate(available_targets):
+                        # 프로그레스 바 텍스트 업데이트
                         pct = int(((idx + 1) / total_targets) * 100)
                         prog_text.markdown(f"⚙️ **{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)**")
                         prog_bar.progress((idx + 1) / total_targets)
-                        time.sleep(0.1)
+                        time.sleep(0.1) # 시각적 피드백을 위한 짧은 대기
 
                         t_series = (
                             df_comb[target].iloc[:, 0]
@@ -501,69 +487,20 @@ with st.sidebar:
 
                         if vars_list and (len(np.unique(target_vals)) >= 2):
                             scaler = MinMaxScaler().fit(df_comb[vars_list])
-                            X_scaled = scaler.transform(df_comb[vars_list])
-                            
-                            # ---------------------------------------------------------
-                            # [변경] 학습부: 3개 알고리즘 기반 최적 모델 자동 탐색 및 선택
-                            # ---------------------------------------------------------
-                            candidate_models = {
-                                "RandomForest": RandomForestClassifier(n_estimators=100, random_state=42)
-                            }
-                            if XGBClassifier is not None:
-                                candidate_models["XGBoost"] = XGBClassifier(n_estimators=100, use_label_encoder=False, eval_metric='logloss', random_state=42)
-                            if LGBMClassifier is not None:
-                                candidate_models["LightGBM"] = LGBMClassifier(n_estimators=100, random_state=42, verbose=-1)
-                            
-                            # 라이브러리가 하나도 설치 안 되었을 경우의 기본 Fallback
-                            candidate_models["LogisticRegression"] = LogisticRegression(max_iter=1000)
-
-                            best_acc = -1.0
-                            best_model = None
-                            best_model_name = ""
-
-                            for m_name, m_inst in candidate_models.items():
-                                try:
-                                    m_inst.fit(X_scaled, target_vals)
-                                    preds = m_inst.predict(X_scaled)
-                                    acc = accuracy_score(target_vals, preds)
-                                    
-                                    if acc > best_acc:
-                                        best_acc = acc
-                                        best_model = m_inst
-                                        best_model_name = m_name
-                                except Exception:
-                                    continue
-                            
-                            models_dict[target] = best_model
+                            model = LogisticRegression(max_iter=1000).fit(
+                                scaler.transform(df_comb[vars_list]), target_vals
+                            )
+                            models_dict[target] = model
                             scalers_dict[target] = scaler
-                            best_models_info[target] = best_model_name
 
                     bounds_dict = {
                         v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1)
                         for v in vars_list
                     }
 
-                    # ---------------------------------------------------------
-                    # [추가] 데이터 복잡도 판단 (알고리즘 최적화 - 속도 중심)
-                    # 학습부에서 타겟별로 선택된 최적 모델 종류를 근거로 판단합니다.
-                    # RandomForest/XGBoost/LightGBM 같은 트리 기반 앙상블 모델이
-                    # 하나라도 선택되면, 예측 확률 표면이 계단형(비매끄러움)이라
-                    # 국소 최적화(SLSQP/L-BFGS-B)만으로는 최적해를 놓치기 쉬우므로
-                    # '복잡도 높음'으로 판단해 전역 탐색 알고리즘까지 포함합니다.
-                    # 전부 LogisticRegression(선형/매끄러운 경계)처럼 단순한 모델로만
-                    # 충분했다면 '복잡도 낮음'으로 판단해 빠른 국소 알고리즘만 사용합니다.
-                    # ---------------------------------------------------------
-                    ensemble_model_names = {"RandomForest", "XGBoost", "LightGBM"}
-                    is_complex = any(
-                        name in ensemble_model_names for name in best_models_info.values()
-                    )
-                    data_complexity = "high" if is_complex else "low"
-
                     st.session_state.update({
                         'models': models_dict,
                         'scalers': scalers_dict,
-                        'best_models_info': best_models_info,
-                        'data_complexity': data_complexity,
                         'df_injection': df_comb,
                         'global_process_vars': vars_list,
                         'global_bounds': bounds_dict,
@@ -664,6 +601,7 @@ with st.sidebar:
     else:
         st.sidebar.warning(L['db_save_empty'])
 
+
 # =================================================================
 # 2. 메인 화면
 # =================================================================
@@ -740,6 +678,7 @@ if is_active:
     t1, t2 = st.tabs([L['tab_diag'], L['tab_master']])
 
     with t1:
+        # A. 현재 사출 조건 파라미터 입력 (최적화 후 결과값이 여기에 연동됨)
         st.markdown(
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_a"]}</div>',
             unsafe_allow_html=True
@@ -748,6 +687,7 @@ if is_active:
         for i, var in enumerate(st.session_state['ui_display_vars']):
             with cols[i % 3]:
                 curr_val = st.session_state['current_inputs'].get(var, 0)
+                # 세션 상태의 값을 직접 슬라이더에 바인딩하고, ver 값을 활용해 UI 강제 업데이트
                 st.session_state['current_inputs'][var] = st.slider(
                     f"{var}",
                     0,
@@ -759,6 +699,7 @@ if is_active:
 
         st.divider()
 
+        # C. 불량 가중치 및 전문가 제약 조건
         st.markdown(
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_c"]}</div>',
             unsafe_allow_html=True
@@ -807,6 +748,7 @@ if is_active:
         )
         st.divider()
 
+        # D. 지능형 진단 및 최적화
         def calculate_total_risk(input_vals_list):
             all_v = st.session_state['global_process_vars']
             df_input = pd.DataFrame([input_vals_list], columns=all_v)
@@ -871,93 +813,50 @@ if is_active:
                 x0 = [float(st.session_state['current_inputs'].get(v, 0.0)) for v in all_v]
                 bnds = [st.session_state['global_bounds'].get(v, (0, 100)) for v in all_v]
 
-                # ---------------------------------------------------------
-                # [변경] 알고리즘 최적화 (속도 중심)
-                # 모든 알고리즘을 항상 다 돌리지 않고, 데이터 학습부에서 판단한
-                # '데이터의 복잡도'(data_complexity)에 따라 실행할 알고리즘을 자동 선택합니다.
-                #  - 복잡도 낮음: SLSQP, L-BFGS-B만 실행 (국소 탐색, 빠르게 완료)
-                #  - 복잡도 높음: Differential_Evolution / Dual_Annealing 포함 전체 실행 (전역 탐색)
-                # ---------------------------------------------------------
-                data_complexity = st.session_state.get('data_complexity', 'high')
-                if data_complexity == 'low':
-                    algorithms = ['SLSQP', 'L-BFGS-B']
-                else:
-                    algorithms = ['SLSQP', 'L-BFGS-B', 'Powell', 'Differential_Evolution', 'Dual_Annealing']
-
+                algorithms = ['L-BFGS-B', 'SLSQP', 'Powell', 'Nelder-Mead']
                 best_fun = float('inf')
                 best_res = None
                 chosen_algo = "None"
                 
+                # 역추론 최적화 탐색 진행 상황 표시 UI
                 st.markdown("<br>", unsafe_allow_html=True)
-                complexity_label = L['complexity_low'] if data_complexity == 'low' else L['complexity_high']
-                st.caption(f"{L['complexity_label']}: **{complexity_label}** · {L['complexity_algo_used']}: {', '.join(algorithms)}")
-                opt_prog_title = st.empty()
+                opt_prog_text = st.empty()
                 opt_prog_bar = st.progress(0)
-                opt_prog_text = st.empty() # 실시간 진행 상황 텍스트 출력용
 
                 for i, algo in enumerate(algorithms):
                     pct = int(((i + 1) / len(algorithms)) * 100)
-                    opt_prog_title.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
+                    opt_prog_text.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
                     opt_prog_bar.progress((i + 1) / len(algorithms))
-                    
-                    state = {'iter': 0}
-                    
-                    # ---------------------------------------------------------
-                    # [변경] 조기 종료(Early Stopping) 및 실시간 UI 콜백 구현
-                    # (속도 중심: 매 스텝 인위적 sleep 제거 — UI 갱신 자체의 지연만으로 충분)
-                    # ---------------------------------------------------------
-                    def callback_min(xk, *args):
-                        state['iter'] += 1
-                        if state['iter'] % 5 == 0:
-                            val = calculate_total_risk(xk)
-                            opt_prog_text.markdown(f"&nbsp;&nbsp; ↳ 🔄 **[{algo}]** 미세 정밀 조정 중 (Step: {state['iter']}) | 현재 위험도: <span style='color:#00e5ff;'>{val*100:.2f}%</span>", unsafe_allow_html=True)
-
-                    def callback_de(xk, convergence=0.0, *args):
-                        state['iter'] += 1
-                        val = calculate_total_risk(xk)
-                        opt_prog_text.markdown(f"&nbsp;&nbsp; ↳  **[{algo}]** 전역 탐색 중 (세대: {state['iter']}) | 수렴도: <span style='color:#a3e635;'>{convergence*100:.1f}%</span> | 현재 위험도: <span style='color:#00e5ff;'>{val*100:.2f}%</span>", unsafe_allow_html=True)
-                        if convergence >= 0.99 or val <= 0.005:
-                            return True # 조기 종료
-
-                    def callback_da(x, f, context, *args):
-                        state['iter'] += 1
-                        if state['iter'] % 10 == 0:
-                            opt_prog_text.markdown(f"&nbsp;&nbsp; ↳ 🔥 **[{algo}]** 열처리 탐색 중 (Step: {state['iter']}) | 현재 위험도: <span style='color:#00e5ff;'>{f*100:.2f}%</span>", unsafe_allow_html=True)
-                        if f <= 0.005:
-                            return True # 조기 종료
+                    time.sleep(0.2) # 시각적 피드백
                     
                     try:
-                        if algo in ['SLSQP', 'L-BFGS-B', 'Powell']:
-                            res_temp = minimize(
-                                calculate_total_risk, x0,
-                                method=algo, bounds=bnds,
-                                callback=callback_min,
-                                options={'maxiter': 1000, 'ftol': 1e-6} # 정밀도 우선: maxiter 증가, ftol 하향
-                            )
-                        elif algo == 'Differential_Evolution':
-                            res_temp = differential_evolution(
-                                calculate_total_risk, bounds=bnds,
-                                maxiter=100, popsize=15, mutation=(0.5, 1.5), recombination=0.7, seed=42,
-                                tol=0.01, # 99% 수렴 시 조기 종료
-                                callback=callback_de
-                            )
-                        elif algo == 'Dual_Annealing':
-                            res_temp = dual_annealing(
-                                calculate_total_risk, bounds=bnds,
-                                maxiter=200, seed=42,
-                                callback=callback_da
-                            )
-
+                        res_temp = minimize(
+                            calculate_total_risk, x0,
+                            method=algo, bounds=bnds,
+                            options={'maxiter': 500}
+                        )
                         if res_temp.success and res_temp.fun < best_fun:
                             best_fun = res_temp.fun
                             best_res = res_temp
                             chosen_algo = algo
                     except Exception:
                         continue
+
+                try:
+                    random_x0 = [np.random.uniform(b[0], b[1]) for b in bnds]
+                    res_global = minimize(
+                        calculate_total_risk, random_x0,
+                        method='L-BFGS-B', bounds=bnds
+                    )
+                    if res_global.success and res_global.fun < best_fun:
+                        best_fun = res_global.fun
+                        best_res = res_global
+                        chosen_algo = "Hybrid Multi-Start (L-BFGS-B)"
+                except Exception:
+                    pass
                 
-                opt_prog_title.empty()
-                opt_prog_bar.empty()
                 opt_prog_text.empty()
+                opt_prog_bar.empty()
 
                 if best_res is not None:
                     final_x = [
@@ -975,6 +874,7 @@ if is_active:
                     st.session_state['selected_algorithm'] = chosen_algo
                     st.session_state['show_feature_guide'] = False
 
+                    # 최적화된 파라미터 값을 현재 입력 상태에 덮어씌우고 버전을 올려 슬라이더 연동 처리
                     st.session_state['current_inputs'].update(opt_dict)
                     st.session_state['ver'] += 1
 
@@ -992,8 +892,10 @@ if is_active:
                     st.session_state['optimization_success'] = "Failed"
                     st.session_state['selected_algorithm'] = "N/A"
 
+        # AI 전문가 리포트 & 공정 진단 가이드 리포트 — 항상 표시 구역
         st.divider()
         
+        # 공정 개선 가이드 (결과 진단 리포트) 추가 구역
         st.markdown(f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>ㅁ {L['guide_title']}</h3>", unsafe_allow_html=True)
         if st.button(f"ㅁ {L['btn_feature_guide']}", key="btn_feature_guide_trigger"):
             if st.session_state.get('last_res_val') is not None:
@@ -1028,29 +930,31 @@ if is_active:
         st.markdown("<br>", unsafe_allow_html=True)
         
         if st.session_state['last_opt_df'] is None:
-            st.warning("⚠️ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.")
-            st.button("✨ AI 전문가 리포트 생성", disabled=True, key="btn_report_disabled")
+            st.warning(L['warn_need_optimize'])
+            st.button(L['btn_ai_report'], disabled=True, key="btn_report_disabled")
         else:
             st.success(L['opt_success_msg'])
-            if st.button("✨ AI 전문가 리포트 생성", key="btn_report_active"):
-                with st.spinner("분석 중..."):
+            if st.button(L['btn_ai_report'], key="btn_report_active"):
+                with st.spinner(L['spinner_analyzing']):
                     results = st.session_state.get('last_defect_risks', '진단 없음')
                     params = st.session_state['last_opt_df'].to_dict(orient='records')
                     report = generate_ai_report(results, params, num_actions=NUM_ACTIONS)
 
+                    # <br> 태그 및 공백 정리 후 보기 좋게 렌더링
                     import re
                     cleaned = report
-                    cleaned = re.sub(r'<br\s*/?>', '\n', cleaned)   
-                    cleaned = re.sub(r'<[^>]+>', '', cleaned)        
-                    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)  
+                    cleaned = re.sub(r'<br\s*/?>', '\n', cleaned)   # <br> → 줄바꿈
+                    cleaned = re.sub(r'<[^>]+>', '', cleaned)        # 기타 HTML 태그 제거
+                    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)  # 3줄 이상 공백 → 2줄
 
+                    # 줄 단위로 파싱하여 번호 항목 강조
                     lines = cleaned.strip().split('\n')
                     html_lines = []
                     for line in lines:
                         line = line.strip()
                         if not line:
                             html_lines.append('<div style="margin:6px 0;"></div>')
-                        elif re.match(r'^\d+[\.\)].', line):  
+                        elif re.match(r'^\d+[\.\)].', line):  # 1. 또는 1) 로 시작
                             html_lines.append(
                                 f'<div style="margin:10px 0 4px 0; color:#00e5ff; font-weight:700; font-size:0.92rem;">{line}</div>'
                             )
@@ -1063,7 +967,7 @@ if is_active:
                     <div style="background-color:#12141d; border:1px solid #2d3142;
                                 border-radius:10px; padding:20px 24px; margin-top:12px;">
                         <div style="color:#94a3b8; font-size:0.8rem; margin-bottom:12px;
-                                    letter-spacing:0.05em;">📋 AI 전문가 리포트</div>
+                                    letter-spacing:0.05em;">📋 {L['report_box_title']}</div>
                         {''.join(html_lines)}
                     </div>"""
                     st.markdown(report_html, unsafe_allow_html=True)
