@@ -888,13 +888,12 @@ if is_active:
                     # ---------------------------------------------------------
                     def callback_min(xk, *args):
                         state['iter'] += 1
-                        if state['iter'] % 5 == 0:
-                            val = calculate_total_risk(xk)
-                            opt_prog_detail.markdown(
-                                f"&nbsp;&nbsp; ↳ → **[{algo}]** {L['opt_step_local']} ({L['opt_step_label']}: {state['iter']}) "
-                                f"| {L['opt_current_risk']}: <span style='color:#00e5ff;'>{val*100:.2f}%</span>",
-                                unsafe_allow_html=True
-                            )
+                        val = calculate_total_risk(xk)
+                        opt_prog_detail.markdown(
+                            f"&nbsp;&nbsp; ↳ → **[{algo}]** {L['opt_step_local']} ({L['opt_step_label']}: {state['iter']}) "
+                            f"| {L['opt_current_risk']}: <span style='color:#00e5ff;'>{val*100:.2f}%</span>",
+                            unsafe_allow_html=True
+                        )
 
                     try:
                         res_temp = minimize(
@@ -917,13 +916,12 @@ if is_active:
 
                 def callback_global(xk, *args):
                     state['iter'] += 1
-                    if state['iter'] % 5 == 0:
-                        val = calculate_total_risk(xk)
-                        opt_prog_detail.markdown(
-                            f"&nbsp;&nbsp; ↳ ⇒ **[Hybrid Multi-Start]** {L['opt_step_global']} ({L['opt_step_label']}: {state['iter']}) "
-                            f"| {L['opt_current_risk']}: <span style='color:#a3e635;'>{val*100:.2f}%</span>",
-                            unsafe_allow_html=True
-                        )
+                    val = calculate_total_risk(xk)
+                    opt_prog_detail.markdown(
+                        f"&nbsp;&nbsp; ↳ ⇒ **[Hybrid Multi-Start]** {L['opt_step_global']} ({L['opt_step_label']}: {state['iter']}) "
+                        f"| {L['opt_current_risk']}: <span style='color:#a3e635;'>{val*100:.2f}%</span>",
+                        unsafe_allow_html=True
+                    )
 
                 try:
                     random_x0 = [np.random.uniform(b[0], b[1]) for b in bnds]
