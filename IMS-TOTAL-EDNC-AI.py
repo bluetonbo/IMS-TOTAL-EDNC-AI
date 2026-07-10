@@ -24,17 +24,34 @@ PRESET_ACTIONS = [
     "이러한 불량에 대한 유변학적이나 이론적 기술을 설명하세요."
 ]
 
-def generate_ai_report(defect_results, optimized_params, num_actions=3):
+def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko"):
     try:
         client = Groq(api_key=GROQ_API_KEY)
 
-        # 미리 입력된 조치 사항이 있으면 프롬프트에 포함
+        # 미리 입력된 조치 사항이 있으면 프롬프트에 포함 (원문은 한국어로 작성되어 있어도,
+        # 모델에게 최종 응답 언어로 번역/반영하도록 지시함)
         preset_text = ""
         if PRESET_ACTIONS:
-            preset_text = "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
-            preset_text += "\n".join(PRESET_ACTIONS)
+            preset_label = (
+                "\n\n[Preset action items - the final answer must address the following, translated into English]:\n"
+                if lang == "en"
+                else "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
+            )
+            preset_text = preset_label + "\n".join(PRESET_ACTIONS)
 
-        prompt = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
+        if lang == "en":
+            system_content = (
+                "You are an injection molding process expert who communicates only in English. "
+                "You must answer only in English. Never use Korean."
+            )
+            prompt = f"""You are an injection molding process expert with 20 years of experience.
+[Analysis Results]: {defect_results}
+[Parameters]: {optimized_params}{preset_text}
+You must answer only in English. Write only the {num_actions} key action items for field operators.
+Do not output your thinking process — write only the final answer."""
+        else:
+            system_content = "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. 영어를 절대 사용하지 마세요."
+            prompt = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
 [분석 결과]: {defect_results}
 [파라미터]: {optimized_params}{preset_text}
 반드시 한국어로만 답하세요. 현장 작업자를 위한 핵심 조치 사항 {num_actions}가지만 작성해 주세요.
@@ -45,14 +62,15 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3):
             messages=[
                 {
                     "role": "system",
-                    "content": "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. 영어를 절대 사용하지 마세요."
+                    "content": system_content
                 },
                 {"role": "user", "content": prompt}
             ],
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"리포트 생성 오류: {str(e)}"
+        err_prefix = "Report generation error: " if lang == "en" else "리포트 생성 오류: "
+        return f"{err_prefix}{str(e)}"
 
 
 # --- i18n 언어 사전 정의 ---
@@ -936,9 +954,13 @@ if is_active:
             st.success(L['opt_success_msg'])
             if st.button(L['btn_ai_report'], key="btn_report_active"):
                 with st.spinner(L['spinner_analyzing']):
-                    results = st.session_state.get('last_defect_risks', '진단 없음')
+                    no_diag_text = "No diagnosis" if st.session_state.lang == "en" else "진단 없음"
+                    results = st.session_state.get('last_defect_risks', no_diag_text)
                     params = st.session_state['last_opt_df'].to_dict(orient='records')
-                    report = generate_ai_report(results, params, num_actions=NUM_ACTIONS)
+                    report = generate_ai_report(
+                        results, params, num_actions=NUM_ACTIONS,
+                        lang=st.session_state.lang
+                    )
 
                     # <br> 태그 및 공백 정리 후 보기 좋게 렌더링
                     import re
