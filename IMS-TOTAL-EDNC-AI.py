@@ -18,63 +18,76 @@ NUM_ACTIONS = 3
 
 #  핵심 조치 사항에 미리 포함할 내용 — 원하는 지시문을 자유롭게 입력하세요
 # 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
-# 한국어(PRESET_ACTIONS_KO)와 영어(PRESET_ACTIONS_EN)는 서로 동일한 내용의 번역본이어야 합니다.
+# 리포트는 항상 이 한국어 원문을 기준으로 1회 생성된 뒤 필요 시 영어로 번역되므로,
+# 영어 버전을 별도로 관리할 필요가 없습니다.
 PRESET_ACTIONS_KO = [
     "가장 불량 가능성이 높고, 50% 이상이고, 상위 3개의 조건을 모두 만족하는 불량에 대한 객관적 분석으로 해결책 도출하세요.",
     "가장 불량 가능성이 높고, 50%이상이고, 상위 3개의 3개 조건을 만족하는 불량들 간의 Trade Off에 대한 분석을 하세요.",
     "이러한 불량에 대한 유변학적이나 이론적 기술을 설명하세요."
-]
-PRESET_ACTIONS_EN = [
-    "For the defect(s) with the highest probability of occurrence that are at 50% or above and satisfy all of the top 3 conditions, derive a solution through objective analysis.",
-    "Analyze the trade-offs among the defects that have the highest probability of occurrence, are at 50% or above, and satisfy the top 3 conditions.",
-    "Explain the rheological or theoretical background of these defects."
 ]
 
 def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko"):
     try:
         client = Groq(api_key=GROQ_API_KEY)
 
-        # 미리 입력된 조치 사항 — 한국어/영어 버전이 서로 동일한 내용의 번역본이므로
-        # 화면 언어에 맞는 리스트를 그대로 프롬프트에 포함시킵니다 (모델이 번역할 필요 없음).
-        preset_actions = PRESET_ACTIONS_EN if lang == "en" else PRESET_ACTIONS_KO
+        # 사전 지정 조치 사항 (한국어 원문을 기준으로 사용)
         preset_text = ""
-        if preset_actions:
-            preset_label = (
-                "\n\n[Preset action items - the final answer must include all of the following]:\n"
-                if lang == "en"
-                else "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
-            )
-            preset_text = preset_label + "\n".join(preset_actions)
+        if PRESET_ACTIONS_KO:
+            preset_text = "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
+            preset_text += "\n".join(PRESET_ACTIONS_KO)
 
-        if lang == "en":
-            system_content = (
-                "You are an injection molding process expert who communicates only in English. "
-                "You must answer only in English. Never use Korean."
-            )
-            prompt = f"""You are an injection molding process expert with 20 years of experience.
-[Analysis Results]: {defect_results}
-[Parameters]: {optimized_params}{preset_text}
-You must answer only in English. Write only the {num_actions} key action items for field operators.
-Do not output your thinking process — write only the final answer."""
-        else:
-            system_content = "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. 영어를 절대 사용하지 마세요."
-            prompt = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
+        prompt_ko = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
 [분석 결과]: {defect_results}
 [파라미터]: {optimized_params}{preset_text}
 반드시 한국어로만 답하세요. 현장 작업자를 위한 핵심 조치 사항 {num_actions}가지만 작성해 주세요.
 생각 과정(thinking)은 출력하지 말고 최종 답변만 작성하세요."""
 
-        response = client.chat.completions.create(
+        # ---------------------------------------------------------
+        # [변경] 언어별로 매번 독립적으로 리포트를 생성하면, 같은 데이터를 넣어도
+        # 모델이 호출마다 다시 추론하기 때문에 한국어/영어 리포트의 "결론 자체"가
+        # 달라질 수 있습니다(실제 확인됨). 이를 막기 위해 항상 한국어로 리포트를
+        # 1회만 생성한 뒤, 영어가 필요하면 그 결과를 그대로 "번역"만 하여 반환합니다.
+        # → 두 언어의 수치·결론·구조가 항상 100% 일치합니다.
+        # ---------------------------------------------------------
+        response_ko = client.chat.completions.create(
             model="openai/gpt-oss-120b",
             messages=[
                 {
                     "role": "system",
-                    "content": system_content
+                    "content": "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. 영어를 절대 사용하지 마세요."
                 },
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt_ko}
             ],
+            temperature=0,
         )
-        return response.choices[0].message.content
+        report_ko = response_ko.choices[0].message.content
+
+        if lang != "en":
+            return report_ko
+
+        translate_prompt = f"""다음은 사출 성형 공정 AI 분석 리포트(한국어 원문)입니다. 이 내용을 영어로 정확하게 번역하세요.
+내용을 추가하거나 재해석하거나 결론을 바꾸지 마세요. 원문의 수치·사실·구조(표, 번호 목록, 소제목 등)를 그대로 유지한 채 번역만 하세요.
+
+[한국어 원문]
+{report_ko}"""
+
+        response_en = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a professional technical translator. Translate the given Korean text "
+                        "into English precisely and faithfully. Do not add, omit, reinterpret, or change "
+                        "any facts, numbers, or conclusions. Preserve the original structure (tables, "
+                        "numbered lists, headings) exactly. Respond only in English."
+                    )
+                },
+                {"role": "user", "content": translate_prompt}
+            ],
+            temperature=0,
+        )
+        return response_en.choices[0].message.content
     except Exception as e:
         err_prefix = "Report generation error: " if lang == "en" else "리포트 생성 오류: "
         return f"{err_prefix}{str(e)}"
