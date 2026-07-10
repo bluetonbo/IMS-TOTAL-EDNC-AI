@@ -659,7 +659,7 @@ with col_title:
         unsafe_allow_html=True
     )
 with col_lang_switch:
-    if st.button("🌐 KO / EN", key="lang_btn_main"):
+    if st.button("KO / EN", key="lang_btn_main"):
         st.session_state.lang = "ko" if st.session_state.lang == "en" else "en"
         st.rerun()
 
