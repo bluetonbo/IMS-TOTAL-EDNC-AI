@@ -121,7 +121,7 @@ LANG_DICT = {
         "opt_progress": "Algorithm Search in Progress",
         "complexity_label": "Data Complexity",
         "complexity_low": "Low ⚡ Fast Local Search",
-        "complexity_high": "High 🌐 Global Search Included",
+        "complexity_high": "High Global Search Included",
         "complexity_algo_used": "Algorithms Used",
         "btn_feature_guide": "Generate Feature Importance-based Process Diagnosis Guide",
         "guide_title": "Process Improvement Guide (Result Diagnosis Report)",
