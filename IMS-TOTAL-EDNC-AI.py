@@ -18,26 +18,33 @@ NUM_ACTIONS = 3
 
 #  핵심 조치 사항에 미리 포함할 내용 — 원하는 지시문을 자유롭게 입력하세요
 # 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
-PRESET_ACTIONS = [
+# 한국어(PRESET_ACTIONS_KO)와 영어(PRESET_ACTIONS_EN)는 서로 동일한 내용의 번역본이어야 합니다.
+PRESET_ACTIONS_KO = [
     "가장 불량 가능성이 높고, 50% 이상이고, 상위 3개의 조건을 모두 만족하는 불량에 대한 객관적 분석으로 해결책 도출하세요.",
     "가장 불량 가능성이 높고, 50%이상이고, 상위 3개의 3개 조건을 만족하는 불량들 간의 Trade Off에 대한 분석을 하세요.",
     "이러한 불량에 대한 유변학적이나 이론적 기술을 설명하세요."
+]
+PRESET_ACTIONS_EN = [
+    "For the defect(s) with the highest probability of occurrence that are at 50% or above and satisfy all of the top 3 conditions, derive a solution through objective analysis.",
+    "Analyze the trade-offs among the defects that have the highest probability of occurrence, are at 50% or above, and satisfy the top 3 conditions.",
+    "Explain the rheological or theoretical background of these defects."
 ]
 
 def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko"):
     try:
         client = Groq(api_key=GROQ_API_KEY)
 
-        # 미리 입력된 조치 사항이 있으면 프롬프트에 포함 (원문은 한국어로 작성되어 있어도,
-        # 모델에게 최종 응답 언어로 번역/반영하도록 지시함)
+        # 미리 입력된 조치 사항 — 한국어/영어 버전이 서로 동일한 내용의 번역본이므로
+        # 화면 언어에 맞는 리스트를 그대로 프롬프트에 포함시킵니다 (모델이 번역할 필요 없음).
+        preset_actions = PRESET_ACTIONS_EN if lang == "en" else PRESET_ACTIONS_KO
         preset_text = ""
-        if PRESET_ACTIONS:
+        if preset_actions:
             preset_label = (
-                "\n\n[Preset action items - the final answer must address the following, translated into English]:\n"
+                "\n\n[Preset action items - the final answer must include all of the following]:\n"
                 if lang == "en"
                 else "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
             )
-            preset_text = preset_label + "\n".join(PRESET_ACTIONS)
+            preset_text = preset_label + "\n".join(preset_actions)
 
         if lang == "en":
             system_content = (
