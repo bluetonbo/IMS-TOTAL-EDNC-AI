@@ -26,6 +26,46 @@ PRESET_ACTIONS_KO = [
     "이러한 불량에 대한 유변학적이나 이론적 기술을 설명하세요."
 ]
 
+import re
+
+def _build_fact_block(defect_results):
+    """[분석 결과]를 LLM이 스스로 판단하게 두지 않고, 파이썬이 이미 임계치(DEFECT_THRESHOLD)
+    기준으로 고위험/저위험을 판정해서 '사실'로 정리해 넘깁니다. 모델은 이 판정을 그대로
+    신뢰하기만 하면 되므로, 실측치와 무관하게 위험도를 과장/추측하는 할루시네이션을 줄입니다."""
+    if not isinstance(defect_results, dict) or not defect_results:
+        return (
+            f"[분석 결과]: {defect_results}\n"
+            "(진단/최적화 데이터가 없어 신뢰할 수 있는 분석을 수행할 수 없습니다. "
+            "이 경우 절대 추측하지 말고 '데이터 부족으로 판단 불가'라고만 답하세요.)"
+        )
+
+    threshold_pct = int(DEFECT_THRESHOLD * 100)
+    high_risk = {k: v for k, v in defect_results.items() if v >= DEFECT_THRESHOLD}
+    low_risk = {k: v for k, v in defect_results.items() if v < DEFECT_THRESHOLD}
+
+    def _fmt(d):
+        return ", ".join(
+            f"{TARGET_VARS.get(k, k)}: {v*100:.1f}%"
+            for k, v in sorted(d.items(), key=lambda x: -x[1])
+        )
+
+    lines = [
+        f"[사실 확인 - 아래는 파이썬이 이미 {threshold_pct}% 기준으로 판정을 마친 결과입니다. "
+        f"이 판정을 그대로 신뢰하고, 절대 재해석하거나 다른 결론을 새로 만들지 마세요]"
+    ]
+    if high_risk:
+        lines.append(f"- 위험(≥{threshold_pct}%) 불량 {len(high_risk)}개: {_fmt(high_risk)}")
+    else:
+        lines.append(
+            f"- 위험(≥{threshold_pct}%) 불량: 없음 (전체 불량이 기준치 미만입니다. "
+            "위험이 있는 것처럼 서술하거나 잠재적 위험을 추측하지 마세요.)"
+        )
+    if low_risk:
+        lines.append(f"- 안전(<{threshold_pct}%) 불량 {len(low_risk)}개: {_fmt(low_risk)}")
+    return "\n".join(lines)
+
+
+
 def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko"):
     try:
         client = Groq(api_key=GROQ_API_KEY)
@@ -36,9 +76,24 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko
             preset_text = "\n\n[사전 지정 분석 항목 - 아래 항목들을 번호 순서대로 빠짐없이 먼저 분석하여 답변하세요]:\n"
             preset_text += "\n".join(f"{i+1}. {item}" for i, item in enumerate(PRESET_ACTIONS_KO))
 
+        fact_block = _build_fact_block(defect_results)
+
         prompt_ko = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
-[분석 결과]: {defect_results}
+
+{fact_block}
+
 [파라미터]: {optimized_params}{preset_text}
+
+<중요 - 반드시 지켜야 할 원칙>
+- 위 [사실 확인]에 없는 내용을 추측하거나 새로 만들어내지 마세요.
+- 확실하지 않은 내용은 "데이터 부족으로 판단 불가"라고 답하세요.
+- 본문에 등장하는 모든 수치(%, 값)는 위 [사실 확인]/[파라미터]에 있는 값과 정확히 일치해야 하며,
+  임의로 새로운 수치를 만들거나 반올림 외의 방식으로 바꾸지 마세요.
+- 위험(≥{int(DEFECT_THRESHOLD*100)}%) 불량이 "없음"이라고 되어 있다면, 잠재적 위험이나 향후 가능성을
+  추측해서 서술하지 말고 사실 그대로만 전달하세요.
+- 사전 지정 분석 항목이 특정 조건(예: 위험도 {int(DEFECT_THRESHOLD*100)}% 이상인 불량의 존재)을
+  전제로 한다면, 실제로 그런 불량이 없을 경우 "해당 조건을 만족하는 불량이 없습니다"라고 명확히
+  밝히고 억지로 답을 만들어내지 마세요.
 
 위 [사전 지정 분석 항목]이 있다면 그 항목들을 번호 순서대로 절대 빠짐없이 전부 분석하여 답변한 뒤,
 마지막에 별도 섹션으로 "현장 작업자를 위한 핵심 조치 사항"을 정확히 {num_actions}개 작성하세요.
@@ -58,7 +113,10 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko
             messages=[
                 {
                     "role": "system",
-                    "content": "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. 영어를 절대 사용하지 마세요."
+                    "content": (
+                        "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. "
+                        "영어를 절대 사용하지 마세요. 제공된 데이터에 없는 사실을 추측하거나 지어내지 마세요."
+                    )
                 },
                 {"role": "user", "content": prompt_ko}
             ],
@@ -91,7 +149,8 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko
             ],
             temperature=0,
         )
-        return response_en.choices[0].message.content
+        report_en = response_en.choices[0].message.content
+        return report_en
     except Exception as e:
         err_prefix = "Report generation error: " if lang == "en" else "리포트 생성 오류: "
         return f"{err_prefix}{str(e)}"
