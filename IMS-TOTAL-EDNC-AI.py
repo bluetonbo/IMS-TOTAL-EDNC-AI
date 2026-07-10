@@ -138,17 +138,17 @@ LANG_DICT = {
         "opt_failed": "Failed",
         "dash_title": "AI Intelligent Dashboard",
         "opt_success_msg": "AI Recommendation Derived Successfully",
-        "warn_need_optimize": "⚠️ To generate the AI Expert Report, please click the 'Optimize Conditions' button above first to complete optimization.",
-        "btn_ai_report": "✨ Generate AI Expert Report",
+        "warn_need_optimize": "⚠ To generate the AI Expert Report, please click the 'Optimize Conditions' button above first to complete optimization.",
+        "btn_ai_report": "▸ Generate AI Expert Report",
         "report_box_title": "AI Expert Report",
         "spinner_analyzing": "Analyzing...",
         "btn_download": "Download Optimal Parameters (.csv)",
         "db_save_empty": "No data available to save. Please run AI Learning first.",
-        "db_pc_download": "📥 Download Saved DB File to PC Directly",
-        "db_export_title": "💾 External Database Export",
-        "db_prepare_btn": "⚙️ Generate & Save DB Snapshot",
+        "db_pc_download": "↓ Download Saved DB File to PC Directly",
+        "db_export_title": "▤ External Database Export",
+        "db_prepare_btn": "▸ Generate & Save DB Snapshot",
         "db_prepared_msg": "Prepared File: ",
-        "db_current_latest": "✨ The file contains the latest data state.",
+        "db_current_latest": "✓ The file contains the latest data state.",
         "learning_progress": "Target Model Learning",
         "opt_progress": "Algorithm Search in Progress",
         "btn_feature_guide": "Generate Feature Importance-based Process Diagnosis Guide",
@@ -201,17 +201,17 @@ LANG_DICT = {
         "opt_failed": "최적화 실패",
         "dash_title": "AI 지능형 대시보드",
         "opt_success_msg": "AI 추천 조건 도출 완료",
-        "warn_need_optimize": "⚠️ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.",
-        "btn_ai_report": "✨ AI 전문가 리포트 생성",
+        "warn_need_optimize": "⚠ AI 전문가 리포트를 생성하려면 먼저 위의 '조건 최적화' 버튼을 눌러 최적화를 완료해 주세요.",
+        "btn_ai_report": "▸ AI 전문가 리포트 생성",
         "report_box_title": "AI 전문가 리포트",
         "spinner_analyzing": "분석 중...",
         "btn_download": "최적 파라미터 다운로드 (.csv)",
         "db_save_empty": "저장할 데이터가 없습니다. 먼저 데이터 업로드 후 AI 가동을 완료해 주세요.",
-        "db_pc_download": "📥 내보낸 DB 파일 PC로 직접 다운로드",
-        "db_export_title": "💾 데이터베이스 외부 내보내기",
-        "db_prepare_btn": "⚙️ DB 스냅샷 생성 및 서버 저장",
+        "db_pc_download": "↓ 내보낸 DB 파일 PC로 직접 다운로드",
+        "db_export_title": "▤ 데이터베이스 외부 내보내기",
+        "db_prepare_btn": "▸ DB 스냅샷 생성 및 서버 저장",
         "db_prepared_msg": "준비된 파일: ",
-        "db_current_latest": "✨ 최신 데이터 상태가 파일에 이미 반영되어 있습니다.",
+        "db_current_latest": "✓ 최신 데이터 상태가 파일에 이미 반영되어 있습니다.",
         "learning_progress": "타겟 값 모델 학습 중",
         "opt_progress": "알고리즘 탐색 중",
         "btn_feature_guide": "Feature Importance 기반 공정 진단 가이드 생성",
@@ -516,7 +516,7 @@ with st.sidebar:
                     for idx, target in enumerate(available_targets):
                         # 프로그레스 바 텍스트 업데이트
                         pct = int(((idx + 1) / total_targets) * 100)
-                        prog_text.markdown(f"⚙️ **{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)**")
+                        prog_text.markdown(f"▸ **{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)**")
                         prog_bar.progress((idx + 1) / total_targets)
                         time.sleep(0.1) # 시각적 피드백을 위한 짧은 대기
 
@@ -630,7 +630,7 @@ with st.sidebar:
                             unsafe_allow_html=True
                         )
 
-                    st.sidebar.markdown(f"✅ {L['db_prepared_msg']} `{target_file}`")
+                    st.sidebar.markdown(f"✓ {L['db_prepared_msg']} `{target_file}`")
                     st.sidebar.download_button(
                         label=L['db_pc_download'],
                         data=db_bytes,
@@ -867,7 +867,7 @@ if is_active:
 
                 for i, algo in enumerate(algorithms):
                     pct = int(((i + 1) / len(algorithms)) * 100)
-                    opt_prog_text.markdown(f"🔍 **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
+                    opt_prog_text.markdown(f"▸ **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
                     opt_prog_bar.progress((i + 1) / len(algorithms))
                     time.sleep(0.2) # 시각적 피드백
                     
@@ -938,8 +938,8 @@ if is_active:
         st.divider()
         
         # 공정 개선 가이드 (결과 진단 리포트) 추가 구역
-        st.markdown(f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>ㅁ {L['guide_title']}</h3>", unsafe_allow_html=True)
-        if st.button(f"ㅁ {L['btn_feature_guide']}", key="btn_feature_guide_trigger"):
+        st.markdown(f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>▪ {L['guide_title']}</h3>", unsafe_allow_html=True)
+        if st.button(f"▸ {L['btn_feature_guide']}", key="btn_feature_guide_trigger"):
             if st.session_state.get('last_res_val') is not None:
                 st.session_state['show_feature_guide'] = True
             else:
@@ -952,11 +952,11 @@ if is_active:
 
             success_status = L['guide_all_success'] if out_spec_count == 0 else f"주의 필요 ({out_spec_count}개 이탈)"
             success_msg = L['guide_success_msg'] if out_spec_count == 0 else L['guide_partial_msg']
-            icon = "✅" if out_spec_count == 0 else "⚠️"
+            icon = "✓" if out_spec_count == 0 else "⚠"
 
             guide_html = f"""
             <div style="background-color:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:12px; margin-bottom: 24px;">
-                <h3 style="margin-top:0; color:#e1e1e1;">## ㅁ {L['guide_subtitle']}</h3>
+                <h3 style="margin-top:0; color:#e1e1e1;">## ▪ {L['guide_subtitle']}</h3>
                 <blockquote style="border-left: 4px solid #10b981; padding-left: 10px; color:#94a3b8; font-size:0.95rem; background-color:#1a1c24; padding:10px;">
                     > {L['guide_pred_rel']}: <b>100.0%</b> | {L['guide_unachievable']}: <b>0개</b> | {L['guide_out_of_spec']}: <b>{out_spec_count}개</b> | {L['guide_normal']}: <b>{normal_count}개</b>
                 </blockquote>
@@ -1013,7 +1013,7 @@ if is_active:
                     <div style="background-color:#12141d; border:1px solid #2d3142;
                                 border-radius:10px; padding:20px 24px; margin-top:12px;">
                         <div style="color:#94a3b8; font-size:0.8rem; margin-bottom:12px;
-                                    letter-spacing:0.05em;">📋 {L['report_box_title']}</div>
+                                    letter-spacing:0.05em;">{L['report_box_title']}</div>
                         {''.join(html_lines)}
                     </div>"""
                     st.markdown(report_html, unsafe_allow_html=True)
