@@ -915,7 +915,7 @@ if is_active:
                     def callback_de(xk, convergence=0.0, *args):
                         state['iter'] += 1
                         val = calculate_total_risk(xk)
-                        opt_prog_text.markdown(f"&nbsp;&nbsp; ↳ 🧬 **[{algo}]** 전역 탐색 중 (세대: {state['iter']}) | 수렴도: <span style='color:#a3e635;'>{convergence*100:.1f}%</span> | 현재 위험도: <span style='color:#00e5ff;'>{val*100:.2f}%</span>", unsafe_allow_html=True)
+                        opt_prog_text.markdown(f"&nbsp;&nbsp; ↳  **[{algo}]** 전역 탐색 중 (세대: {state['iter']}) | 수렴도: <span style='color:#a3e635;'>{convergence*100:.1f}%</span> | 현재 위험도: <span style='color:#00e5ff;'>{val*100:.2f}%</span>", unsafe_allow_html=True)
                         if convergence >= 0.99 or val <= 0.005:
                             return True # 조기 종료
 
