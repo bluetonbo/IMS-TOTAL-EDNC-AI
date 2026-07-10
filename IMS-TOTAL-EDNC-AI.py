@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from scipy.optimize import minimize
 import sqlite3
 import json
@@ -27,6 +28,34 @@ PRESET_ACTIONS_KO = [
 ]
 
 import re
+
+def _choose_regularization(n_pos, n_neg):
+    """샘플이 극히 적은 타겟일수록 과적합 위험이 크므로 규제(C)를 더 강하게 줍니다.
+    (알고리즘은 그대로 LogisticRegression을 쓰되, 규제 강도만 표본 수에 맞게 조정)"""
+    min_class = min(n_pos, n_neg)
+    if min_class < 5:
+        return 0.1   # 표본이 매우 적음 → 강한 규제
+    elif min_class < 15:
+        return 0.5   # 표본이 다소 적음 → 중간 규제
+    return 1.0       # sklearn 기본값
+
+
+def _cross_val_reliability(X, y, n_pos, n_neg, C):
+    """학습 정확도가 아니라 K-fold 교차검증 정확도로 모델 신뢰도를 측정합니다.
+    표본이 너무 적어 유의미한 교차검증이 불가능하면 None(측정 불가)을 반환합니다."""
+    min_class = min(n_pos, n_neg)
+    if min_class < 2:
+        return None  # 각 폴드에 최소 1개씩도 배정 못 함 → 교차검증 불가
+    n_splits = min(5, min_class)
+    try:
+        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        scores = cross_val_score(
+            LogisticRegression(max_iter=1000, C=C), X, y, cv=cv, scoring='accuracy'
+        )
+        return float(np.mean(scores))
+    except Exception:
+        return None
+
 
 def _build_fact_block(defect_results):
     """[분석 결과]를 LLM이 스스로 판단하게 두지 않고, 파이썬이 이미 임계치(DEFECT_THRESHOLD)
@@ -224,6 +253,10 @@ LANG_DICT = {
         "opt_step_local": "Fine-tuning in progress",
         "opt_step_global": "Global re-search in progress",
         "opt_current_risk": "Current Risk",
+        "reliability_label": "Model Reliability (cross-validated)",
+        "reliability_na": "Not measurable (too few samples)",
+        "reliability_low_sample": "Low sample warning",
+        "reliability_samples": "samples",
         "opt_step_label": "Step",
         "btn_feature_guide": "Generate Feature Importance-based Process Diagnosis Guide",
         "guide_title": "Process Improvement Guide (Result Diagnosis Report)",
@@ -292,6 +325,10 @@ LANG_DICT = {
         "opt_step_local": "미세 정밀 조정 중",
         "opt_step_global": "전역 재탐색 중",
         "opt_current_risk": "현재 위험도",
+        "reliability_label": "모델 신뢰도(교차검증)",
+        "reliability_na": "측정 불가(표본 부족)",
+        "reliability_low_sample": "표본 부족 경고",
+        "reliability_samples": "개 표본",
         "opt_step_label": "Step",
         "btn_feature_guide": "Feature Importance 기반 공정 진단 가이드 생성",
         "guide_title": "공정 개선 가이드 (결과 진단 리포트)",
@@ -385,6 +422,7 @@ if 'models' not in st.session_state:
     st.session_state.update({
         'models': {},
         'scalers': {},
+        'model_reliability': {},
         'df_injection': pd.DataFrame(),
         'ui_display_vars': [],
         'global_process_vars': [],
@@ -585,6 +623,7 @@ with st.sidebar:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
                 else:
                     models_dict, scalers_dict = {}, {}
+                    reliability_dict = {}
                     
                     # 학습 진행 상황 UI 추가
                     st.sidebar.markdown("<br>", unsafe_allow_html=True)
@@ -607,12 +646,34 @@ with st.sidebar:
                         target_vals = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
 
                         if vars_list and (len(np.unique(target_vals)) >= 2):
+                            n_pos = int(target_vals.sum())
+                            n_neg = int(len(target_vals) - n_pos)
+
+                            # [추가] 신뢰성 보강 1: 표본이 적은 타겟일수록 규제(C)를 더 강하게
+                            chosen_C = _choose_regularization(n_pos, n_neg)
+
                             scaler = MinMaxScaler().fit(df_comb[vars_list])
-                            model = LogisticRegression(max_iter=1000).fit(
-                                scaler.transform(df_comb[vars_list]), target_vals
+                            X_scaled = scaler.transform(df_comb[vars_list])
+                            model = LogisticRegression(max_iter=1000, C=chosen_C).fit(
+                                X_scaled, target_vals
                             )
                             models_dict[target] = model
                             scalers_dict[target] = scaler
+
+                            # [추가] 신뢰성 보강 2: 학습 정확도가 아닌 K-fold 교차검증 정확도 측정
+                            cv_score = _cross_val_reliability(X_scaled, target_vals, n_pos, n_neg, chosen_C)
+
+                            # [추가] 신뢰성 보강 3: 표본 부족 경고 (소수 클래스 5개 미만이면 저신뢰 표시)
+                            low_sample = min(n_pos, n_neg) < 5
+
+                            reliability_dict[target] = {
+                                'cv_score': cv_score,
+                                'n_pos': n_pos,
+                                'n_neg': n_neg,
+                                'n_total': n_pos + n_neg,
+                                'C': chosen_C,
+                                'low_sample': low_sample,
+                            }
 
                     bounds_dict = {
                         v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1)
@@ -622,6 +683,7 @@ with st.sidebar:
                     st.session_state.update({
                         'models': models_dict,
                         'scalers': scalers_dict,
+                        'model_reliability': reliability_dict,
                         'df_injection': df_comb,
                         'global_process_vars': vars_list,
                         'global_bounds': bounds_dict,
@@ -1169,6 +1231,24 @@ if is_active:
                         else "#ff5252"
                     )
                     opacity_style = "opacity: 1.0;" if is_active_target else "opacity: 0.25;"
+
+                    # [추가] 신뢰성 보강: 이 타겟 모델의 교차검증 신뢰도 · 표본 수를 함께 표시
+                    rel = st.session_state.get('model_reliability', {}).get(target_key)
+                    reliability_caption = ""
+                    if rel is not None:
+                        n_total = rel['n_total']
+                        if rel['cv_score'] is not None:
+                            rel_pct = int(round(rel['cv_score'] * 100))
+                            rel_color = "#00e5ff" if rel_pct >= 80 else "#ffab00" if rel_pct >= 60 else "#ff5252"
+                            reliability_caption = (
+                                f"<span style='color:{rel_color};'>{L['reliability_label']}: {rel_pct}%</span>"
+                                f" · {n_total}{L['reliability_samples']}"
+                            )
+                        else:
+                            reliability_caption = f"<span style='color:#ff5252;'>{L['reliability_na']}</span> · {n_total}{L['reliability_samples']}"
+                        if rel['low_sample']:
+                            reliability_caption += f" · <span style='color:#ff5252;'>⚠ {L['reliability_low_sample']}</span>"
+
                     st.markdown(
                         f"""<div style="margin-bottom: 12px; {opacity_style}">
                             <span style="font-size:0.95rem; font-weight:600; color:#ffffff;">{full_name}</span>
@@ -1178,6 +1258,7 @@ if is_active:
                                     {r_perc}%
                                 </div>
                             </div>
+                            <div style="font-size:0.72rem; color:#64748b; margin-top:2px;">{reliability_caption}</div>
                         </div>""",
                         unsafe_allow_html=True
                     )
