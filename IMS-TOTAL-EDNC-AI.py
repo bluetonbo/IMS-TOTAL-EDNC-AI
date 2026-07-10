@@ -33,14 +33,18 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko
         # 사전 지정 조치 사항 (한국어 원문을 기준으로 사용)
         preset_text = ""
         if PRESET_ACTIONS_KO:
-            preset_text = "\n\n[사전 지정 조치 사항 - 반드시 아래 내용을 포함하여 작성하세요]:\n"
-            preset_text += "\n".join(PRESET_ACTIONS_KO)
+            preset_text = "\n\n[사전 지정 분석 항목 - 아래 항목들을 번호 순서대로 빠짐없이 먼저 분석하여 답변하세요]:\n"
+            preset_text += "\n".join(f"{i+1}. {item}" for i, item in enumerate(PRESET_ACTIONS_KO))
 
         prompt_ko = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
 [분석 결과]: {defect_results}
 [파라미터]: {optimized_params}{preset_text}
-반드시 한국어로만 답하세요. 현장 작업자를 위한 핵심 조치 사항 {num_actions}가지만 작성해 주세요.
-생각 과정(thinking)은 출력하지 말고 최종 답변만 작성하세요."""
+
+위 [사전 지정 분석 항목]이 있다면 그 항목들을 번호 순서대로 절대 빠짐없이 전부 분석하여 답변한 뒤,
+마지막에 별도 섹션으로 "현장 작업자를 위한 핵심 조치 사항"을 정확히 {num_actions}개 작성하세요.
+(사전 지정 분석 항목과 최종 핵심 조치 사항은 서로 다른 별개의 항목이므로, 핵심 조치 사항이 {num_actions}개라고 해서
+사전 지정 분석 항목을 생략하거나 그 개수에 맞춰 줄이지 마세요.)
+반드시 한국어로만 답하세요. 생각 과정(thinking)은 출력하지 말고 최종 답변만 작성하세요."""
 
         # ---------------------------------------------------------
         # [변경] 언어별로 매번 독립적으로 리포트를 생성하면, 같은 데이터를 넣어도
