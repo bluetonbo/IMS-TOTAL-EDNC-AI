@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from scipy.optimize import minimize
@@ -11,6 +12,18 @@ import os
 import time
 from datetime import datetime
 from groq import Groq
+
+try:
+    from xgboost import XGBClassifier
+    _HAS_XGB = True
+except ImportError:
+    _HAS_XGB = False
+
+try:
+    from lightgbm import LGBMClassifier
+    _HAS_LGBM = True
+except ImportError:
+    _HAS_LGBM = False
 
 GROQ_API_KEY = "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"
 
@@ -55,6 +68,60 @@ def _cross_val_reliability(X, y, n_pos, n_neg, C):
         return float(np.mean(scores))
     except Exception:
         return None
+
+
+def _auto_select_best_model(X, y, n_pos, n_neg, C):
+    """[추가] LR / RF / XGB / LGBM 4종을 교차검증 정확도로 비교해 가장 좋은 모델을 반환.
+    표본이 너무 적거나 패키지가 없으면 가능한 후보 중 최선을 선택합니다.
+    반환: (fitted_model, algo_name, cv_score, feature_importances_or_None)"""
+    min_class = min(n_pos, n_neg)
+    n_splits  = max(2, min(5, min_class))
+
+    candidates = {
+        'LogisticRegression': LogisticRegression(max_iter=1000, C=C),
+        'RandomForest':       RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+    }
+    if _HAS_XGB:
+        candidates['XGBoost'] = XGBClassifier(
+            n_estimators=100, learning_rate=0.1, use_label_encoder=False,
+            eval_metric='logloss', random_state=42, verbosity=0
+        )
+    if _HAS_LGBM:
+        candidates['LightGBM'] = LGBMClassifier(
+            n_estimators=100, learning_rate=0.1, random_state=42,
+            verbose=-1, n_jobs=-1
+        )
+
+    best_name  = 'LogisticRegression'
+    best_score = -1.0
+    best_model = candidates['LogisticRegression']
+
+    if min_class >= 2:
+        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        for name, clf in candidates.items():
+            try:
+                scores = cross_val_score(clf, X, y, cv=cv, scoring='accuracy')
+                mean_score = float(np.mean(scores))
+                if mean_score > best_score:
+                    best_score = mean_score
+                    best_name  = name
+                    best_model = clf
+            except Exception:
+                continue
+
+    # 최종 전체 데이터로 재학습
+    best_model.fit(X, y)
+
+    # Feature Importance 추출 (LR은 coef_ 사용)
+    if hasattr(best_model, 'feature_importances_'):
+        fi = best_model.feature_importances_
+    elif hasattr(best_model, 'coef_'):
+        fi = np.abs(best_model.coef_[0])
+    else:
+        fi = None
+
+    cv_score = best_score if best_score >= 0 else None
+    return best_model, best_name, cv_score, fi
 
 
 def _build_fact_block(defect_results):
@@ -423,6 +490,8 @@ if 'models' not in st.session_state:
         'models': {},
         'scalers': {},
         'model_reliability': {},
+        'model_algo_names': {},      # [추가] 타겟별 선택된 알고리즘 이름
+        'feature_importance': {},    # [추가] 타겟별 Feature Importance
         'df_injection': pd.DataFrame(),
         'ui_display_vars': [],
         'global_process_vars': [],
@@ -624,6 +693,8 @@ with st.sidebar:
                 else:
                     models_dict, scalers_dict = {}, {}
                     reliability_dict = {}
+                    algo_names_dict  = {}   # [추가] 타겟별 선택 알고리즘 이름
+                    fi_dict          = {}   # [추가] 타겟별 Feature Importance
                     
                     # 학습 진행 상황 UI 추가
                     st.sidebar.markdown("<br>", unsafe_allow_html=True)
@@ -654,14 +725,17 @@ with st.sidebar:
 
                             scaler = MinMaxScaler().fit(df_comb[vars_list])
                             X_scaled = scaler.transform(df_comb[vars_list])
-                            model = LogisticRegression(max_iter=1000, C=chosen_C).fit(
-                                X_scaled, target_vals
-                            )
-                            models_dict[target] = model
-                            scalers_dict[target] = scaler
 
-                            # [추가] 신뢰성 보강 2: 학습 정확도가 아닌 K-fold 교차검증 정확도 측정
-                            cv_score = _cross_val_reliability(X_scaled, target_vals, n_pos, n_neg, chosen_C)
+                            # [수정] LR 단일 → LR/RF/XGB/LGBM 4종 자동선택
+                            best_model, best_algo, cv_score, fi = _auto_select_best_model(
+                                X_scaled, target_vals, n_pos, n_neg, chosen_C
+                            )
+
+                            models_dict[target]     = best_model
+                            scalers_dict[target]    = scaler
+                            algo_names_dict[target] = best_algo
+                            if fi is not None:
+                                fi_dict[target] = dict(zip(vars_list, fi.tolist() if hasattr(fi, 'tolist') else fi))
 
                             # [추가] 신뢰성 보강 3: 표본 부족 경고 (소수 클래스 5개 미만이면 저신뢰 표시)
                             low_sample = min(n_pos, n_neg) < 5
@@ -673,10 +747,11 @@ with st.sidebar:
                                 'n_total': n_pos + n_neg,
                                 'C': chosen_C,
                                 'low_sample': low_sample,
+                                'algo': best_algo,   # [추가] 선택된 알고리즘 이름
                             }
 
                     bounds_dict = {
-                        v: (int(np.floor(df_comb[v].min())), int(np.ceil(df_comb[v].max())) + 1)
+                        v: (float(df_comb[v].min()), float(df_comb[v].max()))
                         for v in vars_list
                     }
 
@@ -684,6 +759,8 @@ with st.sidebar:
                         'models': models_dict,
                         'scalers': scalers_dict,
                         'model_reliability': reliability_dict,
+                        'model_algo_names': algo_names_dict,   # [추가]
+                        'feature_importance': fi_dict,         # [추가]
                         'df_injection': df_comb,
                         'global_process_vars': vars_list,
                         'global_bounds': bounds_dict,
@@ -870,13 +947,19 @@ if is_active:
         for i, var in enumerate(st.session_state['ui_display_vars']):
             with cols[i % 3]:
                 curr_val = st.session_state['current_inputs'].get(var, 0)
-                # 세션 상태의 값을 직접 슬라이더에 바인딩하고, ver 값을 활용해 UI 강제 업데이트
+                # [수정] 슬라이더 범위: 데이터 실제 min/max 사용 (curr_val*2 방식 대체)
+                bounds = st.session_state['global_bounds'].get(var, (0.0, 100.0))
+                sl_min = float(bounds[0])
+                sl_max = float(bounds[1])
+                if sl_min == sl_max:
+                    sl_max = sl_min + 1.0
+                # 현재값이 범위 밖이면 범위 내로 클리핑
+                curr_clamped = float(max(sl_min, min(float(curr_val), sl_max)))
                 st.session_state['current_inputs'][var] = st.slider(
                     f"{var}",
-                    0,
-                    int(curr_val * 2) if curr_val > 0 else 100,
-                    int(curr_val),
-                    step=1,
+                    sl_min, sl_max,
+                    curr_clamped,
+                    step=max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1),
                     key=f"sl_{var}_{st.session_state['ver']}"
                 )
 
@@ -1237,15 +1320,21 @@ if is_active:
                     reliability_caption = ""
                     if rel is not None:
                         n_total = rel['n_total']
+                        algo_name = rel.get('algo', 'LR')   # [추가] 알고리즘 이름
                         if rel['cv_score'] is not None:
                             rel_pct = int(round(rel['cv_score'] * 100))
                             rel_color = "#00e5ff" if rel_pct >= 80 else "#ffab00" if rel_pct >= 60 else "#ff5252"
                             reliability_caption = (
                                 f"<span style='color:{rel_color};'>{L['reliability_label']}: {rel_pct}%</span>"
                                 f" · {n_total}{L['reliability_samples']}"
+                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
                             )
                         else:
-                            reliability_caption = f"<span style='color:#ff5252;'>{L['reliability_na']}</span> · {n_total}{L['reliability_samples']}"
+                            reliability_caption = (
+                                f"<span style='color:#ff5252;'>{L['reliability_na']}</span>"
+                                f" · {n_total}{L['reliability_samples']}"
+                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
+                            )
                         if rel['low_sample']:
                             reliability_caption += f" · <span style='color:#ff5252;'>⚠ {L['reliability_low_sample']}</span>"
 
@@ -1284,6 +1373,236 @@ if is_active:
                     mime='text/csv'
                 )
 
+        # [추가] Feature Importance 시각화 섹션
+        fi_all = st.session_state.get('feature_importance', {})
+        if fi_all:
+            st.divider()
+            st.markdown(
+                f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>▪ Feature Importance (불량별 주요 영향 변수)</h3>",
+                unsafe_allow_html=True
+            )
+            fi_target_keys = list(fi_all.keys())
+            fi_sel = st.selectbox(
+                "불량 항목 선택",
+                options=fi_target_keys,
+                format_func=lambda k: TARGET_VARS.get(k, k),
+                key="fi_target_sel"
+            )
+            if fi_sel and fi_sel in fi_all:
+                fi_data = fi_all[fi_sel]
+                fi_series = pd.Series(fi_data).sort_values(ascending=False).head(15)
+                algo_used = st.session_state.get('model_algo_names', {}).get(fi_sel, '')
+
+                bar_html_rows = ""
+                max_val = fi_series.max() if fi_series.max() > 0 else 1.0
+                for var_name, imp_val in fi_series.items():
+                    bar_pct   = imp_val / max_val * 100
+                    bar_color = "#00e5ff" if bar_pct >= 60 else "#10b981" if bar_pct >= 30 else "#64748b"
+                    bar_html_rows += f"""
+                    <div style="margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.82rem; color:#e1e1e1; margin-bottom:3px;">
+                            <span style="font-weight:600;">{var_name}</span>
+                            <span style="color:#94a3b8;">{imp_val:.4f}</span>
+                        </div>
+                        <div style="background:#1e293b; border-radius:3px; height:10px;">
+                            <div style="width:{bar_pct:.1f}%; background:{bar_color}; height:10px; border-radius:3px;"></div>
+                        </div>
+                    </div>"""
+
+                st.markdown(
+                    f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:8px;">
+                        <div style="color:#94a3b8; font-size:0.78rem; margin-bottom:14px;">
+                            {TARGET_VARS.get(fi_sel, fi_sel)} · 알고리즘: <span style="color:#a3e635;">{algo_used}</span> · 상위 15개 변수
+                        </div>
+                        {bar_html_rows}
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+
     with t2:
         if not st.session_state['df_injection'].empty:
-            st.dataframe(st.session_state['df_injection'], use_container_width=True)
+            df_view = st.session_state['df_injection'].copy()
+
+            # ── 서브탭 구성 ──────────────────────────────────────────────
+            sub1, sub2, sub3, sub4 = st.tabs([
+                "📋 원시 데이터",
+                "📊 불량률 분포",
+                "🔥 변수 상관관계",
+                "📈 시계열 트렌드"
+            ])
+
+            # ── 서브탭 1: 원시 데이터 테이블 (기존 동일) ─────────────────
+            with sub1:
+                st.dataframe(df_view, use_container_width=True)
+
+            # ── 서브탭 2: 불량률 분포 히스토그램 ─────────────────────────
+            with sub2:
+                target_cols = [c for c in df_view.columns if c in TARGET_VARS]
+                if target_cols:
+                    st.markdown("<p style='color:#94a3b8; font-size:0.85rem;'>각 불량 항목의 예측 확률 분포를 히스토그램으로 표시합니다.</p>", unsafe_allow_html=True)
+                    sel_hist = st.selectbox(
+                        "불량 항목 선택",
+                        options=target_cols,
+                        format_func=lambda k: TARGET_VARS.get(k, k),
+                        key="hist_target_sel"
+                    )
+                    hist_data = df_view[sel_hist].dropna()
+                    if not hist_data.empty:
+                        bins = min(20, max(5, len(hist_data) // 3))
+                        counts, edges = np.histogram(hist_data, bins=bins, range=(0, 1))
+                        bar_rows = ""
+                        max_count = counts.max() if counts.max() > 0 else 1
+                        for i, cnt in enumerate(counts):
+                            lo, hi   = edges[i], edges[i+1]
+                            mid      = (lo + hi) / 2
+                            bar_pct  = cnt / max_count * 100
+                            bar_col  = "#00e5ff" if mid < 0.3 else "#ffab00" if mid < 0.7 else "#ff5252"
+                            bar_rows += f"""
+                            <div style="display:flex; align-items:center; margin-bottom:5px; gap:8px;">
+                                <span style="color:#94a3b8; font-size:0.75rem; width:80px; text-align:right;">{lo:.2f}~{hi:.2f}</span>
+                                <div style="flex:1; background:#1e293b; border-radius:3px; height:18px;">
+                                    <div style="width:{bar_pct:.1f}%; background:{bar_col}; height:18px; border-radius:3px;
+                                                display:flex; align-items:center; padding-left:6px;">
+                                        <span style="color:#fff; font-size:0.72rem;">{cnt}</span>
+                                    </div>
+                                </div>
+                            </div>"""
+                        st.markdown(
+                            f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:8px;">
+                                <div style="color:#e1e1e1; font-size:0.9rem; font-weight:600; margin-bottom:14px;">
+                                    {TARGET_VARS.get(sel_hist, sel_hist)} 분포 (n={len(hist_data)})
+                                </div>
+                                {bar_rows}
+                                <div style="color:#64748b; font-size:0.72rem; margin-top:10px;">
+                                    ● 파란색: 안전(0~0.3) &nbsp; ● 주황색: 주의(0.3~0.7) &nbsp; ● 빨간색: 위험(0.7~1.0)
+                                </div>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
+
+            # ── 서브탭 3: 변수 상관관계 히트맵 ───────────────────────────
+            with sub3:
+                numeric_cols = df_view.select_dtypes(include=[np.number]).columns.tolist()
+                if len(numeric_cols) >= 2:
+                    st.markdown("<p style='color:#94a3b8; font-size:0.85rem;'>공정 변수와 불량 항목 간 상관계수 히트맵입니다. (pearson, -1~+1)</p>", unsafe_allow_html=True)
+
+                    process_vars = [c for c in numeric_cols if c not in TARGET_VARS]
+                    defect_vars  = [c for c in numeric_cols if c in TARGET_VARS]
+
+                    if process_vars and defect_vars:
+                        corr_df = df_view[process_vars + defect_vars].corr()
+                        # 공정변수 → 불량 항목 부분만 추출
+                        sub_corr = corr_df.loc[process_vars, defect_vars]
+
+                        # 상위 영향 공정변수 10개만 표시
+                        top_vars = sub_corr.abs().max(axis=1).sort_values(ascending=False).head(10).index.tolist()
+                        sub_corr = sub_corr.loc[top_vars]
+
+                        header_cells = "".join([f"<th style='padding:6px 8px; font-size:0.72rem; color:#94a3b8; text-align:center; white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
+                        data_rows = ""
+                        for var_r in sub_corr.index:
+                            cells = f"<td style='padding:6px 8px; font-size:0.78rem; color:#e1e1e1; font-weight:600;'>{var_r}</td>"
+                            for var_c in sub_corr.columns:
+                                val = sub_corr.loc[var_r, var_c]
+                                intensity = abs(val)
+                                if val > 0.3:
+                                    bg = f"rgba(0,229,255,{min(intensity,0.9):.2f})"
+                                    tc = "#000"
+                                elif val < -0.3:
+                                    bg = f"rgba(255,82,82,{min(intensity,0.9):.2f})"
+                                    tc = "#fff"
+                                else:
+                                    bg = "#1e293b"
+                                    tc = "#64748b"
+                                cells += f"<td style='padding:6px 8px; text-align:center; background:{bg}; color:{tc}; font-size:0.78rem;'>{val:.2f}</td>"
+                            data_rows += f"<tr>{cells}</tr>"
+
+                        st.markdown(
+                            f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:8px; overflow-x:auto;">
+                                <div style="color:#e1e1e1; font-size:0.9rem; font-weight:600; margin-bottom:14px;">
+                                    공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)
+                                </div>
+                                <table style="border-collapse:collapse; width:100%;">
+                                    <thead><tr><th style="padding:6px 8px;"></th>{header_cells}</tr></thead>
+                                    <tbody>{data_rows}</tbody>
+                                </table>
+                                <div style="color:#64748b; font-size:0.72rem; margin-top:10px;">
+                                    ● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함
+                                </div>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
+
+            # ── 서브탭 4: 시계열 트렌드 차트 ─────────────────────────────
+            with sub4:
+                target_cols_t = [c for c in df_view.columns if c in TARGET_VARS]
+                process_cols_t = [c for c in df_view.select_dtypes(include=[np.number]).columns if c not in TARGET_VARS]
+
+                if target_cols_t or process_cols_t:
+                    st.markdown("<p style='color:#94a3b8; font-size:0.85rem;'>진단/최적화 이력 순서대로 변수 값 변화를 추적합니다.</p>", unsafe_allow_html=True)
+                    all_trend_cols = target_cols_t + process_cols_t
+                    trend_sel = st.multiselect(
+                        "트렌드 확인할 항목 선택 (복수 선택 가능)",
+                        options=all_trend_cols,
+                        default=target_cols_t[:3] if len(target_cols_t) >= 3 else target_cols_t,
+                        format_func=lambda k: TARGET_VARS.get(k, k),
+                        key="trend_multisel"
+                    )
+                    if trend_sel:
+                        trend_df = df_view[trend_sel].reset_index(drop=True)
+                        trend_df.index = range(1, len(trend_df) + 1)
+
+                        COLORS = ["#00e5ff","#a3e635","#ffab00","#ff5252","#c084fc",
+                                  "#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24"]
+
+                        # 각 컬럼별 정규화 (0~1) 후 트렌드 라인 그리기
+                        max_idx = len(trend_df)
+                        line_defs = []
+                        for ci, col in enumerate(trend_sel):
+                            col_data = trend_df[col].dropna()
+                            if col_data.empty:
+                                continue
+                            col_min, col_max = col_data.min(), col_data.max()
+                            span = col_max - col_min if col_max != col_min else 1.0
+                            norm = (col_data - col_min) / span
+                            line_defs.append({'col': col, 'data': norm, 'raw': col_data, 'color': COLORS[ci % len(COLORS)]})
+
+                        if line_defs:
+                            # SVG 트렌드 차트
+                            W, H, PAD = 900, 260, 40
+                            svg_lines = ""
+                            for ld in line_defs:
+                                pts = []
+                                for xi, (idx_v, y_v) in enumerate(ld['data'].items()):
+                                    x = PAD + (xi / max(len(ld['data']) - 1, 1)) * (W - 2 * PAD)
+                                    y = PAD + (1 - y_v) * (H - 2 * PAD)
+                                    pts.append(f"{x:.1f},{y:.1f}")
+                                if pts:
+                                    svg_lines += f"<polyline points='{' '.join(pts)}' fill='none' stroke='{ld['color']}' stroke-width='2' opacity='0.85'/>"
+                                    # 마지막 점에 값 표시
+                                    last_x, last_y = float(pts[-1].split(',')[0]), float(pts[-1].split(',')[1])
+                                    last_raw = ld['raw'].iloc[-1]
+                                    svg_lines += f"<circle cx='{last_x}' cy='{last_y}' r='4' fill='{ld['color']}'/>"
+                                    svg_lines += f"<text x='{min(last_x+6, W-60)}' y='{last_y+4}' fill='{ld['color']}' font-size='10'>{last_raw:.2f}</text>"
+
+                            # 범례
+                            legend = ""
+                            for li, ld in enumerate(line_defs):
+                                lx = PAD + li * 130
+                                legend += f"<rect x='{lx}' y='{H+8}' width='14' height='8' fill='{ld['color']}' rx='2'/>"
+                                label  = TARGET_VARS.get(ld['col'], ld['col'])[:12]
+                                legend += f"<text x='{lx+18}' y='{H+16}' fill='#94a3b8' font-size='10'>{label}</text>"
+
+                            svg_h = H + 36
+                            st.markdown(
+                                f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:16px 20px; margin-top:8px; overflow-x:auto;">
+                                    <div style="color:#e1e1e1; font-size:0.9rem; font-weight:600; margin-bottom:10px;">트렌드 차트 (정규화 0~1 표시)</div>
+                                    <svg viewBox='0 0 {W} {svg_h}' style='width:100%; max-height:300px;'>
+                                        <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                                        <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                                        {svg_lines}
+                                        {legend}
+                                    </svg>
+                                </div>""",
+                                unsafe_allow_html=True
+                            )
