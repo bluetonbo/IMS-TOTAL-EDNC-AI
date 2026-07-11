@@ -666,8 +666,18 @@ st.markdown("""
         margin-bottom: 4px !important;
         overflow: hidden !important;
     }
-    /* 헤더 (접힌 상태) */
-    .streamlit-expanderHeader {
+    /* details 태그 자체 (접힘/펼침 공통) */
+    [data-testid="stExpander"] details {
+        background-color: #1a1c24 !important;
+        border: none !important;
+    }
+    /* 펼침 상태 details[open] */
+    [data-testid="stExpander"] details[open] {
+        background-color: #1a1c24 !important;
+    }
+    /* 헤더 summary (접힌 상태) */
+    .streamlit-expanderHeader,
+    [data-testid="stExpander"] details summary {
         background-color: #1a1c24 !important;
         border: none !important;
         border-radius: 8px !important;
@@ -676,30 +686,37 @@ st.markdown("""
         font-size: 0.95rem !important;
         padding: 12px 16px !important;
         transition: background 0.2s ease, color 0.2s ease !important;
+        list-style: none !important;
     }
-    /* 헤더 hover */
-    .streamlit-expanderHeader:hover {
-        background-color: #23263a !important;
-        color: #00e5ff !important;
-    }
-    /* 헤더 펼침 상태 */
+    /* 펼침 상태 헤더 */
+    [data-testid="stExpander"] details[open] summary,
     .streamlit-expanderHeader[aria-expanded="true"] {
         background-color: #1e2235 !important;
         color: #00e5ff !important;
-        border-bottom: 1px solid #2d3142 !important;
         border-radius: 8px 8px 0 0 !important;
+        border-bottom: 1px solid #2d3142 !important;
     }
-    /* 펼침 상태에서 포커스 아웃라인(빨간 테두리) 제거 */
+    /* hover */
+    .streamlit-expanderHeader:hover,
+    [data-testid="stExpander"] details summary:hover {
+        background-color: #23263a !important;
+        color: #00e5ff !important;
+    }
+    /* 포커스 빨간 테두리 완전 제거 */
     .streamlit-expanderHeader:focus,
     .streamlit-expanderHeader:focus-visible,
     [data-testid="stExpander"] *:focus,
-    [data-testid="stExpander"] *:focus-visible {
+    [data-testid="stExpander"] *:focus-visible,
+    [data-testid="stExpander"] details:focus,
+    [data-testid="stExpander"] summary:focus,
+    [data-testid="stExpander"] summary:focus-visible {
         outline: none !important;
         box-shadow: none !important;
         border-color: #2d3142 !important;
     }
     /* 컨텐츠 영역 */
-    .streamlit-expanderContent {
+    .streamlit-expanderContent,
+    [data-testid="stExpander"] details > div {
         border: none !important;
         border-top: 1px solid #2d3142 !important;
         border-radius: 0 0 8px 8px !important;
@@ -707,9 +724,11 @@ st.markdown("""
         padding: 12px 4px !important;
     }
     /* 화살표(chevron) 색상 */
-    .streamlit-expanderHeader svg {
+    .streamlit-expanderHeader svg,
+    [data-testid="stExpander"] summary svg {
         color: #00e5ff !important;
         fill: #00e5ff !important;
+        stroke: #00e5ff !important;
     }
     /* 로딩 스텝 박스 */
     .load-step {
