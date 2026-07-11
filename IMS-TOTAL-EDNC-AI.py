@@ -665,10 +665,26 @@ with st.sidebar:
                 st.sidebar.error(f"{L['err_load']}{e}")
                 return None
 
-        df_i, df_v, df_r = load_data(u1), load_data(u2), load_data(u3)
+        # [추가] 데이터 로딩 진행 상황 표시
+        load_prog = st.sidebar.progress(0, text="▸ Loading data files...")
+        load_status = st.sidebar.empty()
+
+        load_status.markdown("▸ **Reading File 1 (Input Data)...**")
+        load_prog.progress(10, text="▸ Reading File 1 (Input Data)...")
+        df_i = load_data(u1)
+        load_prog.progress(30, text="▸ Reading File 2 (Validation Data)...")
+        load_status.markdown("▸ **Reading File 2 (Validation Data)...**")
+        df_v = load_data(u2)
+        load_prog.progress(50, text="▸ Reading File 3 (Reference Data)...")
+        load_status.markdown("▸ **Reading File 3 (Reference Data)...**")
+        df_r = load_data(u3)
+        load_prog.progress(70, text="▸ Merging & preprocessing data...")
+        load_status.markdown("▸ **Merging & preprocessing data...**")
 
         if df_i is not None and (df_v is not None or df_r is not None):
             # 1. 데이터 정리
+            load_prog.progress(80, text="▸ Cleaning & deduplicating...")
+            load_status.markdown("▸ **Cleaning & deduplicating...**")
             for df in [df_i, df_v, df_r]:
                 if df is not None:
                     df.rename(columns=OLD_TO_NEW_MAP, inplace=True)
@@ -776,6 +792,8 @@ with st.sidebar:
                     for v in vars_list:
                         st.session_state['current_inputs'][v] = int(round(float(init_row.get(v, 0))))
 
+                    load_prog.progress(100, text="✅ All done! AI engine ready.")
+                    load_status.markdown("✅ **AI Engine ready.**")
                     st.rerun()
         else:
             st.sidebar.warning(L['warn_upload'])
@@ -943,25 +961,59 @@ if is_active:
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_a"]}</div>',
             unsafe_allow_html=True
         )
+
+        # [추가] 섹션 A 슬라이더 ↔ Min/Max 숫자입력 콜백 함수
+        def _on_sl_a_change(var, ver):
+            val = st.session_state.get(f"sl_{var}_{ver}")
+            if val is not None:
+                st.session_state['current_inputs'][var] = val
+                st.session_state[f"ni_a_{var}"] = float(val)
+
+        def _on_ni_a_change(var, sl_min, sl_max, ver):
+            raw = st.session_state.get(f"ni_a_{var}", sl_min)
+            clamped = float(max(sl_min, min(raw, sl_max)))
+            st.session_state['current_inputs'][var] = clamped
+            st.session_state[f"sl_{var}_{ver}"] = clamped
+
         cols = st.columns(3)
         for i, var in enumerate(st.session_state['ui_display_vars']):
             with cols[i % 3]:
                 curr_val = st.session_state['current_inputs'].get(var, 0)
-                # [수정] 슬라이더 범위: 데이터 실제 min/max 사용 (curr_val*2 방식 대체)
-                bounds = st.session_state['global_bounds'].get(var, (0.0, 100.0))
-                sl_min = float(bounds[0])
-                sl_max = float(bounds[1])
+                bounds   = st.session_state['global_bounds'].get(var, (0.0, 100.0))
+                sl_min   = float(bounds[0])
+                sl_max   = float(bounds[1])
                 if sl_min == sl_max:
                     sl_max = sl_min + 1.0
-                # 현재값이 범위 밖이면 범위 내로 클리핑
                 curr_clamped = float(max(sl_min, min(float(curr_val), sl_max)))
-                st.session_state['current_inputs'][var] = st.slider(
-                    f"{var}",
-                    sl_min, sl_max,
-                    curr_clamped,
-                    step=max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1),
-                    key=f"sl_{var}_{st.session_state['ver']}"
-                )
+                step_v = max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1)
+
+                # 숫자입력 초기값 세팅
+                if f"ni_a_{var}" not in st.session_state:
+                    st.session_state[f"ni_a_{var}"] = curr_clamped
+
+                sl_col, ni_col = st.columns([2, 1])
+                with sl_col:
+                    st.session_state['current_inputs'][var] = st.slider(
+                        f"{var}",
+                        sl_min, sl_max, curr_clamped,
+                        step=step_v,
+                        key=f"sl_{var}_{st.session_state['ver']}",
+                        on_change=_on_sl_a_change,
+                        args=(var, st.session_state['ver'])
+                    )
+                with ni_col:
+                    ni_val = st.number_input(
+                        "Value",
+                        min_value=sl_min, max_value=sl_max,
+                        value=float(st.session_state['current_inputs'].get(var, curr_clamped)),
+                        step=step_v,
+                        format="%.2f",
+                        key=f"ni_a_{var}",
+                        on_change=_on_ni_a_change,
+                        args=(var, sl_min, sl_max, st.session_state['ver']),
+                        label_visibility="visible"
+                    )
+                    st.session_state['current_inputs'][var] = ni_val
 
         st.divider()
 
@@ -1207,18 +1259,25 @@ if is_active:
             normal_count = sum(1 for r in risks.values() if r < DEFECT_THRESHOLD)
             out_spec_count = len(risks) - normal_count
 
-            success_status = L['guide_all_success'] if out_spec_count == 0 else f"주의 필요 ({out_spec_count}개 이탈)"
+            success_status = L['guide_all_success'] if out_spec_count == 0 else (
+                f"Caution Required ({out_spec_count} out of spec)" if st.session_state.lang == "en"
+                else f"주의 필요 ({out_spec_count}개 이탈)"
+            )
             success_msg = L['guide_success_msg'] if out_spec_count == 0 else L['guide_partial_msg']
             icon = "✓" if out_spec_count == 0 else "⚠"
 
+            unachievable_label = "Unachievable" if st.session_state.lang == "en" else "달성 불가"
+            out_spec_label     = "Out of Spec"  if st.session_state.lang == "en" else "이탈"
+            normal_label       = "Normal"       if st.session_state.lang == "en" else "정상"
+
             guide_html = f"""
             <div style="background-color:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:12px; margin-bottom: 24px;">
-                <h3 style="margin-top:0; color:#e1e1e1;">## ▪ {L['guide_subtitle']}</h3>
+                <h3 style="margin-top:0; color:#e1e1e1;">▪ {L['guide_subtitle']}</h3>
                 <blockquote style="border-left: 4px solid #10b981; padding-left: 10px; color:#94a3b8; font-size:0.95rem; background-color:#1a1c24; padding:10px;">
-                    > {L['guide_pred_rel']}: <b>100.0%</b> | {L['guide_unachievable']}: <b>0개</b> | {L['guide_out_of_spec']}: <b>{out_spec_count}개</b> | {L['guide_normal']}: <b>{normal_count}개</b>
+                    {L['guide_pred_rel']}: <b>100.0%</b> | {unachievable_label}: <b>0</b> | {out_spec_label}: <b>{out_spec_count}</b> | {normal_label}: <b>{normal_count}</b>
                 </blockquote>
                 <hr style="border-color:#2d3142; margin: 16px 0;">
-                <h4 style="color:#10b981; margin-bottom: 12px;">### {icon} {success_status}</h4>
+                <h4 style="color:#10b981; margin-bottom: 12px;">{icon} {success_status}</h4>
                 <p style="line-height:1.6; font-size:0.95rem; color:#e1e1e1;">
                     {success_msg}
                 </p>
@@ -1276,7 +1335,8 @@ if is_active:
 
                     report_html = f"""
                     <div style="background-color:#12141d; border:1px solid #2d3142;
-                                border-radius:10px; padding:20px 24px; margin-top:12px;">
+                                border-radius:10px; padding:20px 24px; margin-top:12px;
+                                max-height:420px; overflow-y:auto;">
                         <div style="color:#94a3b8; font-size:0.8rem; margin-bottom:12px;
                                     letter-spacing:0.05em;">{L['report_box_title']}</div>
                         {''.join(html_lines)}
@@ -1376,62 +1436,64 @@ if is_active:
         # [추가] Feature Importance 시각화 섹션
         fi_all = st.session_state.get('feature_importance', {})
         if fi_all:
+            import streamlit.components.v1 as components
             st.divider()
-            st.markdown(
-                f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>▪ Feature Importance (불량별 주요 영향 변수)</h3>",
-                unsafe_allow_html=True
-            )
+            fi_title = "▪ Feature Importance (Top Influential Variables per Defect)" if st.session_state.lang == "en" else "▪ Feature Importance (불량별 주요 영향 변수)"
+            fi_sel_label  = "Select Defect" if st.session_state.lang == "en" else "불량 항목 선택"
+            fi_algo_label = "Algorithm"     if st.session_state.lang == "en" else "알고리즘"
+            fi_top_label  = "Top 15 Variables" if st.session_state.lang == "en" else "상위 15개 변수"
+            st.markdown(f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>{fi_title}</h3>", unsafe_allow_html=True)
             fi_target_keys = list(fi_all.keys())
             fi_sel = st.selectbox(
-                "불량 항목 선택",
+                fi_sel_label,
                 options=fi_target_keys,
                 format_func=lambda k: TARGET_VARS.get(k, k),
                 key="fi_target_sel"
             )
             if fi_sel and fi_sel in fi_all:
-                fi_data = fi_all[fi_sel]
+                fi_data   = fi_all[fi_sel]
                 fi_series = pd.Series(fi_data).sort_values(ascending=False).head(15)
                 algo_used = st.session_state.get('model_algo_names', {}).get(fi_sel, '')
+                max_val   = fi_series.max() if fi_series.max() > 0 else 1.0
 
-                bar_html_rows = ""
-                max_val = fi_series.max() if fi_series.max() > 0 else 1.0
+                bar_rows_html = ""
                 for var_name, imp_val in fi_series.items():
                     bar_pct   = imp_val / max_val * 100
                     bar_color = "#00e5ff" if bar_pct >= 60 else "#10b981" if bar_pct >= 30 else "#64748b"
-                    bar_html_rows += f"""
+                    bar_rows_html += f"""
                     <div style="margin-bottom:8px;">
-                        <div style="display:flex; justify-content:space-between; font-size:0.82rem; color:#e1e1e1; margin-bottom:3px;">
-                            <span style="font-weight:600;">{var_name}</span>
-                            <span style="color:#94a3b8;">{imp_val:.4f}</span>
-                        </div>
-                        <div style="background:#1e293b; border-radius:3px; height:10px;">
-                            <div style="width:{bar_pct:.1f}%; background:{bar_color}; height:10px; border-radius:3px;"></div>
-                        </div>
+                      <div style="display:flex;justify-content:space-between;font-size:13px;color:#e1e1e1;margin-bottom:3px;">
+                        <span style="font-weight:600;">{var_name}</span>
+                        <span style="color:#94a3b8;">{imp_val:.4f}</span>
+                      </div>
+                      <div style="background:#1e293b;border-radius:3px;height:10px;">
+                        <div style="width:{bar_pct:.1f}%;background:{bar_color};height:10px;border-radius:3px;"></div>
+                      </div>
                     </div>"""
 
-                st.markdown(
-                    f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:8px;">
-                        <div style="color:#94a3b8; font-size:0.78rem; margin-bottom:14px;">
-                            {TARGET_VARS.get(fi_sel, fi_sel)} · 알고리즘: <span style="color:#a3e635;">{algo_used}</span> · 상위 15개 변수
-                        </div>
-                        {bar_html_rows}
-                    </div>""",
-                    unsafe_allow_html=True
-                )
+                fi_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
+                <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
+                  <div style="color:#94a3b8;font-size:12px;margin-bottom:14px;">
+                    {TARGET_VARS.get(fi_sel, fi_sel)} &middot; {fi_algo_label}: <span style="color:#a3e635;">{algo_used}</span> &middot; {fi_top_label}
+                  </div>
+                  {bar_rows_html}
+                </div></body></html>"""
+                components.html(fi_html, height=60 + len(fi_series) * 36, scrolling=False)
 
     with t2:
         if not st.session_state['df_injection'].empty:
+            import streamlit.components.v1 as components
             df_view = st.session_state['df_injection'].copy()
+            is_en   = st.session_state.lang == "en"
 
-            # ── 서브탭 구성 ──────────────────────────────────────────────
-            sub1, sub2, sub3, sub4 = st.tabs([
-                "📋 원시 데이터",
-                "📊 불량률 분포",
-                "🔥 변수 상관관계",
-                "📈 시계열 트렌드"
-            ])
+            tab2_labels = (
+                ["📋 Raw Data", "📊 Defect Distribution", "🔥 Correlation Heatmap", "📈 Trend Chart"]
+                if is_en else
+                ["📋 원시 데이터", "📊 불량률 분포", "🔥 변수 상관관계", "📈 시계열 트렌드"]
+            )
+            sub1, sub2, sub3, sub4 = st.tabs(tab2_labels)
 
-            # ── 서브탭 1: 원시 데이터 테이블 (기존 동일) ─────────────────
+            # ── 서브탭 1: 원시 데이터 테이블 ────────────────────────────
             with sub1:
                 st.dataframe(df_view, use_container_width=True)
 
@@ -1439,9 +1501,11 @@ if is_active:
             with sub2:
                 target_cols = [c for c in df_view.columns if c in TARGET_VARS]
                 if target_cols:
-                    st.markdown("<p style='color:#94a3b8; font-size:0.85rem;'>각 불량 항목의 예측 확률 분포를 히스토그램으로 표시합니다.</p>", unsafe_allow_html=True)
+                    desc_txt  = "Histogram of predicted defect probability distribution per defect type." if is_en else "각 불량 항목의 예측 확률 분포를 히스토그램으로 표시합니다."
+                    sel_label = "Select Defect" if is_en else "불량 항목 선택"
+                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{desc_txt}</p>", unsafe_allow_html=True)
                     sel_hist = st.selectbox(
-                        "불량 항목 선택",
+                        sel_label,
                         options=target_cols,
                         format_func=lambda k: TARGET_VARS.get(k, k),
                         key="hist_target_sel"
@@ -1449,61 +1513,62 @@ if is_active:
                     hist_data = df_view[sel_hist].dropna()
                     if not hist_data.empty:
                         bins = min(20, max(5, len(hist_data) // 3))
-                        counts, edges = np.histogram(hist_data, bins=bins, range=(0, 1))
-                        bar_rows = ""
-                        max_count = counts.max() if counts.max() > 0 else 1
-                        for i, cnt in enumerate(counts):
-                            lo, hi   = edges[i], edges[i+1]
-                            mid      = (lo + hi) / 2
-                            bar_pct  = cnt / max_count * 100
-                            bar_col  = "#00e5ff" if mid < 0.3 else "#ffab00" if mid < 0.7 else "#ff5252"
-                            bar_rows += f"""
-                            <div style="display:flex; align-items:center; margin-bottom:5px; gap:8px;">
-                                <span style="color:#94a3b8; font-size:0.75rem; width:80px; text-align:right;">{lo:.2f}~{hi:.2f}</span>
-                                <div style="flex:1; background:#1e293b; border-radius:3px; height:18px;">
-                                    <div style="width:{bar_pct:.1f}%; background:{bar_col}; height:18px; border-radius:3px;
-                                                display:flex; align-items:center; padding-left:6px;">
-                                        <span style="color:#fff; font-size:0.72rem;">{cnt}</span>
-                                    </div>
-                                </div>
-                            </div>"""
-                        st.markdown(
-                            f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:8px;">
-                                <div style="color:#e1e1e1; font-size:0.9rem; font-weight:600; margin-bottom:14px;">
-                                    {TARGET_VARS.get(sel_hist, sel_hist)} 분포 (n={len(hist_data)})
-                                </div>
-                                {bar_rows}
-                                <div style="color:#64748b; font-size:0.72rem; margin-top:10px;">
-                                    ● 파란색: 안전(0~0.3) &nbsp; ● 주황색: 주의(0.3~0.7) &nbsp; ● 빨간색: 위험(0.7~1.0)
-                                </div>
-                            </div>""",
-                            unsafe_allow_html=True
+                        counts, edges = np.histogram(hist_data.values.astype(float), bins=bins, range=(0.0, 1.0))
+                        legend_txt = (
+                            "● Blue: Safe(0~0.3) &nbsp; ● Orange: Caution(0.3~0.7) &nbsp; ● Red: Danger(0.7~1.0)"
+                            if is_en else
+                            "● 파란색: 안전(0~0.3) &nbsp; ● 주황색: 주의(0.3~0.7) &nbsp; ● 빨간색: 위험(0.7~1.0)"
                         )
+                        dist_title = f"{TARGET_VARS.get(sel_hist, sel_hist)} {'Distribution' if is_en else '분포'} (n={len(hist_data)})"
+                        max_count = int(counts.max()) if counts.max() > 0 else 1
+                        bar_rows_h = ""
+                        for i, cnt in enumerate(counts):
+                            lo, hi  = float(edges[i]), float(edges[i+1])
+                            mid     = (lo + hi) / 2.0
+                            bp      = int(cnt) / max_count * 100
+                            bc      = "#00e5ff" if mid < 0.3 else "#ffab00" if mid < 0.7 else "#ff5252"
+                            bar_rows_h += f"""
+                            <div style="display:flex;align-items:center;margin-bottom:5px;gap:8px;">
+                              <span style="color:#94a3b8;font-size:11px;width:80px;text-align:right;">{lo:.2f}~{hi:.2f}</span>
+                              <div style="flex:1;background:#1e293b;border-radius:3px;height:18px;">
+                                <div style="width:{bp:.1f}%;background:{bc};height:18px;border-radius:3px;display:flex;align-items:center;padding-left:6px;">
+                                  <span style="color:#fff;font-size:11px;">{int(cnt)}</span>
+                                </div>
+                              </div>
+                            </div>"""
+
+                        hist_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
+                        <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
+                          <div style="color:#e1e1e1;font-size:14px;font-weight:600;margin-bottom:14px;">{dist_title}</div>
+                          {bar_rows_h}
+                          <div style="color:#64748b;font-size:11px;margin-top:10px;">{legend_txt}</div>
+                        </div></body></html>"""
+                        components.html(hist_html, height=80 + len(counts) * 28, scrolling=False)
 
             # ── 서브탭 3: 변수 상관관계 히트맵 ───────────────────────────
             with sub3:
                 numeric_cols = df_view.select_dtypes(include=[np.number]).columns.tolist()
                 if len(numeric_cols) >= 2:
-                    st.markdown("<p style='color:#94a3b8; font-size:0.85rem;'>공정 변수와 불량 항목 간 상관계수 히트맵입니다. (pearson, -1~+1)</p>", unsafe_allow_html=True)
+                    corr_desc  = "Pearson correlation heatmap between process variables and defect types. (top 10 process variables)" if is_en else "공정 변수와 불량 항목 간 상관계수 히트맵입니다. (pearson, -1~+1)"
+                    corr_title = "Process Variables ↔ Defect Correlation (Top 10)" if is_en else "공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)"
+                    corr_leg   = "● Blue: Positive &nbsp; ● Red: Negative &nbsp; ● Gray: Weak" if is_en else "● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함"
+                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{corr_desc}</p>", unsafe_allow_html=True)
 
                     process_vars = [c for c in numeric_cols if c not in TARGET_VARS]
                     defect_vars  = [c for c in numeric_cols if c in TARGET_VARS]
 
                     if process_vars and defect_vars:
-                        corr_df = df_view[process_vars + defect_vars].corr()
-                        # 공정변수 → 불량 항목 부분만 추출
+                        corr_df  = df_view[process_vars + defect_vars].corr()
                         sub_corr = corr_df.loc[process_vars, defect_vars]
-
-                        # 상위 영향 공정변수 10개만 표시
                         top_vars = sub_corr.abs().max(axis=1).sort_values(ascending=False).head(10).index.tolist()
                         sub_corr = sub_corr.loc[top_vars]
 
-                        header_cells = "".join([f"<th style='padding:6px 8px; font-size:0.72rem; color:#94a3b8; text-align:center; white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
+                        header_cells = "".join([f"<th style='padding:6px 8px;font-size:11px;color:#94a3b8;text-align:center;white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
                         data_rows = ""
                         for var_r in sub_corr.index:
-                            cells = f"<td style='padding:6px 8px; font-size:0.78rem; color:#e1e1e1; font-weight:600;'>{var_r}</td>"
+                            cells = f"<td style='padding:6px 8px;font-size:12px;color:#e1e1e1;font-weight:600;'>{var_r}</td>"
                             for var_c in sub_corr.columns:
-                                val = sub_corr.loc[var_r, var_c]
+                                val = float(sub_corr.loc[var_r, var_c])
                                 intensity = abs(val)
                                 if val > 0.3:
                                     bg = f"rgba(0,229,255,{min(intensity,0.9):.2f})"
@@ -1514,35 +1579,34 @@ if is_active:
                                 else:
                                     bg = "#1e293b"
                                     tc = "#64748b"
-                                cells += f"<td style='padding:6px 8px; text-align:center; background:{bg}; color:{tc}; font-size:0.78rem;'>{val:.2f}</td>"
+                                cells += f"<td style='padding:6px 8px;text-align:center;background:{bg};color:{tc};font-size:12px;'>{val:.2f}</td>"
                             data_rows += f"<tr>{cells}</tr>"
 
                         st.markdown(
-                            f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:8px; overflow-x:auto;">
-                                <div style="color:#e1e1e1; font-size:0.9rem; font-weight:600; margin-bottom:14px;">
-                                    공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)
-                                </div>
-                                <table style="border-collapse:collapse; width:100%;">
+                            f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;margin-top:8px;overflow-x:auto;">
+                                <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:14px;">{corr_title}</div>
+                                <table style="border-collapse:collapse;width:100%;">
                                     <thead><tr><th style="padding:6px 8px;"></th>{header_cells}</tr></thead>
                                     <tbody>{data_rows}</tbody>
                                 </table>
-                                <div style="color:#64748b; font-size:0.72rem; margin-top:10px;">
-                                    ● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함
-                                </div>
+                                <div style="color:#64748b;font-size:0.72rem;margin-top:10px;">{corr_leg}</div>
                             </div>""",
                             unsafe_allow_html=True
                         )
 
             # ── 서브탭 4: 시계열 트렌드 차트 ─────────────────────────────
             with sub4:
-                target_cols_t = [c for c in df_view.columns if c in TARGET_VARS]
+                target_cols_t  = [c for c in df_view.columns if c in TARGET_VARS]
                 process_cols_t = [c for c in df_view.select_dtypes(include=[np.number]).columns if c not in TARGET_VARS]
 
                 if target_cols_t or process_cols_t:
-                    st.markdown("<p style='color:#94a3b8; font-size:0.85rem;'>진단/최적화 이력 순서대로 변수 값 변화를 추적합니다.</p>", unsafe_allow_html=True)
+                    trend_desc  = "Track variable changes in chronological order of diagnosis/optimization history." if is_en else "진단/최적화 이력 순서대로 변수 값 변화를 추적합니다."
+                    trend_sel_l = "Select items to view trend (multiple selection)" if is_en else "트렌드 확인할 항목 선택 (복수 선택 가능)"
+                    trend_chart_title = "Trend Chart (Normalized 0~1)" if is_en else "트렌드 차트 (정규화 0~1 표시)"
+                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{trend_desc}</p>", unsafe_allow_html=True)
                     all_trend_cols = target_cols_t + process_cols_t
                     trend_sel = st.multiselect(
-                        "트렌드 확인할 항목 선택 (복수 선택 가능)",
+                        trend_sel_l,
                         options=all_trend_cols,
                         default=target_cols_t[:3] if len(target_cols_t) >= 3 else target_cols_t,
                         format_func=lambda k: TARGET_VARS.get(k, k),
@@ -1555,8 +1619,7 @@ if is_active:
                         COLORS = ["#00e5ff","#a3e635","#ffab00","#ff5252","#c084fc",
                                   "#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24"]
 
-                        # 각 컬럼별 정규화 (0~1) 후 트렌드 라인 그리기
-                        max_idx = len(trend_df)
+                        max_idx  = len(trend_df)
                         line_defs = []
                         for ci, col in enumerate(trend_sel):
                             col_data = trend_df[col].dropna()
@@ -1568,24 +1631,21 @@ if is_active:
                             line_defs.append({'col': col, 'data': norm, 'raw': col_data, 'color': COLORS[ci % len(COLORS)]})
 
                         if line_defs:
-                            # SVG 트렌드 차트
                             W, H, PAD = 900, 260, 40
                             svg_lines = ""
                             for ld in line_defs:
                                 pts = []
                                 for xi, (idx_v, y_v) in enumerate(ld['data'].items()):
                                     x = PAD + (xi / max(len(ld['data']) - 1, 1)) * (W - 2 * PAD)
-                                    y = PAD + (1 - y_v) * (H - 2 * PAD)
+                                    y = PAD + (1 - float(y_v)) * (H - 2 * PAD)
                                     pts.append(f"{x:.1f},{y:.1f}")
                                 if pts:
                                     svg_lines += f"<polyline points='{' '.join(pts)}' fill='none' stroke='{ld['color']}' stroke-width='2' opacity='0.85'/>"
-                                    # 마지막 점에 값 표시
                                     last_x, last_y = float(pts[-1].split(',')[0]), float(pts[-1].split(',')[1])
                                     last_raw = ld['raw'].iloc[-1]
                                     svg_lines += f"<circle cx='{last_x}' cy='{last_y}' r='4' fill='{ld['color']}'/>"
-                                    svg_lines += f"<text x='{min(last_x+6, W-60)}' y='{last_y+4}' fill='{ld['color']}' font-size='10'>{last_raw:.2f}</text>"
+                                    svg_lines += f"<text x='{min(last_x+6, W-60)}' y='{last_y+4}' fill='{ld['color']}' font-size='10'>{float(last_raw):.2f}</text>"
 
-                            # 범례
                             legend = ""
                             for li, ld in enumerate(line_defs):
                                 lx = PAD + li * 130
@@ -1595,9 +1655,9 @@ if is_active:
 
                             svg_h = H + 36
                             st.markdown(
-                                f"""<div style="background:#12141d; border:1px solid #2d3142; border-radius:10px; padding:16px 20px; margin-top:8px; overflow-x:auto;">
-                                    <div style="color:#e1e1e1; font-size:0.9rem; font-weight:600; margin-bottom:10px;">트렌드 차트 (정규화 0~1 표시)</div>
-                                    <svg viewBox='0 0 {W} {svg_h}' style='width:100%; max-height:300px;'>
+                                f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:16px 20px;margin-top:8px;overflow-x:auto;">
+                                    <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:10px;">{trend_chart_title}</div>
+                                    <svg viewBox='0 0 {W} {svg_h}' style='width:100%;max-height:300px;'>
                                         <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
                                         <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
                                         {svg_lines}
