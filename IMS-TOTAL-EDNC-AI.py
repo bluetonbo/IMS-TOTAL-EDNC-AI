@@ -70,7 +70,7 @@ def _cross_val_reliability(X, y, n_pos, n_neg, C):
         return None
 
 
-def _auto_select_best_model(X, y, n_pos, n_neg, C):
+def _auto_select_best_model(X, y, n_pos, n_neg, C, algo_status_fn=None):
     """[추가] LR / RF / XGB / LGBM 4종을 교차검증 정확도로 비교해 가장 좋은 모델을 반환.
     표본이 너무 적거나 패키지가 없으면 가능한 후보 중 최선을 선택합니다.
     반환: (fitted_model, algo_name, cv_score, feature_importances_or_None)"""
@@ -98,7 +98,11 @@ def _auto_select_best_model(X, y, n_pos, n_neg, C):
 
     if min_class >= 2:
         cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-        for name, clf in candidates.items():
+        algo_list = list(candidates.items())
+        for a_idx, (name, clf) in enumerate(algo_list):
+            # [추가] 콜백으로 현재 시도 중인 알고리즘 표시
+            if algo_status_fn:
+                algo_status_fn(name, a_idx + 1, len(algo_list))
             try:
                 scores = cross_val_score(clf, X, y, cv=cv, scoring='accuracy')
                 mean_score = float(np.mean(scores))
@@ -110,6 +114,8 @@ def _auto_select_best_model(X, y, n_pos, n_neg, C):
                 continue
 
     # 최종 전체 데이터로 재학습
+    if algo_status_fn:
+        algo_status_fn(f"Final fit: {best_name} ✓", len(candidates), len(candidates))
     best_model.fit(X, y)
 
     # Feature Importance 추출 (LR은 coef_ 사용)
@@ -790,7 +796,8 @@ with st.sidebar:
                     # 학습 진행 상황 UI 추가
                     st.sidebar.markdown("<br>", unsafe_allow_html=True)
                     prog_text = st.sidebar.empty()
-                    prog_bar = st.sidebar.progress(0)
+                    prog_bar  = st.sidebar.progress(0)
+                    algo_text = st.sidebar.empty()   # [추가] 알고리즘 진행 표시용
                     total_targets = len(available_targets)
 
                     for idx, target in enumerate(available_targets):
@@ -815,15 +822,34 @@ with st.sidebar:
                             n_pos = int(target_vals.sum())
                             n_neg = int(len(target_vals) - n_pos)
 
-                            # [추가] 신뢰성 보강 1: 표본이 적은 타겟일수록 규제(C)를 더 강하게
                             chosen_C = _choose_regularization(n_pos, n_neg)
-
-                            scaler = MinMaxScaler().fit(df_comb[vars_list])
+                            scaler   = MinMaxScaler().fit(df_comb[vars_list])
                             X_scaled = scaler.transform(df_comb[vars_list])
 
-                            # [수정] LR 단일 → LR/RF/XGB/LGBM 4종 자동선택
+                            # [추가] 알고리즘별 진행 상황 콜백 정의
+                            def _show_algo(algo_name, a_idx, a_total, _t=target):
+                                if "Final fit" in str(algo_name):
+                                    algo_text.markdown(
+                                        f"<div style='background:#12141d;border:1px solid #2d3142;"
+                                        f"border-left:3px solid #10b981;border-radius:5px;"
+                                        f"padding:5px 10px;font-size:0.78rem;color:#a3e635;margin-top:3px;'>"
+                                        f"✓ <b>{_t}</b> → {algo_name}</div>",
+                                        unsafe_allow_html=True
+                                    )
+                                else:
+                                    algo_text.markdown(
+                                        f"<div style='background:#12141d;border:1px solid #2d3142;"
+                                        f"border-left:3px solid #00e5ff;border-radius:5px;"
+                                        f"padding:5px 10px;font-size:0.78rem;color:#cbd5e1;margin-top:3px;'>"
+                                        f"  Testing <b style='color:#00e5ff;'>{algo_name}</b>"
+                                        f" &nbsp;<span style='color:#94a3b8;'>({a_idx}/{a_total})</span></div>",
+                                        unsafe_allow_html=True
+                                    )
+
+                            # LR/RF/XGB/LGBM 4종 자동선택 (알고리즘 진행 콜백 포함)
                             best_model, best_algo, cv_score, fi = _auto_select_best_model(
-                                X_scaled, target_vals, n_pos, n_neg, chosen_C
+                                X_scaled, target_vals, n_pos, n_neg, chosen_C,
+                                algo_status_fn=_show_algo
                             )
 
                             models_dict[target]     = best_model
