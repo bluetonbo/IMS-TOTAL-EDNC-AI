@@ -638,24 +638,41 @@ st.markdown("""
         padding-bottom: 0;
     }
     .stTabs [data-baseweb="tab"] {
-        background-color: #1e2235 !important;
-        border: 1px solid #3d4260 !important;
+        background-color: #252840 !important;
+        border: 1px solid #4a5070 !important;
         border-bottom: none !important;
         border-radius: 8px 8px 0 0 !important;
-        color: #e2e8f0 !important;
-        font-weight: 600 !important;
+        color: #f1f5f9 !important;
+        font-weight: 700 !important;
         font-size: 0.95rem !important;
         padding: 10px 24px !important;
         transition: all 0.2s ease;
+    }
+    /* 탭 내부 텍스트 요소 강제 적용 */
+    .stTabs [data-baseweb="tab"] p,
+    .stTabs [data-baseweb="tab"] span,
+    .stTabs [data-baseweb="tab"] div {
+        color: #f1f5f9 !important;
+        font-weight: 700 !important;
     }
     .stTabs [aria-selected="true"] {
         background-color: #00e5ff22 !important;
         border-color: #00e5ff !important;
         color: #00e5ff !important;
     }
+    .stTabs [aria-selected="true"] p,
+    .stTabs [aria-selected="true"] span,
+    .stTabs [aria-selected="true"] div {
+        color: #00e5ff !important;
+    }
     .stTabs [data-baseweb="tab"]:hover {
         color: #ffffff !important;
-        background-color: #2a2f4a !important;
+        background-color: #2e3455 !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover p,
+    .stTabs [data-baseweb="tab"]:hover span,
+    .stTabs [data-baseweb="tab"]:hover div {
+        color: #ffffff !important;
     }
     /* ── Expander 전체 스타일 ── */
     /* 컨테이너 */
