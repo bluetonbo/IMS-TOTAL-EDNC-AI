@@ -539,7 +539,7 @@ st.markdown("""
         padding: 15px;
         text-align: center;
     }
-    .metric-label { color: #94a3b8; font-size: 0.85rem; margin-bottom: 5px; }
+    .metric-label { color: #cbd5e1; font-size: 0.85rem; margin-bottom: 5px; }
     .metric-value { color: #ffffff; font-size: 1.2rem; font-weight: 700; }
     .section-title {
         display: flex;
@@ -635,7 +635,7 @@ st.markdown("""
         border: 1px solid #2d3142 !important;
         border-bottom: none !important;
         border-radius: 8px 8px 0 0 !important;
-        color: #94a3b8 !important;
+        color: #cbd5e1 !important;
         font-weight: 600 !important;
         font-size: 0.95rem !important;
         padding: 10px 24px !important;
@@ -678,7 +678,7 @@ st.markdown("""
         padding: 6px 12px;
         margin: 4px 0;
         font-size: 0.82rem;
-        color: #94a3b8;
+        color: #cbd5e1;
     }
     .load-step.done { border-left-color: #10b981; color: #10b981; }
     .load-step.active { border-left-color: #00e5ff; color: #e1e1e1; }
@@ -796,7 +796,10 @@ with st.sidebar:
                     for idx, target in enumerate(available_targets):
                         # 프로그레스 바 텍스트 업데이트
                         pct = int(((idx + 1) / total_targets) * 100)
-                        prog_text.markdown(f"▸ **{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)**")
+                        prog_text.markdown(
+                            f"<span style='color:#e1e1e1; font-size:0.85rem;'>▸ <b>{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)</b></span>",
+                            unsafe_allow_html=True
+                        )
                         prog_bar.progress((idx + 1) / total_targets)
                         _step(70 + int(pct * 0.28), f"Training model {idx+1}/{total_targets}: {target}", "", done_steps)
                         time.sleep(0.1) # 시각적 피드백을 위한 짧은 대기
@@ -967,7 +970,7 @@ with col_title:
         unsafe_allow_html=True
     )
     st.markdown(
-        f"<p style='color:#64748b; margin-bottom: 1rem;'>{L['main_desc']}</p>",
+        f"<p style='color:#b0bec5; margin-bottom: 1rem;'>{L['main_desc']}</p>",
         unsafe_allow_html=True
     )
 with col_lang_switch:
@@ -977,7 +980,7 @@ with col_lang_switch:
 
 is_active = len(st.session_state.get('models', {})) > 0
 status_text = L['status_active'] if is_active else L['status_standby']
-dot_color = "#00e5ff" if is_active else "#64748b"
+dot_color = "#00e5ff" if is_active else "#94a3b8"
 var_count = len(st.session_state.get('ui_display_vars', []))
 exp_weight = int(st.session_state.get('expert_reliability', 0.0) * 100)
 
@@ -1220,7 +1223,10 @@ if is_active:
 
                 for i, algo in enumerate(algorithms):
                     pct = int(((i + 1) / len(algorithms)) * 100)
-                    opt_prog_text.markdown(f"▸ **{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)**")
+                    opt_prog_text.markdown(
+                        f"<span style='color:#e1e1e1; font-size:0.85rem;'>▸ <b>{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)</b></span>",
+                        unsafe_allow_html=True
+                    )
                     opt_prog_bar.progress((i + 1) / len(algorithms))
                     opt_prog_detail.empty()  # 이전 알고리즘의 상세 로그가 남아있지 않도록 초기화
                     time.sleep(0.2) # 시각적 피드백
@@ -1254,7 +1260,10 @@ if is_active:
                         continue
 
                 # 하이브리드 멀티스타트(무작위 시작점) 단계도 동일하게 상세 진행 표시
-                opt_prog_text.markdown(f"▸ **{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)**")
+                opt_prog_text.markdown(
+                    f"<span style='color:#e1e1e1; font-size:0.85rem;'>▸ <b>{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)</b></span>",
+                    unsafe_allow_html=True
+                )
                 opt_prog_detail.empty()  # 이전 알고리즘의 상세 로그 초기화
                 state = {'iter': 0}
 
@@ -1349,7 +1358,7 @@ if is_active:
             guide_html = f"""
             <div style="background-color:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:12px; margin-bottom: 24px;">
                 <h3 style="margin-top:0; color:#e1e1e1;">▪ {L['guide_subtitle']}</h3>
-                <blockquote style="border-left: 4px solid #10b981; padding-left: 10px; color:#94a3b8; font-size:0.95rem; background-color:#1a1c24; padding:10px;">
+                <blockquote style="border-left: 4px solid #10b981; padding-left: 10px; color:#cbd5e1; font-size:0.95rem; background-color:#1a1c24; padding:10px;">
                     {L['guide_pred_rel']}: <b>100.0%</b> | {unachievable_label}: <b>0</b> | {out_spec_label}: <b>{out_spec_count}</b> | {normal_label}: <b>{normal_count}</b>
                 </blockquote>
                 <hr style="border-color:#2d3142; margin: 16px 0;">
@@ -1413,7 +1422,7 @@ if is_active:
                     <div style="background-color:#12141d; border:1px solid #2d3142;
                                 border-radius:10px; padding:20px 24px; margin-top:12px;
                                 max-height:420px; overflow-y:auto;">
-                        <div style="color:#94a3b8; font-size:0.8rem; margin-bottom:12px;
+                        <div style="color:#cbd5e1; font-size:0.8rem; margin-bottom:12px;
                                     letter-spacing:0.05em;">{L['report_box_title']}</div>
                         {''.join(html_lines)}
                     </div>"""
@@ -1431,7 +1440,7 @@ if is_active:
             st.markdown(
                 f"""<div style='background-color:#12141d; padding:25px; border-radius:10px;
                     border:1px solid {total_color}44;'>
-                    <h4 style='margin-top:0; color:#94a3b8;'>{L['dash_title']}</h4>
+                    <h4 style='margin-top:0; color:#cbd5e1;'>{L['dash_title']}</h4>
                     <h2 style='color:{total_color}; font-size:3rem; margin:0;'>
                         {total_risk_percent}<span style='font-size:1.2rem;'>%</span>
                     </h2>
@@ -1483,7 +1492,7 @@ if is_active:
                                     {r_perc}%
                                 </div>
                             </div>
-                            <div style="font-size:0.72rem; color:#64748b; margin-top:2px;">{reliability_caption}</div>
+                            <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">{reliability_caption}</div>
                         </div>""",
                         unsafe_allow_html=True
                     )
@@ -1535,12 +1544,12 @@ if is_active:
                     bar_rows_html = ""
                     for var_name, imp_val in fi_series.items():
                         bar_pct   = imp_val / max_val * 100
-                        bar_color = "#00e5ff" if bar_pct >= 60 else "#10b981" if bar_pct >= 30 else "#64748b"
+                        bar_color = "#00e5ff" if bar_pct >= 60 else "#10b981" if bar_pct >= 30 else "#94a3b8"
                         bar_rows_html += f"""
                         <div style="margin-bottom:8px;">
                           <div style="display:flex;justify-content:space-between;font-size:13px;color:#e1e1e1;margin-bottom:3px;">
                             <span style="font-weight:600;">{var_name}</span>
-                            <span style="color:#94a3b8;">{imp_val:.4f}</span>
+                            <span style="color:#cbd5e1;">{imp_val:.4f}</span>
                           </div>
                           <div style="background:#1e293b;border-radius:3px;height:10px;">
                             <div style="width:{bar_pct:.1f}%;background:{bar_color};height:10px;border-radius:3px;"></div>
@@ -1549,7 +1558,7 @@ if is_active:
 
                     fi_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
                     <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
-                      <div style="color:#94a3b8;font-size:12px;margin-bottom:14px;">
+                      <div style="color:#cbd5e1;font-size:12px;margin-bottom:14px;">
                         {TARGET_VARS.get(fi_sel, fi_sel)} &middot; {fi_algo_label}: <span style="color:#a3e635;">{algo_used}</span> &middot; {fi_top_label}
                       </div>
                       {bar_rows_html}
@@ -1576,7 +1585,7 @@ if is_active:
                 if target_cols:
                     desc_txt  = "Histogram of predicted defect probability distribution per defect type." if is_en else "각 불량 항목의 예측 확률 분포를 히스토그램으로 표시합니다."
                     sel_label = "Select Defect" if is_en else "불량 항목 선택"
-                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{desc_txt}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color:#cbd5e1; font-size:0.85rem;'>{desc_txt}</p>", unsafe_allow_html=True)
                     sel_hist = st.selectbox(
                         sel_label,
                         options=target_cols,
@@ -1602,7 +1611,7 @@ if is_active:
                             bc      = "#00e5ff" if mid < 0.3 else "#ffab00" if mid < 0.7 else "#ff5252"
                             bar_rows_h += f"""
                             <div style="display:flex;align-items:center;margin-bottom:5px;gap:8px;">
-                              <span style="color:#94a3b8;font-size:11px;width:80px;text-align:right;">{lo:.2f}~{hi:.2f}</span>
+                              <span style="color:#cbd5e1;font-size:11px;width:80px;text-align:right;">{lo:.2f}~{hi:.2f}</span>
                               <div style="flex:1;background:#1e293b;border-radius:3px;height:18px;">
                                 <div style="width:{bp:.1f}%;background:{bc};height:18px;border-radius:3px;display:flex;align-items:center;padding-left:6px;">
                                   <span style="color:#fff;font-size:11px;">{int(cnt)}</span>
@@ -1614,7 +1623,7 @@ if is_active:
                         <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
                           <div style="color:#e1e1e1;font-size:14px;font-weight:600;margin-bottom:14px;">{dist_title}</div>
                           {bar_rows_h}
-                          <div style="color:#64748b;font-size:11px;margin-top:10px;">{legend_txt}</div>
+                          <div style="color:#94a3b8;font-size:11px;margin-top:10px;">{legend_txt}</div>
                         </div></body></html>"""
                         components.html(hist_html, height=80 + len(counts) * 28, scrolling=False)
 
@@ -1628,7 +1637,7 @@ if is_active:
                     corr_desc  = "Pearson correlation heatmap between process variables and defect types. (top 10 process variables)" if is_en else "공정 변수와 불량 항목 간 상관계수 히트맵입니다. (pearson, -1~+1)"
                     corr_title = "Process Variables ↔ Defect Correlation (Top 10)" if is_en else "공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)"
                     corr_leg   = "● Blue: Positive &nbsp; ● Red: Negative &nbsp; ● Gray: Weak" if is_en else "● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함"
-                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{corr_desc}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color:#cbd5e1; font-size:0.85rem;'>{corr_desc}</p>", unsafe_allow_html=True)
 
                     process_vars = [c for c in numeric_cols if c not in TARGET_VARS]
                     defect_vars  = [c for c in numeric_cols if c in TARGET_VARS]
@@ -1639,7 +1648,7 @@ if is_active:
                         top_vars = sub_corr.abs().max(axis=1).sort_values(ascending=False).head(10).index.tolist()
                         sub_corr = sub_corr.loc[top_vars]
 
-                        header_cells = "".join([f"<th style='padding:6px 8px;font-size:11px;color:#94a3b8;text-align:center;white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
+                        header_cells = "".join([f"<th style='padding:6px 8px;font-size:11px;color:#cbd5e1;text-align:center;white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
                         data_rows = ""
                         for var_r in sub_corr.index:
                             cells = f"<td style='padding:6px 8px;font-size:12px;color:#e1e1e1;font-weight:600;'>{var_r}</td>"
@@ -1654,7 +1663,7 @@ if is_active:
                                     tc = "#fff"
                                 else:
                                     bg = "#1e293b"
-                                    tc = "#64748b"
+                                    tc = "#94a3b8"
                                 cells += f"<td style='padding:6px 8px;text-align:center;background:{bg};color:{tc};font-size:12px;'>{val:.2f}</td>"
                             data_rows += f"<tr>{cells}</tr>"
 
@@ -1665,7 +1674,7 @@ if is_active:
                                     <thead><tr><th style="padding:6px 8px;"></th>{header_cells}</tr></thead>
                                     <tbody>{data_rows}</tbody>
                                 </table>
-                                <div style="color:#64748b;font-size:0.72rem;margin-top:10px;">{corr_leg}</div>
+                                <div style="color:#94a3b8;font-size:0.72rem;margin-top:10px;">{corr_leg}</div>
                             </div>""",
                             unsafe_allow_html=True
                         )
@@ -1682,7 +1691,7 @@ if is_active:
                     trend_desc  = "Track variable changes in chronological order of diagnosis/optimization history." if is_en else "진단/최적화 이력 순서대로 변수 값 변화를 추적합니다."
                     trend_sel_l = "Select items to view trend (multiple selection)" if is_en else "트렌드 확인할 항목 선택 (복수 선택 가능)"
                     trend_chart_title = "Trend Chart (Normalized 0~1)" if is_en else "트렌드 차트 (정규화 0~1 표시)"
-                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{trend_desc}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color:#cbd5e1; font-size:0.85rem;'>{trend_desc}</p>", unsafe_allow_html=True)
                     all_trend_cols = target_cols_t + process_cols_t
                     trend_sel = st.multiselect(
                         trend_sel_l,
@@ -1730,7 +1739,7 @@ if is_active:
                                 lx = PAD + li * 130
                                 legend += f"<rect x='{lx}' y='{H+8}' width='14' height='8' fill='{ld['color']}' rx='2'/>"
                                 label  = TARGET_VARS.get(ld['col'], ld['col'])[:12]
-                                legend += f"<text x='{lx+18}' y='{H+16}' fill='#94a3b8' font-size='10'>{label}</text>"
+                                legend += f"<text x='{lx+18}' y='{H+16}' fill='#cbd5e1' font-size='10'>{label}</text>"
 
                             svg_h = H + 36
                             st.markdown(
