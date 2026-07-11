@@ -515,7 +515,8 @@ if 'models' not in st.session_state:
         'selected_algorithm': "N/A",
         'prepared_db_file': None,
         'data_changed_since_save': False,
-        'show_feature_guide': False
+        'show_feature_guide': False,
+        'algo_summary': {}   # [추가] 학습 완료 후 알고리즘 선택 결과 요약
     })
 
 st.markdown("""
@@ -899,9 +900,54 @@ with st.sidebar:
 
                     load_prog.progress(100, text="✅ All done! AI engine ready.")
                     load_status.markdown("✅ **AI Engine ready.**")
+                    algo_text.empty()
+
+                    # [추가] rerun 후에도 유지되도록 세션에 요약 저장
+                    st.session_state['algo_summary'] = {
+                        t: {
+                            'algo': algo_names_dict.get(t, 'N/A'),
+                            'cv': reliability_dict.get(t, {}).get('cv_score')
+                        }
+                        for t in algo_names_dict
+                    }
                     st.rerun()
         else:
             st.sidebar.warning(L['warn_upload'])
+
+    # [추가] 학습 완료 후 알고리즘 선택 결과 — 항상 사이드바에 표시
+    algo_summary = st.session_state.get('algo_summary', {})
+    if algo_summary:
+        summary_rows = ""
+        for t_key, info in algo_summary.items():
+            a_name = info.get('algo', 'N/A')
+            cv     = info.get('cv')
+            cv_str = f"{cv*100:.0f}%" if cv is not None else "N/A"
+            summary_rows += (
+                f"<div style='display:flex;justify-content:space-between;align-items:center;"
+                f"padding:4px 2px;border-bottom:1px solid #23263a;'>"
+                f"<span style='font-size:0.73rem;color:#cbd5e1;width:38%;'>{t_key}</span>"
+                f"<span style='font-size:0.71rem;color:#a3e635;font-weight:600;width:40%;'>{a_name}</span>"
+                f"<span style='font-size:0.70rem;color:#94a3b8;width:22%;text-align:right;'>{cv_str}</span>"
+                f"</div>"
+            )
+        st.sidebar.markdown(
+            f"<div style='background:#12141d;border:1px solid #2d3142;"
+            f"border-radius:8px;padding:10px 14px;margin-bottom:10px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"margin-bottom:8px;'>"
+            f"<span style='font-size:0.78rem;color:#00e5ff;font-weight:600;'>Model Selection Result</span>"
+            f"<span style='font-size:0.68rem;color:#94a3b8;'>CV Accuracy</span>"
+            f"</div>"
+            f"<div style='display:flex;justify-content:space-between;font-size:0.67rem;"
+            f"color:#64748b;padding-bottom:4px;border-bottom:1px solid #3f445e;margin-bottom:4px;'>"
+            f"<span style='width:38%;'>Defect</span>"
+            f"<span style='width:40%;'>Algorithm</span>"
+            f"<span style='width:22%;text-align:right;'>Acc.</span>"
+            f"</div>"
+            f"{summary_rows}"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
     st.sidebar.markdown("---")
     st.sidebar.markdown(
