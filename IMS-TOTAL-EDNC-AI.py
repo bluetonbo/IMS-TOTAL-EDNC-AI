@@ -657,24 +657,59 @@ st.markdown("""
         color: #e1e1e1 !important;
         background-color: #23263a !important;
     }
-    /* Expander 스타일 */
-    .streamlit-expanderHeader {
-        background-color: #1a1c24 !important;
+    /* ── Expander 전체 스타일 ── */
+    /* 컨테이너 */
+    [data-testid="stExpander"] {
         border: 1px solid #2d3142 !important;
         border-radius: 8px !important;
-        color: #00e5ff !important;
-        font-weight: 600 !important;
-        font-size: 1.0rem !important;
+        background-color: #1a1c24 !important;
+        margin-bottom: 4px !important;
+        overflow: hidden !important;
     }
+    /* 헤더 (접힌 상태) */
+    .streamlit-expanderHeader {
+        background-color: #1a1c24 !important;
+        border: none !important;
+        border-radius: 8px !important;
+        color: #e1e1e1 !important;
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        padding: 12px 16px !important;
+        transition: background 0.2s ease, color 0.2s ease !important;
+    }
+    /* 헤더 hover */
     .streamlit-expanderHeader:hover {
         background-color: #23263a !important;
-        border-color: #00e5ff !important;
+        color: #00e5ff !important;
     }
+    /* 헤더 펼침 상태 */
+    .streamlit-expanderHeader[aria-expanded="true"] {
+        background-color: #1e2235 !important;
+        color: #00e5ff !important;
+        border-bottom: 1px solid #2d3142 !important;
+        border-radius: 8px 8px 0 0 !important;
+    }
+    /* 펼침 상태에서 포커스 아웃라인(빨간 테두리) 제거 */
+    .streamlit-expanderHeader:focus,
+    .streamlit-expanderHeader:focus-visible,
+    [data-testid="stExpander"] *:focus,
+    [data-testid="stExpander"] *:focus-visible {
+        outline: none !important;
+        box-shadow: none !important;
+        border-color: #2d3142 !important;
+    }
+    /* 컨텐츠 영역 */
     .streamlit-expanderContent {
-        border: 1px solid #2d3142 !important;
-        border-top: none !important;
+        border: none !important;
+        border-top: 1px solid #2d3142 !important;
         border-radius: 0 0 8px 8px !important;
         background-color: #12141d !important;
+        padding: 12px 4px !important;
+    }
+    /* 화살표(chevron) 색상 */
+    .streamlit-expanderHeader svg {
+        color: #00e5ff !important;
+        fill: #00e5ff !important;
     }
     /* 로딩 스텝 박스 */
     .load-step {
@@ -1643,21 +1678,158 @@ if is_active:
             df_view = st.session_state['df_injection'].copy()
             is_en   = st.session_state.lang == "en"
 
-            # ── 📋 Raw Data ── expander ────────────────────────────────
+            # ── 상단 데이터 & 모델 현황 요약 카드 ───────────────────────
+            target_cols_all  = [c for c in df_view.columns if c in TARGET_VARS]
+            process_cols_all = [c for c in df_view.columns if c not in TARGET_VARS and c != 'vars']
+            n_rows           = len(df_view)
+            n_proc           = len(process_cols_all)
+            n_tgt            = len(target_cols_all)
+
+            # 모델 신뢰도 평균
+            rel_dict  = st.session_state.get('model_reliability', {})
+            cv_scores = [v['cv_score'] for v in rel_dict.values() if v.get('cv_score') is not None]
+            avg_cv    = f"{np.mean(cv_scores)*100:.1f}%" if cv_scores else "N/A"
+
+            # 고위험 불량 수 (마지막 진단 결과 기준)
+            last_risks   = st.session_state.get('last_defect_risks', {})
+            high_risk_n  = sum(1 for v in last_risks.values() if v >= DEFECT_THRESHOLD)
+            high_risk_names = [TARGET_VARS.get(k, k) for k, v in last_risks.items() if v >= DEFECT_THRESHOLD]
+
+            # 알고리즘별 선택 횟수
+            algo_summary = st.session_state.get('algo_summary', {})
+            from collections import Counter
+            algo_counts  = Counter(info['algo'] for info in algo_summary.values())
+            algo_dist_str = " / ".join([f"{k}: {v}" for k, v in algo_counts.most_common()])
+
+            if is_en:
+                card_items = [
+                    ("Total Samples",          f"{n_rows} rows"),
+                    ("Process Variables",       f"{n_proc} vars"),
+                    ("Defect Targets",          f"{n_tgt} types"),
+                    ("Avg. Model CV Accuracy",  avg_cv),
+                    ("High-Risk Defects",       f"{high_risk_n} types" if last_risks else "Not diagnosed yet"),
+                    ("Algorithm Distribution",  algo_dist_str if algo_dist_str else "Not trained yet"),
+                ]
+                summary_title = "Dataset & Model Overview"
+                insight_title = "Key Insights"
+
+                # 인사이트 메시지 생성
+                insights = []
+                if cv_scores:
+                    best_tgt = max(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 0)
+                    worst_tgt = min(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 1)
+                    insights.append(f"Best model accuracy: <b style='color:#a3e635;'>{TARGET_VARS.get(best_tgt, best_tgt)}</b> ({rel_dict[best_tgt].get('cv_score',0)*100:.1f}%)")
+                    worst_cv = rel_dict[worst_tgt].get('cv_score') or 0
+                    if worst_cv < 0.7:
+                        insights.append(f"Low accuracy warning: <b style='color:#ff5252;'>{TARGET_VARS.get(worst_tgt, worst_tgt)}</b> ({worst_cv*100:.1f}%) — consider collecting more data.")
+                if high_risk_n > 0:
+                    insights.append(f"<b style='color:#ffab00;'>{high_risk_n} high-risk defect(s)</b> detected in last diagnosis: {', '.join(h.split('(')[0].strip() for h in high_risk_names[:3])}")
+                else:
+                    if last_risks:
+                        insights.append("<b style='color:#10b981;'>All defects below risk threshold</b> in last diagnosis.")
+                if algo_counts:
+                    top_algo = algo_counts.most_common(1)[0][0]
+                    insights.append(f"Most selected algorithm: <b style='color:#00e5ff;'>{top_algo}</b> ({algo_counts[top_algo]}/{n_tgt} defects)")
+                low_sample_targets = [k for k, v in rel_dict.items() if v.get('low_sample')]
+                if low_sample_targets:
+                    insights.append(f"<b style='color:#ff5252;'>Low sample warning</b> on: {', '.join(low_sample_targets)} — predictions may be unreliable.")
+            else:
+                card_items = [
+                    ("전체 샘플 수",         f"{n_rows} 행"),
+                    ("공정 변수 수",         f"{n_proc} 개"),
+                    ("불량 타겟 수",         f"{n_tgt} 종"),
+                    ("평균 모델 CV 정확도",   avg_cv),
+                    ("고위험 불량",          f"{high_risk_n} 종" if last_risks else "아직 진단 안 함"),
+                    ("알고리즘 분포",         algo_dist_str if algo_dist_str else "미학습"),
+                ]
+                summary_title = "데이터셋 & 모델 현황 요약"
+                insight_title = "주요 인사이트"
+
+                insights = []
+                if cv_scores:
+                    best_tgt = max(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 0)
+                    worst_tgt = min(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 1)
+                    insights.append(f"가장 높은 모델 정확도: <b style='color:#a3e635;'>{TARGET_VARS.get(best_tgt, best_tgt)}</b> ({rel_dict[best_tgt].get('cv_score',0)*100:.1f}%)")
+                    worst_cv = rel_dict[worst_tgt].get('cv_score') or 0
+                    if worst_cv < 0.7:
+                        insights.append(f"정확도 낮음 주의: <b style='color:#ff5252;'>{TARGET_VARS.get(worst_tgt, worst_tgt)}</b> ({worst_cv*100:.1f}%) — 데이터 추가 수집 권장")
+                if high_risk_n > 0:
+                    insights.append(f"마지막 진단에서 <b style='color:#ffab00;'>고위험 불량 {high_risk_n}종</b> 감지: {', '.join(h.split('(')[0].strip() for h in high_risk_names[:3])}")
+                else:
+                    if last_risks:
+                        insights.append("<b style='color:#10b981;'>마지막 진단에서 모든 불량이 기준치 이하</b>로 확인됨.")
+                if algo_counts:
+                    top_algo = algo_counts.most_common(1)[0][0]
+                    insights.append(f"가장 많이 선택된 알고리즘: <b style='color:#00e5ff;'>{top_algo}</b> ({algo_counts[top_algo]}/{n_tgt}종 불량)")
+                low_sample_targets = [k for k, v in rel_dict.items() if v.get('low_sample')]
+                if low_sample_targets:
+                    insights.append(f"<b style='color:#ff5252;'>표본 부족 경고</b>: {', '.join(low_sample_targets)} — 예측 신뢰도 낮을 수 있음")
+
+            # 요약 카드 렌더링
+            card_html = "".join([
+                f"<div style='text-align:center;padding:10px 6px;background:#1a1c24;"
+                f"border:1px solid #2d3142;border-radius:8px;'>"
+                f"<div style='font-size:0.68rem;color:#cbd5e1;margin-bottom:4px;'>{label}</div>"
+                f"<div style='font-size:0.95rem;font-weight:700;color:#ffffff;'>{val}</div>"
+                f"</div>"
+                for label, val in card_items
+            ])
+            st.markdown(
+                f"<div style='background:#12141d;border:1px solid #2d3142;border-radius:10px;"
+                f"padding:16px 20px;margin-bottom:10px;'>"
+                f"<div style='font-size:0.82rem;color:#00e5ff;font-weight:700;margin-bottom:12px;'>"
+                f"▸ {summary_title}</div>"
+                f"<div style='display:grid;grid-template-columns:repeat(6,1fr);gap:8px;'>{card_html}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+            # 인사이트 박스
+            if insights:
+                insight_rows = "".join([
+                    f"<div style='padding:5px 0;border-bottom:1px solid #23263a;"
+                    f"font-size:0.82rem;color:#e1e1e1;line-height:1.5;'>• {msg}</div>"
+                    for msg in insights
+                ])
+                st.markdown(
+                    f"<div style='background:#12141d;border:1px solid #2d3142;"
+                    f"border-left:3px solid #00e5ff;border-radius:10px;"
+                    f"padding:14px 20px;margin-bottom:12px;'>"
+                    f"<div style='font-size:0.82rem;color:#00e5ff;font-weight:700;margin-bottom:8px;'>"
+                    f"▸ {insight_title}</div>"
+                    f"{insight_rows}</div>",
+                    unsafe_allow_html=True
+                )
+
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+            # ── Raw Data ── expander ───────────────────────────────────
             raw_label = "+ Raw Data" if is_en else "+ 원시 데이터"
             with st.expander(raw_label, expanded=False):
+                if is_en:
+                    st.markdown(
+                        "<p style='color:#cbd5e1;font-size:0.83rem;'>"
+                        "All accumulated data including uploaded files and diagnosis/optimization history. "
+                        "Defect columns represent predicted probability (0~1).</p>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        "<p style='color:#cbd5e1;font-size:0.83rem;'>"
+                        "업로드된 파일과 진단/최적화 이력이 누적된 전체 데이터입니다. "
+                        "불량 컬럼은 예측 확률(0~1)을 나타냅니다.</p>",
+                        unsafe_allow_html=True
+                    )
                 st.dataframe(df_view, use_container_width=True)
 
             st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-            # ── 📊 Defect Distribution ── expander ────────────────────
+            # ── Defect Distribution ── expander ───────────────────────
             dist_label = "+ Defect Probability Distribution" if is_en else "+ 불량률 분포 히스토그램"
             with st.expander(dist_label, expanded=False):
                 target_cols = [c for c in df_view.columns if c in TARGET_VARS]
                 if target_cols:
-                    desc_txt  = "Histogram of predicted defect probability distribution per defect type." if is_en else "각 불량 항목의 예측 확률 분포를 히스토그램으로 표시합니다."
                     sel_label = "Select Defect" if is_en else "불량 항목 선택"
-                    st.markdown(f"<p style='color:#cbd5e1; font-size:0.85rem;'>{desc_txt}</p>", unsafe_allow_html=True)
                     sel_hist = st.selectbox(
                         sel_label,
                         options=target_cols,
@@ -1666,6 +1838,51 @@ if is_active:
                     )
                     hist_data = df_view[sel_hist].dropna()
                     if not hist_data.empty:
+                        # 결과 분석 인사이트 계산
+                        h_mean   = hist_data.mean()
+                        h_std    = hist_data.std()
+                        h_high   = (hist_data >= DEFECT_THRESHOLD).sum()
+                        h_pct    = h_high / len(hist_data) * 100
+
+                        if is_en:
+                            dist_insight = (
+                                f"Mean risk: <b style='color:#00e5ff;'>{h_mean:.3f}</b> &nbsp;|&nbsp; "
+                                f"Std dev: <b>{h_std:.3f}</b> &nbsp;|&nbsp; "
+                                f"High-risk samples (≥{int(DEFECT_THRESHOLD*100)}%): "
+                                f"<b style='color:#{'ff5252' if h_pct>30 else 'ffab00' if h_pct>10 else '10b981'};'>"
+                                f"{h_high} ({h_pct:.1f}%)</b>"
+                            )
+                            if h_pct > 30:
+                                dist_advice = "High proportion of danger-zone samples. Priority inspection recommended."
+                            elif h_pct > 10:
+                                dist_advice = "Some samples in the caution zone. Monitor this defect type closely."
+                            else:
+                                dist_advice = "Most samples are in the safe zone. Low defect risk overall."
+                        else:
+                            dist_insight = (
+                                f"평균 리스크: <b style='color:#00e5ff;'>{h_mean:.3f}</b> &nbsp;|&nbsp; "
+                                f"표준편차: <b>{h_std:.3f}</b> &nbsp;|&nbsp; "
+                                f"고위험 샘플 (≥{int(DEFECT_THRESHOLD*100)}%): "
+                                f"<b style='color:#{'ff5252' if h_pct>30 else 'ffab00' if h_pct>10 else '10b981'};'>"
+                                f"{h_high}개 ({h_pct:.1f}%)</b>"
+                            )
+                            if h_pct > 30:
+                                dist_advice = "위험 구간 샘플 비율이 높습니다. 해당 불량을 우선 점검하세요."
+                            elif h_pct > 10:
+                                dist_advice = "주의 구간 샘플이 일부 존재합니다. 이 불량 유형을 주의 깊게 모니터링하세요."
+                            else:
+                                dist_advice = "대부분의 샘플이 안전 구간에 있습니다. 전반적으로 낮은 불량 리스크입니다."
+
+                        st.markdown(
+                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
+                            f"border-left:3px solid #00e5ff;border-radius:6px;"
+                            f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
+                            f"<span style='color:#e1e1e1;'>{dist_insight}</span><br>"
+                            f"<span style='color:#cbd5e1;font-size:0.78rem;'>→ {dist_advice}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+
                         bins = min(20, max(5, len(hist_data) // 3))
                         counts, edges = np.histogram(hist_data.values.astype(float), bins=bins, range=(0.0, 1.0))
                         legend_txt = (
@@ -1690,7 +1907,6 @@ if is_active:
                                 </div>
                               </div>
                             </div>"""
-
                         hist_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
                         <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
                           <div style="color:#e1e1e1;font-size:14px;font-weight:600;margin-bottom:14px;">{dist_title}</div>
@@ -1701,16 +1917,11 @@ if is_active:
 
             st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-            # ── 🔥 Correlation Heatmap ── expander ────────────────────
+            # ── Correlation Heatmap ── expander ───────────────────────
             corr_label = "+ Process Variable Correlation Heatmap" if is_en else "+ 변수 상관관계 히트맵"
             with st.expander(corr_label, expanded=False):
                 numeric_cols = df_view.select_dtypes(include=[np.number]).columns.tolist()
                 if len(numeric_cols) >= 2:
-                    corr_desc  = "Pearson correlation heatmap between process variables and defect types. (top 10 process variables)" if is_en else "공정 변수와 불량 항목 간 상관계수 히트맵입니다. (pearson, -1~+1)"
-                    corr_title = "Process Variables ↔ Defect Correlation (Top 10)" if is_en else "공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)"
-                    corr_leg   = "● Blue: Positive &nbsp; ● Red: Negative &nbsp; ● Gray: Weak" if is_en else "● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함"
-                    st.markdown(f"<p style='color:#cbd5e1; font-size:0.85rem;'>{corr_desc}</p>", unsafe_allow_html=True)
-
                     process_vars = [c for c in numeric_cols if c not in TARGET_VARS]
                     defect_vars  = [c for c in numeric_cols if c in TARGET_VARS]
 
@@ -1719,6 +1930,48 @@ if is_active:
                         sub_corr = corr_df.loc[process_vars, defect_vars]
                         top_vars = sub_corr.abs().max(axis=1).sort_values(ascending=False).head(10).index.tolist()
                         sub_corr = sub_corr.loc[top_vars]
+
+                        # 상관관계 인사이트 자동 추출
+                        flat = sub_corr.abs().stack()
+                        top_pair = flat.idxmax()
+                        top_val  = sub_corr.loc[top_pair[0], top_pair[1]]
+                        top_dir  = ("positively" if top_val > 0 else "negatively") if is_en else ("양의 방향으로" if top_val > 0 else "음의 방향으로")
+                        strong_pairs = [(r, c, sub_corr.loc[r, c]) for r in sub_corr.index for c in sub_corr.columns if abs(sub_corr.loc[r, c]) >= 0.5]
+                        strong_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+
+                        if is_en:
+                            corr_insight = (
+                                f"Strongest correlation: <b style='color:#00e5ff;'>{top_pair[0]}</b> ↔ "
+                                f"<b style='color:#00e5ff;'>{top_pair[1]}</b> "
+                                f"({top_dir}, r={top_val:.2f})"
+                            )
+                            if strong_pairs:
+                                corr_advice = f"{len(strong_pairs)} variable-defect pair(s) with |r| ≥ 0.5 — these variables are strong predictors and key targets for process control."
+                            else:
+                                corr_advice = "No strong linear correlations (|r| ≥ 0.5) found. Nonlinear interactions may be dominant — tree-based models handle this well."
+                        else:
+                            corr_insight = (
+                                f"가장 강한 상관관계: <b style='color:#00e5ff;'>{top_pair[0]}</b> ↔ "
+                                f"<b style='color:#00e5ff;'>{top_pair[1]}</b> "
+                                f"({top_dir}, r={top_val:.2f})"
+                            )
+                            if strong_pairs:
+                                corr_advice = f"|r| ≥ 0.5 이상의 강한 상관 변수-불량 쌍 {len(strong_pairs)}개 — 공정 관리의 핵심 타겟 변수입니다."
+                            else:
+                                corr_advice = "강한 선형 상관(|r| ≥ 0.5)이 없습니다. 비선형 상호작용이 지배적일 수 있습니다 — 트리 기반 모델이 유리합니다."
+
+                        st.markdown(
+                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
+                            f"border-left:3px solid #00e5ff;border-radius:6px;"
+                            f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
+                            f"<span style='color:#e1e1e1;'>{corr_insight}</span><br>"
+                            f"<span style='color:#cbd5e1;font-size:0.78rem;'>→ {corr_advice}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+
+                        corr_title = "Process Variables ↔ Defect Correlation (Top 10)" if is_en else "공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)"
+                        corr_leg   = "● Blue: Positive &nbsp; ● Red: Negative &nbsp; ● Gray: Weak" if is_en else "● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함"
 
                         header_cells = "".join([f"<th style='padding:6px 8px;font-size:11px;color:#cbd5e1;text-align:center;white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
                         data_rows = ""
@@ -1753,17 +2006,43 @@ if is_active:
 
             st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-            # ── 📈 Trend Chart ── expander ────────────────────────────
+            # ── Trend Chart ── expander ───────────────────────────────
             trend_label = "+ Time-Series Trend Chart" if is_en else "+ 시계열 트렌드 차트"
             with st.expander(trend_label, expanded=False):
                 target_cols_t  = [c for c in df_view.columns if c in TARGET_VARS]
                 process_cols_t = [c for c in df_view.select_dtypes(include=[np.number]).columns if c not in TARGET_VARS]
 
                 if target_cols_t or process_cols_t:
-                    trend_desc  = "Track variable changes in chronological order of diagnosis/optimization history." if is_en else "진단/최적화 이력 순서대로 변수 값 변화를 추적합니다."
+                    # 트렌드 인사이트: 불량 리스크 증가/감소 추세 자동 계산
+                    trend_insights = []
+                    for tc in target_cols_t:
+                        tc_data = df_view[tc].dropna()
+                        if len(tc_data) >= 3:
+                            first_half = tc_data.iloc[:len(tc_data)//2].mean()
+                            last_half  = tc_data.iloc[len(tc_data)//2:].mean()
+                            delta      = last_half - first_half
+                            if abs(delta) >= 0.05:
+                                direction = ("↑ increasing" if delta > 0 else "↓ decreasing") if is_en else ("↑ 상승 추세" if delta > 0 else "↓ 하락 추세")
+                                color     = "#ff5252" if delta > 0 else "#10b981"
+                                trend_insights.append(
+                                    f"<b style='color:{color};'>{tc}</b>: {direction} (Δ{delta:+.3f})"
+                                )
+
+                    if trend_insights:
+                        title_txt = "Defect Risk Trend (first half vs. last half of data)" if is_en else "불량 리스크 추세 (데이터 전반부 vs 후반부 평균 비교)"
+                        st.markdown(
+                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
+                            f"border-left:3px solid #00e5ff;border-radius:6px;"
+                            f"padding:10px 14px;margin-bottom:10px;'>"
+                            f"<div style='font-size:0.78rem;color:#00e5ff;font-weight:600;margin-bottom:6px;'>"
+                            f"▸ {title_txt}</div>"
+                            + "".join([f"<div style='font-size:0.80rem;color:#e1e1e1;padding:2px 0;'>{t}</div>" for t in trend_insights])
+                            + "</div>",
+                            unsafe_allow_html=True
+                        )
+
                     trend_sel_l = "Select items to view trend (multiple selection)" if is_en else "트렌드 확인할 항목 선택 (복수 선택 가능)"
                     trend_chart_title = "Trend Chart (Normalized 0~1)" if is_en else "트렌드 차트 (정규화 0~1 표시)"
-                    st.markdown(f"<p style='color:#cbd5e1; font-size:0.85rem;'>{trend_desc}</p>", unsafe_allow_html=True)
                     all_trend_cols = target_cols_t + process_cols_t
                     trend_sel = st.multiselect(
                         trend_sel_l,
@@ -1779,7 +2058,6 @@ if is_active:
                         COLORS = ["#00e5ff","#a3e635","#ffab00","#ff5252","#c084fc",
                                   "#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24"]
 
-                        max_idx  = len(trend_df)
                         line_defs = []
                         for ci, col in enumerate(trend_sel):
                             col_data = trend_df[col].dropna()
@@ -1826,5 +2104,7 @@ if is_active:
                                 </div>""",
                                 unsafe_allow_html=True
                             )
+
+            # ── 서브탭 1~4: expander로 이미 위에서 처리됨 (잔여 코드 제거)
 
             # ── 서브탭 1~4: expander로 이미 위에서 처리됨 (잔여 코드 제거)
