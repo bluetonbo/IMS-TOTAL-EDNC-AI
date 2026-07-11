@@ -638,11 +638,11 @@ st.markdown("""
         padding-bottom: 0;
     }
     .stTabs [data-baseweb="tab"] {
-        background-color: #1a1c24 !important;
-        border: 1px solid #2d3142 !important;
+        background-color: #1e2235 !important;
+        border: 1px solid #3d4260 !important;
         border-bottom: none !important;
         border-radius: 8px 8px 0 0 !important;
-        color: #cbd5e1 !important;
+        color: #e2e8f0 !important;
         font-weight: 600 !important;
         font-size: 0.95rem !important;
         padding: 10px 24px !important;
@@ -654,8 +654,8 @@ st.markdown("""
         color: #00e5ff !important;
     }
     .stTabs [data-baseweb="tab"]:hover {
-        color: #e1e1e1 !important;
-        background-color: #23263a !important;
+        color: #ffffff !important;
+        background-color: #2a2f4a !important;
     }
     /* ── Expander 전체 스타일 ── */
     /* 컨테이너 */
@@ -897,7 +897,7 @@ with st.sidebar:
                                         f"border-left:3px solid #00e5ff;border-radius:5px;"
                                         f"padding:5px 10px;font-size:0.78rem;color:#cbd5e1;margin-top:3px;'>"
                                         f"  Testing <b style='color:#00e5ff;'>{algo_name}</b>"
-                                        f" &nbsp;<span style='color:#94a3b8;'>({a_idx}/{a_total})</span></div>",
+                                        f" &nbsp;<span style='color:#cbd5e1;'>({a_idx}/{a_total})</span></div>",
                                         unsafe_allow_html=True
                                     )
 
@@ -981,7 +981,7 @@ with st.sidebar:
                 f"padding:4px 2px;border-bottom:1px solid #23263a;'>"
                 f"<span style='font-size:0.73rem;color:#cbd5e1;width:38%;'>{t_key}</span>"
                 f"<span style='font-size:0.71rem;color:#a3e635;font-weight:600;width:40%;'>{a_name}</span>"
-                f"<span style='font-size:0.70rem;color:#94a3b8;width:22%;text-align:right;'>{cv_str}</span>"
+                f"<span style='font-size:0.70rem;color:#cbd5e1;width:22%;text-align:right;'>{cv_str}</span>"
                 f"</div>"
             )
         st.sidebar.markdown(
@@ -990,7 +990,7 @@ with st.sidebar:
             f"<div style='display:flex;justify-content:space-between;align-items:center;"
             f"margin-bottom:8px;'>"
             f"<span style='font-size:0.78rem;color:#00e5ff;font-weight:600;'>Model Selection Result</span>"
-            f"<span style='font-size:0.68rem;color:#94a3b8;'>CV Accuracy</span>"
+            f"<span style='font-size:0.68rem;color:#cbd5e1;'>CV Accuracy</span>"
             f"</div>"
             f"<div style='display:flex;justify-content:space-between;font-size:0.67rem;"
             f"color:#64748b;padding-bottom:4px;border-bottom:1px solid #3f445e;margin-bottom:4px;'>"
@@ -1106,7 +1106,7 @@ with col_lang_switch:
 
 is_active = len(st.session_state.get('models', {})) > 0
 status_text = L['status_active'] if is_active else L['status_standby']
-dot_color = "#00e5ff" if is_active else "#94a3b8"
+dot_color = "#00e5ff" if is_active else "#b0bec5"
 var_count = len(st.session_state.get('ui_display_vars', []))
 exp_weight = int(st.session_state.get('expert_reliability', 0.0) * 100)
 
@@ -1618,7 +1618,7 @@ if is_active:
                                     {r_perc}%
                                 </div>
                             </div>
-                            <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">{reliability_caption}</div>
+                            <div style="font-size:0.72rem; color:#cbd5e1; margin-top:2px;">{reliability_caption}</div>
                         </div>""",
                         unsafe_allow_html=True
                     )
@@ -1930,7 +1930,7 @@ if is_active:
                         <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
                           <div style="color:#e1e1e1;font-size:14px;font-weight:600;margin-bottom:14px;">{dist_title}</div>
                           {bar_rows_h}
-                          <div style="color:#94a3b8;font-size:11px;margin-top:10px;">{legend_txt}</div>
+                          <div style="color:#cbd5e1;font-size:11px;margin-top:10px;">{legend_txt}</div>
                         </div></body></html>"""
                         components.html(hist_html, height=80 + len(counts) * 28, scrolling=False)
 
@@ -2018,7 +2018,7 @@ if is_active:
                                     <thead><tr><th style="padding:6px 8px;"></th>{header_cells}</tr></thead>
                                     <tbody>{data_rows}</tbody>
                                 </table>
-                                <div style="color:#94a3b8;font-size:0.72rem;margin-top:10px;">{corr_leg}</div>
+                                <div style="color:#cbd5e1;font-size:0.72rem;margin-top:10px;">{corr_leg}</div>
                             </div>""",
                             unsafe_allow_html=True
                         )
