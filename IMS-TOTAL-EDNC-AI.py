@@ -288,15 +288,15 @@ LANG_DICT = {
         "status_active": "Operational",
         "status_standby": "Standby",
         "info_standby": "Please upload the converted data in the sidebar and start AI learning.",
-        "tab_diag": "[ Diagnostic & Optimization ]",
-        "tab_master": "[ Master Data ]",
+        "tab_diag": "🔬  Diagnostic & Optimization",
+        "tab_master": "📊  Master Data & Analytics",
         "sec_a": "A. Current Injection Parameters",
-        "sec_c": "C. Defect Weights & Expert Constraints",
+        "sec_c": "B. Defect Weights & Expert Constraints",
         "sec_c_sub2": "2. Expert Constraint Settings",
         "lbl_constant": "Select Variables to Keep Constant",
         "lbl_target": " Target",
         "lbl_expert_rel": "Expert Guideline Reliability (%)",
-        "sec_d": "D. Intelligent Diagnosis & Optimization",
+        "sec_d": "C. Intelligent Diagnosis & Optimization",
         "btn_diagnose": "Diagnose Current Risk",
         "btn_optimize": "Optimize Conditions",
         "opt_converged": "Converged",
@@ -360,15 +360,15 @@ LANG_DICT = {
         "status_active": "가동 중",
         "status_standby": "대기 중",
         "info_standby": "사이드바에 변환된 데이터를 업로드하고 AI 학습을 시작해 주세요.",
-        "tab_diag": "[ 진단 및 최적화 ]",
-        "tab_master": "[ 마스터 데이터 ]",
+        "tab_diag": "🔬  진단 및 최적화",
+        "tab_master": "📊  마스터 데이터 & 분석",
         "sec_a": "A. 현재 사출 조건 파라미터",
-        "sec_c": "C. 불량 가중치 및 전문가 제약 조건",
+        "sec_c": "B. 불량 가중치 및 전문가 제약 조건",
         "sec_c_sub2": "2. 전문 제약 조건 설정",
         "lbl_constant": "고정 상태를 유지할 변수 선택",
         "lbl_target": " 목표치",
         "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)",
-        "sec_d": "D. 지능형 진단 및 최적화",
+        "sec_d": "C. 지능형 진단 및 최적화",
         "btn_diagnose": "현재 리스크 진단",
         "btn_optimize": "역추론 최적화 탐색 실행",
         "opt_converged": "수렴 완료",
@@ -623,6 +623,65 @@ st.markdown("""
         color: #00e5ff !important;
         font-weight: 600 !important;
     }
+    /* Tab 버튼 시인성 개선 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: transparent;
+        border-bottom: 2px solid #2d3142;
+        padding-bottom: 0;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #1a1c24 !important;
+        border: 1px solid #2d3142 !important;
+        border-bottom: none !important;
+        border-radius: 8px 8px 0 0 !important;
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        padding: 10px 24px !important;
+        transition: all 0.2s ease;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #00e5ff22 !important;
+        border-color: #00e5ff !important;
+        color: #00e5ff !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #e1e1e1 !important;
+        background-color: #23263a !important;
+    }
+    /* Expander 스타일 */
+    .streamlit-expanderHeader {
+        background-color: #1a1c24 !important;
+        border: 1px solid #2d3142 !important;
+        border-radius: 8px !important;
+        color: #00e5ff !important;
+        font-weight: 600 !important;
+        font-size: 1.0rem !important;
+    }
+    .streamlit-expanderHeader:hover {
+        background-color: #23263a !important;
+        border-color: #00e5ff !important;
+    }
+    .streamlit-expanderContent {
+        border: 1px solid #2d3142 !important;
+        border-top: none !important;
+        border-radius: 0 0 8px 8px !important;
+        background-color: #12141d !important;
+    }
+    /* 로딩 스텝 박스 */
+    .load-step {
+        background: #1a1c24;
+        border: 1px solid #2d3142;
+        border-left: 3px solid #00e5ff;
+        border-radius: 6px;
+        padding: 6px 12px;
+        margin: 4px 0;
+        font-size: 0.82rem;
+        color: #94a3b8;
+    }
+    .load-step.done { border-left-color: #10b981; color: #10b981; }
+    .load-step.active { border-left-color: #00e5ff; color: #e1e1e1; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -666,25 +725,56 @@ with st.sidebar:
                 return None
 
         # [추가] 데이터 로딩 진행 상황 표시
-        load_prog = st.sidebar.progress(0, text="▸ Loading data files...")
-        load_status = st.sidebar.empty()
+        load_prog    = st.sidebar.progress(0)
+        load_status  = st.sidebar.empty()
+        load_detail  = st.sidebar.empty()
 
-        load_status.markdown("▸ **Reading File 1 (Input Data)...**")
-        load_prog.progress(10, text="▸ Reading File 1 (Input Data)...")
+        def _step(pct, msg, detail="", done_steps=None):
+            load_prog.progress(pct, text=f"{pct}%")
+            load_status.markdown(
+                f"<div style='background:#1a1c24;border:1px solid #2d3142;border-left:3px solid #00e5ff;"
+                f"border-radius:6px;padding:7px 12px;font-size:0.82rem;color:#e1e1e1;'>"
+                f"▸ <b>{msg}</b></div>", unsafe_allow_html=True
+            )
+            if done_steps:
+                done_html = "".join([
+                    f"<div style='font-size:0.75rem;color:#10b981;padding:2px 0;'>✓ {s}</div>"
+                    for s in done_steps
+                ])
+                load_detail.markdown(
+                    f"<div style='background:#12141d;border:1px solid #2d3142;border-radius:6px;"
+                    f"padding:6px 12px;margin-top:4px;'>{done_html}</div>",
+                    unsafe_allow_html=True
+                )
+            elif detail:
+                load_detail.markdown(
+                    f"<div style='font-size:0.75rem;color:#64748b;padding:4px 12px;'>{detail}</div>",
+                    unsafe_allow_html=True
+                )
+
+        done_steps = []
+        _step(5, "Initializing...", "Checking uploaded files")
+
+        _step(10, "Reading File 1 — Input Data", "Parsing CSV/XLSX...")
         df_i = load_data(u1)
-        load_prog.progress(30, text="▸ Reading File 2 (Validation Data)...")
-        load_status.markdown("▸ **Reading File 2 (Validation Data)...**")
+        if df_i is not None:
+            done_steps.append(f"File 1 loaded: {df_i.shape[0]} rows × {df_i.shape[1]} cols")
+
+        _step(28, "Reading File 2 — Historical Data", "Parsing CSV/XLSX/DB...", done_steps)
         df_v = load_data(u2)
-        load_prog.progress(50, text="▸ Reading File 3 (Reference Data)...")
-        load_status.markdown("▸ **Reading File 3 (Reference Data)...**")
+        if df_v is not None:
+            done_steps.append(f"File 2 loaded: {df_v.shape[0]} rows × {df_v.shape[1]} cols")
+
+        _step(46, "Reading File 3 — CAE Data", "Parsing CSV/XLSX...", done_steps)
         df_r = load_data(u3)
-        load_prog.progress(70, text="▸ Merging & preprocessing data...")
-        load_status.markdown("▸ **Merging & preprocessing data...**")
+        if df_r is not None:
+            done_steps.append(f"File 3 loaded: {df_r.shape[0]} rows × {df_r.shape[1]} cols")
+
+        _step(60, "Merging & deduplicating datasets", "", done_steps)
 
         if df_i is not None and (df_v is not None or df_r is not None):
             # 1. 데이터 정리
-            load_prog.progress(80, text="▸ Cleaning & deduplicating...")
-            load_status.markdown("▸ **Cleaning & deduplicating...**")
+            _step(65, "Cleaning & deduplicating...", "", done_steps)
             for df in [df_i, df_v, df_r]:
                 if df is not None:
                     df.rename(columns=OLD_TO_NEW_MAP, inplace=True)
@@ -723,6 +813,7 @@ with st.sidebar:
                         pct = int(((idx + 1) / total_targets) * 100)
                         prog_text.markdown(f"▸ **{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)**")
                         prog_bar.progress((idx + 1) / total_targets)
+                        _step(70 + int(pct * 0.28), f"Training model {idx+1}/{total_targets}: {target}", "", done_steps)
                         time.sleep(0.1) # 시각적 피드백을 위한 짧은 대기
 
                         t_series = (
@@ -794,6 +885,14 @@ with st.sidebar:
 
                     load_prog.progress(100, text="✅ All done! AI engine ready.")
                     load_status.markdown("✅ **AI Engine ready.**")
+                    done_steps.append(f"All {len(available_targets)} defect models trained successfully")
+                    load_detail.markdown(
+                        "".join([
+                            f"<div style='font-size:0.75rem;color:#10b981;padding:2px 0;'>✓ {s}</div>"
+                            for s in done_steps
+                        ]),
+                        unsafe_allow_html=True
+                    )
                     st.rerun()
         else:
             st.sidebar.warning(L['warn_upload'])
@@ -1433,52 +1532,52 @@ if is_active:
                     mime='text/csv'
                 )
 
-        # [추가] Feature Importance 시각화 섹션
+        # [추가] Feature Importance 시각화 섹션 - expander로 접기/펼치기
         fi_all = st.session_state.get('feature_importance', {})
         if fi_all:
             import streamlit.components.v1 as components
             st.divider()
-            fi_title = "▪ Feature Importance (Top Influential Variables per Defect)" if st.session_state.lang == "en" else "▪ Feature Importance (불량별 주요 영향 변수)"
-            fi_sel_label  = "Select Defect" if st.session_state.lang == "en" else "불량 항목 선택"
-            fi_algo_label = "Algorithm"     if st.session_state.lang == "en" else "알고리즘"
-            fi_top_label  = "Top 15 Variables" if st.session_state.lang == "en" else "상위 15개 변수"
-            st.markdown(f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>{fi_title}</h3>", unsafe_allow_html=True)
-            fi_target_keys = list(fi_all.keys())
-            fi_sel = st.selectbox(
-                fi_sel_label,
-                options=fi_target_keys,
-                format_func=lambda k: TARGET_VARS.get(k, k),
-                key="fi_target_sel"
-            )
-            if fi_sel and fi_sel in fi_all:
-                fi_data   = fi_all[fi_sel]
-                fi_series = pd.Series(fi_data).sort_values(ascending=False).head(15)
-                algo_used = st.session_state.get('model_algo_names', {}).get(fi_sel, '')
-                max_val   = fi_series.max() if fi_series.max() > 0 else 1.0
+            fi_title = "▪ Feature Importance — Top Influential Variables per Defect" if st.session_state.lang == "en" else "▪ Feature Importance — 불량별 주요 영향 변수"
+            with st.expander(fi_title, expanded=False):
+                fi_sel_label  = "Select Defect" if st.session_state.lang == "en" else "불량 항목 선택"
+                fi_algo_label = "Algorithm"     if st.session_state.lang == "en" else "알고리즘"
+                fi_top_label  = "Top 15 Variables" if st.session_state.lang == "en" else "상위 15개 변수"
+                fi_target_keys = list(fi_all.keys())
+                fi_sel = st.selectbox(
+                    fi_sel_label,
+                    options=fi_target_keys,
+                    format_func=lambda k: TARGET_VARS.get(k, k),
+                    key="fi_target_sel"
+                )
+                if fi_sel and fi_sel in fi_all:
+                    fi_data   = fi_all[fi_sel]
+                    fi_series = pd.Series(fi_data).sort_values(ascending=False).head(15)
+                    algo_used = st.session_state.get('model_algo_names', {}).get(fi_sel, '')
+                    max_val   = fi_series.max() if fi_series.max() > 0 else 1.0
 
-                bar_rows_html = ""
-                for var_name, imp_val in fi_series.items():
-                    bar_pct   = imp_val / max_val * 100
-                    bar_color = "#00e5ff" if bar_pct >= 60 else "#10b981" if bar_pct >= 30 else "#64748b"
-                    bar_rows_html += f"""
-                    <div style="margin-bottom:8px;">
-                      <div style="display:flex;justify-content:space-between;font-size:13px;color:#e1e1e1;margin-bottom:3px;">
-                        <span style="font-weight:600;">{var_name}</span>
-                        <span style="color:#94a3b8;">{imp_val:.4f}</span>
-                      </div>
-                      <div style="background:#1e293b;border-radius:3px;height:10px;">
-                        <div style="width:{bar_pct:.1f}%;background:{bar_color};height:10px;border-radius:3px;"></div>
-                      </div>
-                    </div>"""
+                    bar_rows_html = ""
+                    for var_name, imp_val in fi_series.items():
+                        bar_pct   = imp_val / max_val * 100
+                        bar_color = "#00e5ff" if bar_pct >= 60 else "#10b981" if bar_pct >= 30 else "#64748b"
+                        bar_rows_html += f"""
+                        <div style="margin-bottom:8px;">
+                          <div style="display:flex;justify-content:space-between;font-size:13px;color:#e1e1e1;margin-bottom:3px;">
+                            <span style="font-weight:600;">{var_name}</span>
+                            <span style="color:#94a3b8;">{imp_val:.4f}</span>
+                          </div>
+                          <div style="background:#1e293b;border-radius:3px;height:10px;">
+                            <div style="width:{bar_pct:.1f}%;background:{bar_color};height:10px;border-radius:3px;"></div>
+                          </div>
+                        </div>"""
 
-                fi_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
-                <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
-                  <div style="color:#94a3b8;font-size:12px;margin-bottom:14px;">
-                    {TARGET_VARS.get(fi_sel, fi_sel)} &middot; {fi_algo_label}: <span style="color:#a3e635;">{algo_used}</span> &middot; {fi_top_label}
-                  </div>
-                  {bar_rows_html}
-                </div></body></html>"""
-                components.html(fi_html, height=60 + len(fi_series) * 36, scrolling=False)
+                    fi_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
+                    <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
+                      <div style="color:#94a3b8;font-size:12px;margin-bottom:14px;">
+                        {TARGET_VARS.get(fi_sel, fi_sel)} &middot; {fi_algo_label}: <span style="color:#a3e635;">{algo_used}</span> &middot; {fi_top_label}
+                      </div>
+                      {bar_rows_html}
+                    </div></body></html>"""
+                    components.html(fi_html, height=60 + len(fi_series) * 36, scrolling=False)
 
     with t2:
         if not st.session_state['df_injection'].empty:
@@ -1486,12 +1585,189 @@ if is_active:
             df_view = st.session_state['df_injection'].copy()
             is_en   = st.session_state.lang == "en"
 
-            tab2_labels = (
-                ["📋 Raw Data", "📊 Defect Distribution", "🔥 Correlation Heatmap", "📈 Trend Chart"]
-                if is_en else
-                ["📋 원시 데이터", "📊 불량률 분포", "🔥 변수 상관관계", "📈 시계열 트렌드"]
-            )
-            sub1, sub2, sub3, sub4 = st.tabs(tab2_labels)
+            # ── 📋 Raw Data ── expander ────────────────────────────────
+            raw_label = "📋 Raw Data" if is_en else "📋 원시 데이터"
+            with st.expander(raw_label, expanded=False):
+                st.dataframe(df_view, use_container_width=True)
+
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+            # ── 📊 Defect Distribution ── expander ────────────────────
+            dist_label = "📊 Defect Probability Distribution" if is_en else "📊 불량률 분포 히스토그램"
+            with st.expander(dist_label, expanded=False):
+                target_cols = [c for c in df_view.columns if c in TARGET_VARS]
+                if target_cols:
+                    desc_txt  = "Histogram of predicted defect probability distribution per defect type." if is_en else "각 불량 항목의 예측 확률 분포를 히스토그램으로 표시합니다."
+                    sel_label = "Select Defect" if is_en else "불량 항목 선택"
+                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{desc_txt}</p>", unsafe_allow_html=True)
+                    sel_hist = st.selectbox(
+                        sel_label,
+                        options=target_cols,
+                        format_func=lambda k: TARGET_VARS.get(k, k),
+                        key="hist_target_sel"
+                    )
+                    hist_data = df_view[sel_hist].dropna()
+                    if not hist_data.empty:
+                        bins = min(20, max(5, len(hist_data) // 3))
+                        counts, edges = np.histogram(hist_data.values.astype(float), bins=bins, range=(0.0, 1.0))
+                        legend_txt = (
+                            "● Blue: Safe(0~0.3) &nbsp; ● Orange: Caution(0.3~0.7) &nbsp; ● Red: Danger(0.7~1.0)"
+                            if is_en else
+                            "● 파란색: 안전(0~0.3) &nbsp; ● 주황색: 주의(0.3~0.7) &nbsp; ● 빨간색: 위험(0.7~1.0)"
+                        )
+                        dist_title = f"{TARGET_VARS.get(sel_hist, sel_hist)} {'Distribution' if is_en else '분포'} (n={len(hist_data)})"
+                        max_count = int(counts.max()) if counts.max() > 0 else 1
+                        bar_rows_h = ""
+                        for i, cnt in enumerate(counts):
+                            lo, hi  = float(edges[i]), float(edges[i+1])
+                            mid     = (lo + hi) / 2.0
+                            bp      = int(cnt) / max_count * 100
+                            bc      = "#00e5ff" if mid < 0.3 else "#ffab00" if mid < 0.7 else "#ff5252"
+                            bar_rows_h += f"""
+                            <div style="display:flex;align-items:center;margin-bottom:5px;gap:8px;">
+                              <span style="color:#94a3b8;font-size:11px;width:80px;text-align:right;">{lo:.2f}~{hi:.2f}</span>
+                              <div style="flex:1;background:#1e293b;border-radius:3px;height:18px;">
+                                <div style="width:{bp:.1f}%;background:{bc};height:18px;border-radius:3px;display:flex;align-items:center;padding-left:6px;">
+                                  <span style="color:#fff;font-size:11px;">{int(cnt)}</span>
+                                </div>
+                              </div>
+                            </div>"""
+
+                        hist_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
+                        <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
+                          <div style="color:#e1e1e1;font-size:14px;font-weight:600;margin-bottom:14px;">{dist_title}</div>
+                          {bar_rows_h}
+                          <div style="color:#64748b;font-size:11px;margin-top:10px;">{legend_txt}</div>
+                        </div></body></html>"""
+                        components.html(hist_html, height=80 + len(counts) * 28, scrolling=False)
+
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+            # ── 🔥 Correlation Heatmap ── expander ────────────────────
+            corr_label = "🔥 Process Variable Correlation Heatmap" if is_en else "🔥 변수 상관관계 히트맵"
+            with st.expander(corr_label, expanded=False):
+                numeric_cols = df_view.select_dtypes(include=[np.number]).columns.tolist()
+                if len(numeric_cols) >= 2:
+                    corr_desc  = "Pearson correlation heatmap between process variables and defect types. (top 10 process variables)" if is_en else "공정 변수와 불량 항목 간 상관계수 히트맵입니다. (pearson, -1~+1)"
+                    corr_title = "Process Variables ↔ Defect Correlation (Top 10)" if is_en else "공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)"
+                    corr_leg   = "● Blue: Positive &nbsp; ● Red: Negative &nbsp; ● Gray: Weak" if is_en else "● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함"
+                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{corr_desc}</p>", unsafe_allow_html=True)
+
+                    process_vars = [c for c in numeric_cols if c not in TARGET_VARS]
+                    defect_vars  = [c for c in numeric_cols if c in TARGET_VARS]
+
+                    if process_vars and defect_vars:
+                        corr_df  = df_view[process_vars + defect_vars].corr()
+                        sub_corr = corr_df.loc[process_vars, defect_vars]
+                        top_vars = sub_corr.abs().max(axis=1).sort_values(ascending=False).head(10).index.tolist()
+                        sub_corr = sub_corr.loc[top_vars]
+
+                        header_cells = "".join([f"<th style='padding:6px 8px;font-size:11px;color:#94a3b8;text-align:center;white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
+                        data_rows = ""
+                        for var_r in sub_corr.index:
+                            cells = f"<td style='padding:6px 8px;font-size:12px;color:#e1e1e1;font-weight:600;'>{var_r}</td>"
+                            for var_c in sub_corr.columns:
+                                val = float(sub_corr.loc[var_r, var_c])
+                                intensity = abs(val)
+                                if val > 0.3:
+                                    bg = f"rgba(0,229,255,{min(intensity,0.9):.2f})"
+                                    tc = "#000"
+                                elif val < -0.3:
+                                    bg = f"rgba(255,82,82,{min(intensity,0.9):.2f})"
+                                    tc = "#fff"
+                                else:
+                                    bg = "#1e293b"
+                                    tc = "#64748b"
+                                cells += f"<td style='padding:6px 8px;text-align:center;background:{bg};color:{tc};font-size:12px;'>{val:.2f}</td>"
+                            data_rows += f"<tr>{cells}</tr>"
+
+                        st.markdown(
+                            f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;margin-top:8px;overflow-x:auto;">
+                                <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:14px;">{corr_title}</div>
+                                <table style="border-collapse:collapse;width:100%;">
+                                    <thead><tr><th style="padding:6px 8px;"></th>{header_cells}</tr></thead>
+                                    <tbody>{data_rows}</tbody>
+                                </table>
+                                <div style="color:#64748b;font-size:0.72rem;margin-top:10px;">{corr_leg}</div>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
+
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+            # ── 📈 Trend Chart ── expander ────────────────────────────
+            trend_label = "📈 Time-Series Trend Chart" if is_en else "📈 시계열 트렌드 차트"
+            with st.expander(trend_label, expanded=False):
+                target_cols_t  = [c for c in df_view.columns if c in TARGET_VARS]
+                process_cols_t = [c for c in df_view.select_dtypes(include=[np.number]).columns if c not in TARGET_VARS]
+
+                if target_cols_t or process_cols_t:
+                    trend_desc  = "Track variable changes in chronological order of diagnosis/optimization history." if is_en else "진단/최적화 이력 순서대로 변수 값 변화를 추적합니다."
+                    trend_sel_l = "Select items to view trend (multiple selection)" if is_en else "트렌드 확인할 항목 선택 (복수 선택 가능)"
+                    trend_chart_title = "Trend Chart (Normalized 0~1)" if is_en else "트렌드 차트 (정규화 0~1 표시)"
+                    st.markdown(f"<p style='color:#94a3b8; font-size:0.85rem;'>{trend_desc}</p>", unsafe_allow_html=True)
+                    all_trend_cols = target_cols_t + process_cols_t
+                    trend_sel = st.multiselect(
+                        trend_sel_l,
+                        options=all_trend_cols,
+                        default=target_cols_t[:3] if len(target_cols_t) >= 3 else target_cols_t,
+                        format_func=lambda k: TARGET_VARS.get(k, k),
+                        key="trend_multisel"
+                    )
+                    if trend_sel:
+                        trend_df = df_view[trend_sel].reset_index(drop=True)
+                        trend_df.index = range(1, len(trend_df) + 1)
+
+                        COLORS = ["#00e5ff","#a3e635","#ffab00","#ff5252","#c084fc",
+                                  "#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24"]
+
+                        max_idx  = len(trend_df)
+                        line_defs = []
+                        for ci, col in enumerate(trend_sel):
+                            col_data = trend_df[col].dropna()
+                            if col_data.empty:
+                                continue
+                            col_min, col_max = col_data.min(), col_data.max()
+                            span = col_max - col_min if col_max != col_min else 1.0
+                            norm = (col_data - col_min) / span
+                            line_defs.append({'col': col, 'data': norm, 'raw': col_data, 'color': COLORS[ci % len(COLORS)]})
+
+                        if line_defs:
+                            W, H, PAD = 900, 260, 40
+                            svg_lines = ""
+                            for ld in line_defs:
+                                pts = []
+                                for xi, (idx_v, y_v) in enumerate(ld['data'].items()):
+                                    x = PAD + (xi / max(len(ld['data']) - 1, 1)) * (W - 2 * PAD)
+                                    y = PAD + (1 - float(y_v)) * (H - 2 * PAD)
+                                    pts.append(f"{x:.1f},{y:.1f}")
+                                if pts:
+                                    svg_lines += f"<polyline points='{' '.join(pts)}' fill='none' stroke='{ld['color']}' stroke-width='2' opacity='0.85'/>"
+                                    last_x, last_y = float(pts[-1].split(',')[0]), float(pts[-1].split(',')[1])
+                                    last_raw = ld['raw'].iloc[-1]
+                                    svg_lines += f"<circle cx='{last_x}' cy='{last_y}' r='4' fill='{ld['color']}'/>"
+                                    svg_lines += f"<text x='{min(last_x+6, W-60)}' y='{last_y+4}' fill='{ld['color']}' font-size='10'>{float(last_raw):.2f}</text>"
+
+                            legend = ""
+                            for li, ld in enumerate(line_defs):
+                                lx = PAD + li * 130
+                                legend += f"<rect x='{lx}' y='{H+8}' width='14' height='8' fill='{ld['color']}' rx='2'/>"
+                                label  = TARGET_VARS.get(ld['col'], ld['col'])[:12]
+                                legend += f"<text x='{lx+18}' y='{H+16}' fill='#94a3b8' font-size='10'>{label}</text>"
+
+                            svg_h = H + 36
+                            st.markdown(
+                                f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:16px 20px;margin-top:8px;overflow-x:auto;">
+                                    <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:10px;">{trend_chart_title}</div>
+                                    <svg viewBox='0 0 {W} {svg_h}' style='width:100%;max-height:300px;'>
+                                        <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                                        <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                                        {svg_lines}
+                                        {legend}
+                                    </svg>
+                                </div>""",
+                                unsafe_allow_html=True
+                            )
 
             # ── 서브탭 1: 원시 데이터 테이블 ────────────────────────────
             with sub1:
