@@ -736,21 +736,6 @@ with st.sidebar:
                 f"border-radius:6px;padding:7px 12px;font-size:0.82rem;color:#e1e1e1;'>"
                 f"▸ <b>{msg}</b></div>", unsafe_allow_html=True
             )
-            if done_steps:
-                done_html = "".join([
-                    f"<div style='font-size:0.75rem;color:#10b981;padding:2px 0;'>✓ {s}</div>"
-                    for s in done_steps
-                ])
-                load_detail.markdown(
-                    f"<div style='background:#12141d;border:1px solid #2d3142;border-radius:6px;"
-                    f"padding:6px 12px;margin-top:4px;'>{done_html}</div>",
-                    unsafe_allow_html=True
-                )
-            elif detail:
-                load_detail.markdown(
-                    f"<div style='font-size:0.75rem;color:#64748b;padding:4px 12px;'>{detail}</div>",
-                    unsafe_allow_html=True
-                )
 
         done_steps = []
         _step(5, "Initializing...", "Checking uploaded files")
@@ -885,14 +870,6 @@ with st.sidebar:
 
                     load_prog.progress(100, text="✅ All done! AI engine ready.")
                     load_status.markdown("✅ **AI Engine ready.**")
-                    done_steps.append(f"All {len(available_targets)} defect models trained successfully")
-                    load_detail.markdown(
-                        "".join([
-                            f"<div style='font-size:0.75rem;color:#10b981;padding:2px 0;'>✓ {s}</div>"
-                            for s in done_steps
-                        ]),
-                        unsafe_allow_html=True
-                    )
                     st.rerun()
         else:
             st.sidebar.warning(L['warn_upload'])
