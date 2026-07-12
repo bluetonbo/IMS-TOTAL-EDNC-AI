@@ -25,7 +25,7 @@ try:
 except ImportError:
     _HAS_LGBM = False
 
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "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"
 
 #  AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
 NUM_ACTIONS = 3
