@@ -1314,11 +1314,13 @@ if is_active:
             f'<div class="section-title" style="margin-top:0.6rem;margin-bottom:0.5rem;"><span class="square-icon"></span>{L["sec_c_sub2"]}</div>',
             unsafe_allow_html=True
         )
-        selected_expert_vars = st.multiselect(
-            L['lbl_constant'],
-            options=st.session_state['ui_display_vars'],
-            default=list(st.session_state['expert_constraints'].keys())
-        )
+        _ms_col, _, _ = st.columns([1, 1, 1])
+        with _ms_col:
+            selected_expert_vars = st.multiselect(
+                L['lbl_constant'],
+                options=st.session_state['ui_display_vars'],
+                default=list(st.session_state['expert_constraints'].keys())
+            )
         if selected_expert_vars:
             cols_b = st.columns(3)
             for i, v_name in enumerate(selected_expert_vars):
