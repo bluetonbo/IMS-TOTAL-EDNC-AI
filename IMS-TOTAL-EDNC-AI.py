@@ -556,11 +556,8 @@ st.markdown("""
     .element-container {
         margin-bottom: 0px !important;
     }
-    /* hr 구분선 마진 */
-    hr {
-        margin-top: 6px !important;
-        margin-bottom: 6px !important;
-    }
+    /* hr 구분선 숨김 */
+    hr { display: none !important; }
     [data-testid="stSidebar"] {
         background-color: #12141d !important;
         border-right: 1px solid #1f222e;
@@ -1288,8 +1285,6 @@ if is_active:
                     )
                     st.session_state['current_inputs'][var] = ni_val
 
-        st.markdown("<hr style='border:none;border-top:1px solid #1e293b;margin:4px 0;'>", unsafe_allow_html=True)
-
         # B. 불량 가중치 / C. 전문가 제약 조건 설정
         st.markdown(
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_c"]}</div>',
@@ -1340,7 +1335,6 @@ if is_active:
         st.session_state['expert_reliability'] = (
             st.slider(L['lbl_expert_rel'], 0, 100, int(st.session_state['expert_reliability'] * 100)) / 100.0
         )
-        st.markdown("<hr style='border:none;border-top:1px solid #1e293b;margin:4px 0;'>", unsafe_allow_html=True)
 
         # D. 최적화 및 지능형 진단
         def calculate_total_risk(input_vals_list):
@@ -1525,7 +1519,6 @@ if is_active:
                     st.session_state['selected_algorithm'] = "N/A"
 
         if st.session_state['last_res_val'] is not None:
-            st.markdown("<hr style='border:none;border-top:1px solid #1e293b;margin:4px 0;'>", unsafe_allow_html=True)
             val = st.session_state['last_res_val']
             total_risk_percent = int(round(val * 100))
             total_color = (
@@ -1615,7 +1608,6 @@ if is_active:
                 )
 
         # ── 공정 개선 가이드 + AI 전문가 진단 통합 expander ─────────
-        st.markdown("<hr style='border:none;border-top:1px solid #1e293b;margin:4px 0;'>", unsafe_allow_html=True)
         _combined_lbl = (
             "+ Feature Importance-based Diagnosis & AI Expert Report"
             if st.session_state.lang == "en"
@@ -1661,9 +1653,6 @@ if is_active:
             else:
                 st.info("진단 또는 최적화를 먼저 실행해 주세요." if st.session_state.lang != "en"
                         else "Please run Diagnose or Optimize first.")
-
-            st.markdown("<hr style='border-color:#2d3142; margin:8px 0 16px 0;'>",
-                        unsafe_allow_html=True)
 
             # ── 2) AI 전문가 진단 ────────────────────────────────────
             if st.session_state['last_res_val'] is None:
@@ -1718,7 +1707,6 @@ if is_active:
         fi_all = st.session_state.get('feature_importance', {})
         if fi_all:
             import streamlit.components.v1 as components
-            st.markdown("<hr style='border:none;border-top:1px solid #1e293b;margin:4px 0;'>", unsafe_allow_html=True)
             fi_title = "+ Feature Importance — Top Influential Variables per Defect" if st.session_state.lang == "en" else "+ Feature Importance — 불량별 주요 영향 변수"
             with st.expander(fi_title, expanded=False):
                 fi_sel_label  = "Select Defect" if st.session_state.lang == "en" else "불량 항목 선택"
