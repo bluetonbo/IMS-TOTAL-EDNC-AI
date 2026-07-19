@@ -638,7 +638,6 @@ st.markdown("""
     h1 { color: #ffffff !important; font-weight: 800 !important; letter-spacing: -0.04em; }
     /* 탭 opacity 전역 차단 — Streamlit 기본 테마가 비활성 탭을 흐리게 하는 것 방지 */
     [data-baseweb="tab"] { opacity: 1 !important; }
-    [data-baseweb="tab-highlight"] { background-color: #00e5ff !important; }
     .custom-progress-container {
         width: 100%;
         background-color: #1f222e;
@@ -699,7 +698,7 @@ st.markdown("""
     .stTabs [aria-selected="true"],
     .stTabs button[aria-selected="true"] {
         background-color: #12141d !important;
-        border-bottom: 3px solid #ff3b6b !important;
+        border-bottom: none !important;
         color: #ffffff !important;
         opacity: 1 !important;
     }
@@ -720,9 +719,10 @@ st.markdown("""
         color: #e1e1e1 !important;
         opacity: 1 !important;
     }
-    /* Streamlit 기본 탭 밑줄 숨김 */
+    /* 활성 탭 하단 선 — Streamlit 기본 highlight 색상 교체 */
     [data-baseweb="tab-highlight"] {
-        display: none !important;
+        background-color: #ff3b6b !important;
+        height: 3px !important;
     }
     /* ── Expander 전체 스타일 ── */
     /* 컨테이너 */
