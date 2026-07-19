@@ -1872,7 +1872,7 @@ if is_active:
                     )
                 st.dataframe(df_view, use_container_width=True)
 
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
             # ── Defect Distribution ── expander ───────────────────────
             dist_label = "+ Defect Probability Distribution" if is_en else "+ 불량률 분포 히스토그램"
@@ -1936,9 +1936,9 @@ if is_active:
                         bins = min(20, max(5, len(hist_data) // 3))
                         counts, edges = np.histogram(hist_data.values.astype(float), bins=bins, range=(0.0, 1.0))
                         legend_txt = (
-                            "● Blue: Safe(0~0.3) &nbsp; ● Orange: Caution(0.3~0.7) &nbsp; ● Red: Danger(0.7~1.0)"
+                            "<span style='color:#00e5ff;'>●</span> Blue: Safe(0~0.3) &nbsp; <span style='color:#ffab00;'>●</span> Orange: Caution(0.3~0.7) &nbsp; <span style='color:#ff5252;'>●</span> Red: Danger(0.7~1.0)"
                             if is_en else
-                            "● 파란색: 안전(0~0.3) &nbsp; ● 주황색: 주의(0.3~0.7) &nbsp; ● 빨간색: 위험(0.7~1.0)"
+                            "<span style='color:#00e5ff;'>●</span> 파란색: 안전(0~0.3) &nbsp; <span style='color:#ffab00;'>●</span> 주황색: 주의(0.3~0.7) &nbsp; <span style='color:#ff5252;'>●</span> 빨간색: 위험(0.7~1.0)"
                         )
                         dist_title = f"{TARGET_VARS.get(sel_hist, sel_hist)} {'Distribution' if is_en else '분포'} (n={len(hist_data)})"
                         max_count = int(counts.max()) if counts.max() > 0 else 1
@@ -1965,7 +1965,7 @@ if is_active:
                         </div></body></html>"""
                         components.html(hist_html, height=80 + len(counts) * 28, scrolling=False)
 
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
             # ── Correlation Heatmap ── expander ───────────────────────
             corr_label = "+ Process Variable Correlation Heatmap" if is_en else "+ 변수 상관관계 히트맵"
@@ -2054,111 +2054,11 @@ if is_active:
                             unsafe_allow_html=True
                         )
 
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-            # ── Trend Chart ── expander ───────────────────────────────
-            trend_label = "+ Time-Series Trend Chart" if is_en else "+ 시계열 트렌드 차트"
-            with st.expander(trend_label, expanded=False):
-                target_cols_t  = [c for c in df_view.columns if c in TARGET_VARS]
-                process_cols_t = [c for c in df_view.select_dtypes(include=[np.number]).columns if c not in TARGET_VARS]
-
-                if target_cols_t or process_cols_t:
-                    # 트렌드 인사이트: 불량 리스크 증가/감소 추세 자동 계산
-                    trend_insights = []
-                    for tc in target_cols_t:
-                        tc_data = df_view[tc].dropna()
-                        if len(tc_data) >= 3:
-                            first_half = tc_data.iloc[:len(tc_data)//2].mean()
-                            last_half  = tc_data.iloc[len(tc_data)//2:].mean()
-                            delta      = last_half - first_half
-                            if abs(delta) >= 0.05:
-                                direction = ("↑ increasing" if delta > 0 else "↓ decreasing") if is_en else ("↑ 상승 추세" if delta > 0 else "↓ 하락 추세")
-                                color     = "#ff5252" if delta > 0 else "#10b981"
-                                trend_insights.append(
-                                    f"<b style='color:{color};'>{tc}</b>: {direction} (Δ{delta:+.3f})"
-                                )
-
-                    if trend_insights:
-                        title_txt = "Defect Risk Trend (first half vs. last half of data)" if is_en else "불량 리스크 추세 (데이터 전반부 vs 후반부 평균 비교)"
-                        st.markdown(
-                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
-                            f"border-left:3px solid #00e5ff;border-radius:6px;"
-                            f"padding:10px 14px;margin-bottom:10px;'>"
-                            f"<div style='font-size:0.78rem;color:#00e5ff;font-weight:600;margin-bottom:6px;'>"
-                            f"▸ {title_txt}</div>"
-                            + "".join([f"<div style='font-size:0.80rem;color:#e1e1e1;padding:2px 0;'>{t}</div>" for t in trend_insights])
-                            + "</div>",
-                            unsafe_allow_html=True
-                        )
-
-                    trend_sel_l = "Select items to view trend (multiple selection)" if is_en else "트렌드 확인할 항목 선택 (복수 선택 가능)"
-                    trend_chart_title = "Trend Chart (Normalized 0~1)" if is_en else "트렌드 차트 (정규화 0~1 표시)"
-                    all_trend_cols = target_cols_t + process_cols_t
-                    trend_sel = st.multiselect(
-                        trend_sel_l,
-                        options=all_trend_cols,
-                        default=target_cols_t[:3] if len(target_cols_t) >= 3 else target_cols_t,
-                        format_func=lambda k: TARGET_VARS.get(k, k),
-                        key="trend_multisel"
-                    )
-                    if trend_sel:
-                        trend_df = df_view[trend_sel].reset_index(drop=True)
-                        trend_df.index = range(1, len(trend_df) + 1)
-
-                        COLORS = ["#00e5ff","#a3e635","#ffab00","#ff5252","#c084fc",
-                                  "#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24"]
-
-                        line_defs = []
-                        for ci, col in enumerate(trend_sel):
-                            col_data = trend_df[col].dropna()
-                            if col_data.empty:
-                                continue
-                            col_min, col_max = col_data.min(), col_data.max()
-                            span = col_max - col_min if col_max != col_min else 1.0
-                            norm = (col_data - col_min) / span
-                            line_defs.append({'col': col, 'data': norm, 'raw': col_data, 'color': COLORS[ci % len(COLORS)]})
-
-                        if line_defs:
-                            W, H, PAD = 900, 260, 40
-                            svg_lines = ""
-                            for ld in line_defs:
-                                pts = []
-                                for xi, (idx_v, y_v) in enumerate(ld['data'].items()):
-                                    x = PAD + (xi / max(len(ld['data']) - 1, 1)) * (W - 2 * PAD)
-                                    y = PAD + (1 - float(y_v)) * (H - 2 * PAD)
-                                    pts.append(f"{x:.1f},{y:.1f}")
-                                if pts:
-                                    svg_lines += f"<polyline points='{' '.join(pts)}' fill='none' stroke='{ld['color']}' stroke-width='2' opacity='0.85'/>"
-                                    last_x, last_y = float(pts[-1].split(',')[0]), float(pts[-1].split(',')[1])
-                                    last_raw = ld['raw'].iloc[-1]
-                                    svg_lines += f"<circle cx='{last_x}' cy='{last_y}' r='4' fill='{ld['color']}'/>"
-                                    svg_lines += f"<text x='{min(last_x+6, W-60)}' y='{last_y+4}' fill='{ld['color']}' font-size='10'>{float(last_raw):.2f}</text>"
-
-                            legend = ""
-                            for li, ld in enumerate(line_defs):
-                                lx = PAD + li * 130
-                                legend += f"<rect x='{lx}' y='{H+8}' width='14' height='8' fill='{ld['color']}' rx='2'/>"
-                                label  = TARGET_VARS.get(ld['col'], ld['col'])[:12]
-                                legend += f"<text x='{lx+18}' y='{H+16}' fill='#cbd5e1' font-size='10'>{label}</text>"
-
-                            svg_h = H + 36
-                            st.markdown(
-                                f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:16px 20px;margin-top:8px;overflow-x:auto;">
-                                    <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:10px;">{trend_chart_title}</div>
-                                    <svg viewBox='0 0 {W} {svg_h}' style='width:100%;max-height:300px;'>
-                                        <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
-                                        <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
-                                        {svg_lines}
-                                        {legend}
-                                    </svg>
-                                </div>""",
-                                unsafe_allow_html=True
-                            )
-
-            # ── 서브탭 1~4: expander로 이미 위에서 처리됨 (잔여 코드 제거)
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
             # ── 변수 민감도 분석 expander ─────────────────────────────
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
             sens_label = "+ Variable Sensitivity Analysis" if is_en else "+ 변수 민감도 분석"
             with st.expander(sens_label, expanded=False):
                 fi_all_t2 = st.session_state.get('feature_importance', {})
@@ -2304,5 +2204,107 @@ if is_active:
                           <text x='{W//2}' y='18' text-anchor='middle' fill='#e1e1e1' font-size='12' font-weight='bold'>{chart_title}</text>
                         </svg>"""
                         st.markdown(svg, unsafe_allow_html=True)
+
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+            # ── Trend Chart ── expander ───────────────────────────────
+            trend_label = "+ Time-Series Trend Chart" if is_en else "+ 시계열 트렌드 차트"
+            with st.expander(trend_label, expanded=False):
+                target_cols_t  = [c for c in df_view.columns if c in TARGET_VARS]
+                process_cols_t = [c for c in df_view.select_dtypes(include=[np.number]).columns if c not in TARGET_VARS]
+
+                if target_cols_t or process_cols_t:
+                    # 트렌드 인사이트: 불량 리스크 증가/감소 추세 자동 계산
+                    trend_insights = []
+                    for tc in target_cols_t:
+                        tc_data = df_view[tc].dropna()
+                        if len(tc_data) >= 3:
+                            first_half = tc_data.iloc[:len(tc_data)//2].mean()
+                            last_half  = tc_data.iloc[len(tc_data)//2:].mean()
+                            delta      = last_half - first_half
+                            if abs(delta) >= 0.05:
+                                direction = ("↑ increasing" if delta > 0 else "↓ decreasing") if is_en else ("↑ 상승 추세" if delta > 0 else "↓ 하락 추세")
+                                color     = "#ff5252" if delta > 0 else "#10b981"
+                                trend_insights.append(
+                                    f"<b style='color:{color};'>{tc}</b>: {direction} (Δ{delta:+.3f})"
+                                )
+
+                    if trend_insights:
+                        title_txt = "Defect Risk Trend (first half vs. last half of data)" if is_en else "불량 리스크 추세 (데이터 전반부 vs 후반부 평균 비교)"
+                        st.markdown(
+                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
+                            f"border-left:3px solid #00e5ff;border-radius:6px;"
+                            f"padding:10px 14px;margin-bottom:10px;'>"
+                            f"<div style='font-size:0.78rem;color:#00e5ff;font-weight:600;margin-bottom:6px;'>"
+                            f"▸ {title_txt}</div>"
+                            + "".join([f"<div style='font-size:0.80rem;color:#e1e1e1;padding:2px 0;'>{t}</div>" for t in trend_insights])
+                            + "</div>",
+                            unsafe_allow_html=True
+                        )
+
+                    trend_sel_l = "Select items to view trend (multiple selection)" if is_en else "트렌드 확인할 항목 선택 (복수 선택 가능)"
+                    trend_chart_title = "Trend Chart (Normalized 0~1)" if is_en else "트렌드 차트 (정규화 0~1 표시)"
+                    all_trend_cols = target_cols_t + process_cols_t
+                    trend_sel = st.multiselect(
+                        trend_sel_l,
+                        options=all_trend_cols,
+                        default=target_cols_t[:3] if len(target_cols_t) >= 3 else target_cols_t,
+                        format_func=lambda k: TARGET_VARS.get(k, k),
+                        key="trend_multisel"
+                    )
+                    if trend_sel:
+                        trend_df = df_view[trend_sel].reset_index(drop=True)
+                        trend_df.index = range(1, len(trend_df) + 1)
+
+                        COLORS = ["#00e5ff","#a3e635","#ffab00","#ff5252","#c084fc",
+                                  "#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24"]
+
+                        line_defs = []
+                        for ci, col in enumerate(trend_sel):
+                            col_data = trend_df[col].dropna()
+                            if col_data.empty:
+                                continue
+                            col_min, col_max = col_data.min(), col_data.max()
+                            span = col_max - col_min if col_max != col_min else 1.0
+                            norm = (col_data - col_min) / span
+                            line_defs.append({'col': col, 'data': norm, 'raw': col_data, 'color': COLORS[ci % len(COLORS)]})
+
+                        if line_defs:
+                            W, H, PAD = 900, 260, 40
+                            svg_lines = ""
+                            for ld in line_defs:
+                                pts = []
+                                for xi, (idx_v, y_v) in enumerate(ld['data'].items()):
+                                    x = PAD + (xi / max(len(ld['data']) - 1, 1)) * (W - 2 * PAD)
+                                    y = PAD + (1 - float(y_v)) * (H - 2 * PAD)
+                                    pts.append(f"{x:.1f},{y:.1f}")
+                                if pts:
+                                    svg_lines += f"<polyline points='{' '.join(pts)}' fill='none' stroke='{ld['color']}' stroke-width='2' opacity='0.85'/>"
+                                    last_x, last_y = float(pts[-1].split(',')[0]), float(pts[-1].split(',')[1])
+                                    last_raw = ld['raw'].iloc[-1]
+                                    svg_lines += f"<circle cx='{last_x}' cy='{last_y}' r='4' fill='{ld['color']}'/>"
+                                    svg_lines += f"<text x='{min(last_x+6, W-60)}' y='{last_y+4}' fill='{ld['color']}' font-size='10'>{float(last_raw):.2f}</text>"
+
+                            legend = ""
+                            for li, ld in enumerate(line_defs):
+                                lx = PAD + li * 130
+                                legend += f"<rect x='{lx}' y='{H+8}' width='14' height='8' fill='{ld['color']}' rx='2'/>"
+                                label  = TARGET_VARS.get(ld['col'], ld['col'])[:12]
+                                legend += f"<text x='{lx+18}' y='{H+16}' fill='#cbd5e1' font-size='10'>{label}</text>"
+
+                            svg_h = H + 36
+                            st.markdown(
+                                f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:16px 20px;margin-top:8px;overflow-x:auto;">
+                                    <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:10px;">{trend_chart_title}</div>
+                                    <svg viewBox='0 0 {W} {svg_h}' style='width:100%;max-height:300px;'>
+                                        <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                                        <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                                        {svg_lines}
+                                        {legend}
+                                    </svg>
+                                </div>""",
+                                unsafe_allow_html=True
+                            )
+
 
             # ── 서브탭 1~4: expander로 이미 위에서 처리됨 (잔여 코드 제거)
