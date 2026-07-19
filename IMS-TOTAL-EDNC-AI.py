@@ -1485,105 +1485,105 @@ if is_active:
                     st.session_state['optimization_success'] = "Failed"
                     st.session_state['selected_algorithm'] = "N/A"
 
-        # AI 전문가 리포트 & 공정 진단 가이드 리포트 — 항상 표시 구역
+        # ── 공정 개선 가이드 + AI 전문가 진단 통합 expander ─────────
         st.divider()
-        
-        # 공정 개선 가이드 (결과 진단 리포트) 추가 구역
-        st.markdown(f"<h3 style='font-size: 1.1rem; color: #e1e1e1;'>▪ {L['guide_title']}</h3>", unsafe_allow_html=True)
-        if st.button(f"▸ {L['btn_feature_guide']}", key="btn_feature_guide_trigger"):
+        _combined_lbl = (
+            "+ Feature Importance-based Diagnosis & AI Expert Report"
+            if st.session_state.lang == "en"
+            else "+ Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단"
+        )
+        with st.expander(_combined_lbl, expanded=False):
+
+            # ── 1) Feature Importance 기반 공정 진단 가이드 ──────────
             if st.session_state.get('last_res_val') is not None:
-                st.session_state['show_feature_guide'] = True
+                risks = st.session_state['last_defect_risks']
+                normal_count   = sum(1 for r in risks.values() if r < DEFECT_THRESHOLD)
+                out_spec_count = len(risks) - normal_count
+                success_status = L['guide_all_success'] if out_spec_count == 0 else (
+                    f"Caution Required ({out_spec_count} out of spec)" if st.session_state.lang == "en"
+                    else f"주의 필요 ({out_spec_count}개 이탈)"
+                )
+                success_msg = L['guide_success_msg'] if out_spec_count == 0 else L['guide_partial_msg']
+                icon = "✓" if out_spec_count == 0 else "⚠"
+                unachievable_label = "Unachievable" if st.session_state.lang == "en" else "달성 불가"
+                out_spec_label     = "Out of Spec"  if st.session_state.lang == "en" else "이탈"
+                normal_label       = "Normal"       if st.session_state.lang == "en" else "정상"
+                guide_html = f"""
+                <div style="background-color:#12141d; border:1px solid #2d3142;
+                            border-radius:10px; padding:16px 20px; margin-bottom:16px;">
+                    <div style="font-size:0.82rem; color:#00e5ff; font-weight:700;
+                                margin-bottom:10px;">▸ {L['guide_subtitle']}</div>
+                    <div style="border-left:4px solid #10b981; padding:8px 12px;
+                                background:#1a1c24; border-radius:4px;
+                                font-size:0.82rem; color:#cbd5e1; margin-bottom:10px;">
+                        {L['guide_pred_rel']}: <b>100.0%</b> &nbsp;|&nbsp;
+                        {unachievable_label}: <b>0</b> &nbsp;|&nbsp;
+                        {out_spec_label}: <b>{out_spec_count}</b> &nbsp;|&nbsp;
+                        {normal_label}: <b>{normal_count}</b>
+                    </div>
+                    <div style="color:#10b981; font-size:0.88rem; font-weight:700;
+                                margin-bottom:6px;">{icon} {success_status}</div>
+                    <div style="font-size:0.85rem; color:#e1e1e1; line-height:1.6;">
+                        {success_msg}
+                    </div>
+                </div>
+                """
+                st.markdown(guide_html, unsafe_allow_html=True)
             else:
-                st.warning("진단 또는 최적화를 먼저 실행해 주세요.")
-                
-        if st.session_state.get('show_feature_guide', False) and st.session_state.get('last_res_val') is not None:
-            risks = st.session_state['last_defect_risks']
-            normal_count = sum(1 for r in risks.values() if r < DEFECT_THRESHOLD)
-            out_spec_count = len(risks) - normal_count
+                st.info("진단 또는 최적화를 먼저 실행해 주세요." if st.session_state.lang != "en"
+                        else "Please run Diagnose or Optimize first.")
 
-            success_status = L['guide_all_success'] if out_spec_count == 0 else (
-                f"Caution Required ({out_spec_count} out of spec)" if st.session_state.lang == "en"
-                else f"주의 필요 ({out_spec_count}개 이탈)"
-            )
-            success_msg = L['guide_success_msg'] if out_spec_count == 0 else L['guide_partial_msg']
-            icon = "✓" if out_spec_count == 0 else "⚠"
+            st.markdown("<hr style='border-color:#2d3142; margin:8px 0 16px 0;'>",
+                        unsafe_allow_html=True)
 
-            unachievable_label = "Unachievable" if st.session_state.lang == "en" else "달성 불가"
-            out_spec_label     = "Out of Spec"  if st.session_state.lang == "en" else "이탈"
-            normal_label       = "Normal"       if st.session_state.lang == "en" else "정상"
-
-            guide_html = f"""
-            <div style="background-color:#12141d; border:1px solid #2d3142; border-radius:10px; padding:20px 24px; margin-top:12px; margin-bottom: 24px;">
-                <h3 style="margin-top:0; color:#e1e1e1;">▪ {L['guide_subtitle']}</h3>
-                <blockquote style="border-left: 4px solid #10b981; padding-left: 10px; color:#cbd5e1; font-size:0.95rem; background-color:#1a1c24; padding:10px;">
-                    {L['guide_pred_rel']}: <b>100.0%</b> | {unachievable_label}: <b>0</b> | {out_spec_label}: <b>{out_spec_count}</b> | {normal_label}: <b>{normal_count}</b>
-                </blockquote>
-                <hr style="border-color:#2d3142; margin: 16px 0;">
-                <h4 style="color:#10b981; margin-bottom: 12px;">{icon} {success_status}</h4>
-                <p style="line-height:1.6; font-size:0.95rem; color:#e1e1e1;">
-                    {success_msg}
-                </p>
-            </div>
-            """
-            st.markdown(guide_html, unsafe_allow_html=True)
-            
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        if st.session_state['last_res_val'] is None:
-            st.warning(L['warn_need_diagnose'])
-            st.button(L['btn_ai_report'], disabled=True, key="btn_report_disabled")
-        else:
-            is_optimized = st.session_state['last_opt_df'] is not None
-            st.success(L['opt_success_msg'] if is_optimized else L['diag_success_msg'])
-            if st.button(L['btn_ai_report'], key="btn_report_active"):
-                with st.spinner(L['spinner_analyzing']):
-                    no_diag_text = "No diagnosis" if st.session_state.lang == "en" else "진단 없음"
-                    results = st.session_state.get('last_defect_risks', no_diag_text)
-                    if is_optimized:
-                        params = st.session_state['last_opt_df'].to_dict(orient='records')
-                    else:
-                        # 최적화 전 — 현재 진단 조건(슬라이더 값)을 그대로 파라미터로 사용
-                        params = [{
-                            v: st.session_state['current_inputs'].get(v, 0)
-                            for v in st.session_state['ui_display_vars']
-                        }]
-                    report = generate_ai_report(
-                        results, params, num_actions=NUM_ACTIONS,
-                        lang=st.session_state.lang, is_optimized=is_optimized
-                    )
-
-                    # <br> 태그 및 공백 정리 후 보기 좋게 렌더링
-                    import re
-                    cleaned = report
-                    cleaned = re.sub(r'<br\s*/?>', '\n', cleaned)   # <br> → 줄바꿈
-                    cleaned = re.sub(r'<[^>]+>', '', cleaned)        # 기타 HTML 태그 제거
-                    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)  # 3줄 이상 공백 → 2줄
-
-                    # 줄 단위로 파싱하여 번호 항목 강조
-                    lines = cleaned.strip().split('\n')
-                    html_lines = []
-                    for line in lines:
-                        line = line.strip()
-                        if not line:
-                            html_lines.append('<div style="margin:6px 0;"></div>')
-                        elif re.match(r'^\d+[\.\)].', line):  # 1. 또는 1) 로 시작
-                            html_lines.append(
-                                f'<div style="margin:10px 0 4px 0; color:#00e5ff; font-weight:700; font-size:0.92rem;">{line}</div>'
-                            )
+            # ── 2) AI 전문가 진단 ────────────────────────────────────
+            if st.session_state['last_res_val'] is None:
+                st.warning(L['warn_need_diagnose'])
+            else:
+                is_optimized = st.session_state['last_opt_df'] is not None
+                st.success(L['opt_success_msg'] if is_optimized else L['diag_success_msg'])
+                if st.button(L['btn_ai_report'], key="btn_report_active"):
+                    with st.spinner(L['spinner_analyzing']):
+                        import re
+                        no_diag_text = "No diagnosis" if st.session_state.lang == "en" else "진단 없음"
+                        results = st.session_state.get('last_defect_risks', no_diag_text)
+                        if is_optimized:
+                            params = st.session_state['last_opt_df'].to_dict(orient='records')
                         else:
-                            html_lines.append(
-                                f'<div style="margin:2px 0 2px 12px; color:#e1e1e1; font-size:0.88rem; line-height:1.6;">{line}</div>'
-                            )
-
-                    report_html = f"""
-                    <div style="background-color:#12141d; border:1px solid #2d3142;
-                                border-radius:10px; padding:20px 24px; margin-top:12px;
-                                max-height:420px; overflow-y:auto;">
-                        <div style="color:#cbd5e1; font-size:0.8rem; margin-bottom:12px;
-                                    letter-spacing:0.05em;">{L['report_box_title']}</div>
-                        {''.join(html_lines)}
-                    </div>"""
-                    st.markdown(report_html, unsafe_allow_html=True)
+                            params = [{v: st.session_state['current_inputs'].get(v, 0)
+                                       for v in st.session_state['ui_display_vars']}]
+                        report = generate_ai_report(
+                            results, params, num_actions=NUM_ACTIONS,
+                            lang=st.session_state.lang, is_optimized=is_optimized
+                        )
+                        cleaned = re.sub(r'<br\s*/?>', '\n', report)
+                        cleaned = re.sub(r'<[^>]+>', '', cleaned)
+                        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+                        lines = cleaned.strip().split('\n')
+                        html_lines = []
+                        for line in lines:
+                            line = line.strip()
+                            if not line:
+                                html_lines.append('<div style="margin:6px 0;"></div>')
+                            elif re.match(r'^\d+[\.\.].', line):
+                                html_lines.append(
+                                    f'<div style="margin:10px 0 4px 0; color:#00e5ff;'
+                                    f' font-weight:700; font-size:0.92rem;">{line}</div>'
+                                )
+                            else:
+                                html_lines.append(
+                                    f'<div style="margin:2px 0 2px 12px; color:#e1e1e1;'
+                                    f' font-size:0.88rem; line-height:1.6;">{line}</div>'
+                                )
+                        report_html = f"""
+                        <div style="background-color:#12141d; border:1px solid #2d3142;
+                                    border-radius:10px; padding:20px 24px; margin-top:12px;
+                                    max-height:420px; overflow-y:auto;">
+                            <div style="color:#cbd5e1; font-size:0.8rem; margin-bottom:12px;
+                                        letter-spacing:0.05em;">{L['report_box_title']}</div>
+                            {''.join(html_lines)}
+                        </div>"""
+                        st.markdown(report_html, unsafe_allow_html=True)
 
         if st.session_state['last_res_val'] is not None:
             st.divider()
@@ -2156,5 +2156,153 @@ if is_active:
                             )
 
             # ── 서브탭 1~4: expander로 이미 위에서 처리됨 (잔여 코드 제거)
+
+            # ── 변수 민감도 분석 expander ─────────────────────────────
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            sens_label = "+ Variable Sensitivity Analysis" if is_en else "+ 변수 민감도 분석"
+            with st.expander(sens_label, expanded=False):
+                fi_all_t2 = st.session_state.get('feature_importance', {})
+                models_t2  = st.session_state.get('models', {})
+                scalers_t2 = st.session_state.get('scalers', {})
+                proc_vars  = st.session_state.get('global_process_vars', [])
+                cur_inputs = st.session_state.get('current_inputs', {})
+
+                if not fi_all_t2 or not models_t2 or not proc_vars:
+                    st.info("AI 모델 학습 후 진단/최적화를 먼저 실행해 주세요."
+                            if not is_en else "Please run AI learning and diagnosis first.")
+                else:
+                    sens_tgt_lbl = "불량 항목 선택" if not is_en else "Select Defect Target"
+                    sens_var_lbl = "분석 변수 선택" if not is_en else "Select Variable"
+                    sens_tgt = st.selectbox(
+                        sens_tgt_lbl,
+                        options=list(models_t2.keys()),
+                        format_func=lambda k: TARGET_VARS.get(k, k),
+                        key="sens_tgt_sel"
+                    )
+                    sens_var = st.selectbox(
+                        sens_var_lbl,
+                        options=proc_vars,
+                        key="sens_var_sel"
+                    )
+
+                    if sens_tgt and sens_var and sens_tgt in models_t2:
+                        _model  = models_t2[sens_tgt]
+                        _scaler = scalers_t2[sens_tgt]
+                        _bounds = st.session_state.get('global_bounds', {})
+                        v_min, v_max = _bounds.get(sens_var, (0, 100))
+                        v_steps = np.linspace(v_min, v_max, 30)
+
+                        # 현재 입력값 기준, 선택 변수만 변화시켜 리스크 계산
+                        base_vals = [float(cur_inputs.get(v, 0)) for v in proc_vars]
+                        var_idx   = proc_vars.index(sens_var)
+
+                        sens_risks = []
+                        for sv in v_steps:
+                            trial = base_vals.copy()
+                            trial[var_idx] = float(sv)
+                            df_trial = pd.DataFrame([trial], columns=proc_vars)
+                            prob = _model.predict_proba(_scaler.transform(df_trial))[0, 1]
+                            sens_risks.append(prob)
+
+                        # 민감도 지표: 변화 범위 대비 리스크 변화폭
+                        risk_range = max(sens_risks) - min(sens_risks)
+                        cur_risk   = sens_risks[int(len(sens_risks) * (
+                            (cur_inputs.get(sens_var, v_min) - v_min) / max(v_max - v_min, 1e-9)
+                        ))]
+
+                        if is_en:
+                            sens_insight = (
+                                f"Variable: <b style='color:#00e5ff;'>{sens_var}</b> &nbsp;|&nbsp; "
+                                f"Risk range: <b style='color:#ffab00;'>{min(sens_risks)*100:.1f}% ~ {max(sens_risks)*100:.1f}%</b> &nbsp;|&nbsp; "
+                                f"Sensitivity: <b style='color:#{'ff5252' if risk_range>0.3 else 'ffab00' if risk_range>0.1 else '10b981'};'>"
+                                f"{'HIGH' if risk_range>0.3 else 'MED' if risk_range>0.1 else 'LOW'}</b>"
+                            )
+                            sens_advice = (
+                                f"This variable has a {'large' if risk_range>0.3 else 'moderate' if risk_range>0.1 else 'small'} "
+                                f"impact on {TARGET_VARS.get(sens_tgt, sens_tgt)}. "
+                                f"{'Priority control recommended.' if risk_range>0.3 else 'Monitor carefully.' if risk_range>0.1 else 'Low influence on this defect.'}"
+                            )
+                        else:
+                            sens_insight = (
+                                f"변수: <b style='color:#00e5ff;'>{sens_var}</b> &nbsp;|&nbsp; "
+                                f"리스크 범위: <b style='color:#ffab00;'>{min(sens_risks)*100:.1f}% ~ {max(sens_risks)*100:.1f}%</b> &nbsp;|&nbsp; "
+                                f"민감도: <b style='color:#{'ff5252' if risk_range>0.3 else 'ffab00' if risk_range>0.1 else '10b981'};'>"
+                                f"{'높음' if risk_range>0.3 else '보통' if risk_range>0.1 else '낮음'}</b>"
+                            )
+                            sens_advice = (
+                                f"이 변수는 {TARGET_VARS.get(sens_tgt, sens_tgt)} 불량에 "
+                                f"{'큰' if risk_range>0.3 else '보통의' if risk_range>0.1 else '작은'} 영향을 미칩니다. "
+                                f"{'우선 관리 대상입니다.' if risk_range>0.3 else '지속 모니터링을 권장합니다.' if risk_range>0.1 else '이 불량에 대한 영향이 낮습니다.'}"
+                            )
+
+                        st.markdown(
+                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
+                            f"border-left:3px solid #00e5ff;border-radius:6px;"
+                            f"padding:10px 14px;margin-bottom:12px;font-size:0.82rem;'>"
+                            f"<span style='color:#e1e1e1;'>{sens_insight}</span><br>"
+                            f"<span style='color:#cbd5e1;font-size:0.78rem;'>→ {sens_advice}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+
+                        # SVG 차트 렌더링
+                        W, H, PAD = 860, 200, 40
+                        cur_v   = float(cur_inputs.get(sens_var, v_min))
+                        cur_idx = int((cur_v - v_min) / max(v_max - v_min, 1e-9) * (len(v_steps) - 1))
+                        cur_idx = max(0, min(cur_idx, len(v_steps) - 1))
+
+                        pts = []
+                        for xi, rv in enumerate(sens_risks):
+                            x = PAD + (xi / max(len(sens_risks) - 1, 1)) * (W - 2 * PAD)
+                            y = PAD + (1 - rv) * (H - 2 * PAD)
+                            pts.append((x, y))
+
+                        polyline = " ".join([f"{x:.1f},{y:.1f}" for x, y in pts])
+                        cx, cy   = pts[cur_idx]
+                        threshold_y = PAD + (1 - DEFECT_THRESHOLD) * (H - 2 * PAD)
+
+                        # 안전/위험 구역 배경
+                        zone_safe   = f"<rect x='{PAD}' y='{threshold_y:.1f}' width='{W-2*PAD}' height='{H-PAD-threshold_y:.1f}' fill='rgba(16,185,129,0.06)'/>"
+                        zone_danger = f"<rect x='{PAD}' y='{PAD}' width='{W-2*PAD}' height='{threshold_y-PAD:.1f}' fill='rgba(255,82,82,0.06)'/>"
+
+                        # x축 레이블 (5개)
+                        x_labels = ""
+                        for ti in range(5):
+                            xi2 = int(ti * (len(v_steps) - 1) / 4)
+                            xp  = PAD + (xi2 / max(len(v_steps) - 1, 1)) * (W - 2 * PAD)
+                            xv  = v_steps[xi2]
+                            x_labels += f"<text x='{xp:.1f}' y='{H-PAD+18}' text-anchor='middle' fill='#64748b' font-size='10'>{xv:.1f}</text>"
+
+                        # y축 레이블
+                        y_labels = ""
+                        for yi_pct in [0, 25, 50, 75, 100]:
+                            yp = PAD + (1 - yi_pct / 100) * (H - 2 * PAD)
+                            y_labels += f"<text x='{PAD-6}' y='{yp+4:.1f}' text-anchor='end' fill='#64748b' font-size='10'>{yi_pct}%</text>"
+
+                        chart_title = (
+                            f"{sens_var} → {TARGET_VARS.get(sens_tgt,'').split('(')[0].strip()} Risk Sensitivity"
+                            if is_en else
+                            f"{sens_var} 변화에 따른 {TARGET_VARS.get(sens_tgt,'').split('(')[0].strip()} 불량 리스크"
+                        )
+                        x_axis_lbl  = sens_var
+                        cur_lbl     = f"Current: {cur_v:.1f}" if is_en else f"현재값: {cur_v:.1f}"
+                        thres_lbl   = f"Threshold {int(DEFECT_THRESHOLD*100)}%" if is_en else f"기준선 {int(DEFECT_THRESHOLD*100)}%"
+
+                        svg = f"""
+                        <svg viewBox='0 0 {W} {H+50}' style='width:100%;max-height:280px;background:#12141d;border-radius:10px;border:1px solid #2d3142;'>
+                          {zone_safe}{zone_danger}
+                          <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                          <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
+                          <line x1='{PAD}' y1='{threshold_y:.1f}' x2='{W-PAD}' y2='{threshold_y:.1f}'
+                                stroke='#ffab00' stroke-width='1' stroke-dasharray='5,4' opacity='0.7'/>
+                          <text x='{W-PAD+4}' y='{threshold_y+4:.1f}' fill='#ffab00' font-size='10'>{thres_lbl}</text>
+                          <polyline points='{polyline}' fill='none' stroke='#00e5ff' stroke-width='2.5'/>
+                          <circle cx='{cx:.1f}' cy='{cy:.1f}' r='6' fill='#ff5252' stroke='#fff' stroke-width='1.5'/>
+                          <text x='{min(cx+10, W-100):.1f}' y='{max(cy-10, PAD+12):.1f}' fill='#ff5252' font-size='11' font-weight='bold'>{cur_lbl}</text>
+                          {x_labels}{y_labels}
+                          <text x='{W//2}' y='{H+46}' text-anchor='middle' fill='#94a3b8' font-size='11'>{x_axis_lbl}</text>
+                          <text x='{W//2}' y='18' text-anchor='middle' fill='#e1e1e1' font-size='12' font-weight='bold'>{chart_title}</text>
+                        </svg>"""
+                        st.markdown(svg, unsafe_allow_html=True)
 
             # ── 서브탭 1~4: expander로 이미 위에서 처리됨 (잔여 코드 제거)
