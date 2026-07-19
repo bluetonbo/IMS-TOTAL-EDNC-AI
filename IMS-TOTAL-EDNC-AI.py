@@ -666,60 +666,63 @@ st.markdown("""
         color: #00e5ff !important;
         font-weight: 600 !important;
     }
-    /* Tab 버튼 시인성 개선 */
+    /* ── 탭 스타일: 플랫 + 활성 탭 하단 빨간 선 ── */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: transparent;
-        border-bottom: 2px solid #2d3142;
+        gap: 0px;
+        background: #12141d;
+        border-bottom: 1px solid #2d3142;
         padding-bottom: 0;
     }
-    /* 비활성 탭 — 가능한 모든 선택자 병기 */
+    /* 비활성 탭 */
     .stTabs [data-baseweb="tab"],
     .stTabs button[data-baseweb="tab"],
     .stTabs [role="tab"],
     .stTabs button[role="tab"] {
-        background-color: #252840 !important;
-        border: 1px solid #4a5070 !important;
-        border-bottom: none !important;
-        border-radius: 8px 8px 0 0 !important;
-        color: #f8fafc !important;
-        font-weight: 700 !important;
+        background-color: #12141d !important;
+        border: none !important;
+        border-bottom: 3px solid transparent !important;
+        border-radius: 0 !important;
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
         font-size: 0.95rem !important;
-        padding: 10px 24px !important;
+        padding: 10px 28px !important;
         opacity: 1 !important;
         transition: all 0.2s ease;
     }
-    /* 탭 내부 모든 텍스트 요소 강제 적용 */
     .stTabs [data-baseweb="tab"] *,
     .stTabs [role="tab"] * {
-        color: #f8fafc !important;
-        font-weight: 700 !important;
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
         opacity: 1 !important;
     }
-    /* 활성 탭 */
+    /* 활성 탭: 하단 빨간 선 */
     .stTabs [aria-selected="true"],
     .stTabs button[aria-selected="true"] {
-        background-color: #00e5ff22 !important;
-        border-color: #00e5ff !important;
-        color: #00e5ff !important;
+        background-color: #12141d !important;
+        border-bottom: 3px solid #ff3b6b !important;
+        color: #ffffff !important;
         opacity: 1 !important;
     }
     .stTabs [aria-selected="true"] *,
     .stTabs button[aria-selected="true"] * {
-        color: #00e5ff !important;
+        color: #ffffff !important;
         opacity: 1 !important;
     }
     /* hover */
     .stTabs [data-baseweb="tab"]:hover,
     .stTabs button[data-baseweb="tab"]:hover {
-        color: #ffffff !important;
-        background-color: #2e3455 !important;
+        color: #e1e1e1 !important;
+        background-color: #1a1c24 !important;
         opacity: 1 !important;
     }
     .stTabs [data-baseweb="tab"]:hover *,
     .stTabs button[data-baseweb="tab"]:hover * {
-        color: #ffffff !important;
+        color: #e1e1e1 !important;
         opacity: 1 !important;
+    }
+    /* Streamlit 기본 탭 밑줄 숨김 */
+    [data-baseweb="tab-highlight"] {
+        display: none !important;
     }
     /* ── Expander 전체 스타일 ── */
     /* 컨테이너 */
