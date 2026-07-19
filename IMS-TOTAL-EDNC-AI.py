@@ -638,6 +638,7 @@ st.markdown("""
     h1 { color: #ffffff !important; font-weight: 800 !important; letter-spacing: -0.04em; }
     /* 탭 opacity 전역 차단 — Streamlit 기본 테마가 비활성 탭을 흐리게 하는 것 방지 */
     [data-baseweb="tab"] { opacity: 1 !important; }
+    [data-baseweb="tab-highlight"] { background-color: #00e5ff !important; }
     .custom-progress-container {
         width: 100%;
         background-color: #1f222e;
@@ -665,71 +666,60 @@ st.markdown("""
         color: #00e5ff !important;
         font-weight: 600 !important;
     }
-    /* ── 탭 스타일: 플랫 + 활성 탭 하단 빨간 선 ── */
+    /* Tab 버튼 시인성 개선 */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0px !important;
-        background: transparent !important;
-        border-bottom: 1px solid #2d3142 !important;
-        padding-bottom: 0 !important;
+        gap: 8px;
+        background: transparent;
+        border-bottom: 2px solid #2d3142;
+        padding-bottom: 0;
     }
-    /* 비활성 탭 — 박스 없이 플랫 */
+    /* 비활성 탭 — 가능한 모든 선택자 병기 */
     .stTabs [data-baseweb="tab"],
     .stTabs button[data-baseweb="tab"],
     .stTabs [role="tab"],
     .stTabs button[role="tab"] {
-        background-color: transparent !important;
-        border: none !important;
-        border-radius: 0 !important;
-        box-shadow: none !important;
-        color: #cbd5e1 !important;
-        font-weight: 600 !important;
+        background-color: #252840 !important;
+        border: 1px solid #4a5070 !important;
+        border-bottom: none !important;
+        border-radius: 8px 8px 0 0 !important;
+        color: #f8fafc !important;
+        font-weight: 700 !important;
         font-size: 0.95rem !important;
-        padding: 10px 20px !important;
+        padding: 10px 24px !important;
         opacity: 1 !important;
-        transition: color 0.2s ease;
-        outline: none !important;
+        transition: all 0.2s ease;
     }
+    /* 탭 내부 모든 텍스트 요소 강제 적용 */
     .stTabs [data-baseweb="tab"] *,
     .stTabs [role="tab"] * {
-        color: #cbd5e1 !important;
-        font-weight: 600 !important;
+        color: #f8fafc !important;
+        font-weight: 700 !important;
         opacity: 1 !important;
     }
-    /* 활성 탭 — 흰 글자만 */
+    /* 활성 탭 */
     .stTabs [aria-selected="true"],
     .stTabs button[aria-selected="true"] {
-        background-color: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        color: #ffffff !important;
-        font-weight: 700 !important;
+        background-color: #00e5ff22 !important;
+        border-color: #00e5ff !important;
+        color: #00e5ff !important;
         opacity: 1 !important;
     }
     .stTabs [aria-selected="true"] *,
     .stTabs button[aria-selected="true"] * {
-        color: #ffffff !important;
-        font-weight: 700 !important;
+        color: #00e5ff !important;
         opacity: 1 !important;
     }
     /* hover */
     .stTabs [data-baseweb="tab"]:hover,
     .stTabs button[data-baseweb="tab"]:hover {
-        color: #e1e1e1 !important;
-        background-color: transparent !important;
+        color: #ffffff !important;
+        background-color: #2e3455 !important;
         opacity: 1 !important;
     }
     .stTabs [data-baseweb="tab"]:hover *,
     .stTabs button[data-baseweb="tab"]:hover * {
-        color: #e1e1e1 !important;
+        color: #ffffff !important;
         opacity: 1 !important;
-    }
-    /* 활성 탭 하단 빨간 선 — Streamlit highlight 요소 직접 색상 변경 */
-    [data-baseweb="tab-highlight"],
-    .stTabs [data-baseweb="tab-highlight"] {
-        background-color: #ff3b6b !important;
-        background: #ff3b6b !important;
-        height: 3px !important;
-        bottom: 0 !important;
     }
     /* ── Expander 전체 스타일 ── */
     /* 컨테이너 */
