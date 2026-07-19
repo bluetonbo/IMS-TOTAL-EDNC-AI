@@ -543,9 +543,8 @@ st.markdown("""
         padding-bottom: 0px !important;
         margin-bottom: 0px !important;
     }
-    /* 체크박스 바로 다음 슬라이더(불량 가중치)만 간격 축소 */
-    div[class*="stCheckbox"] + div[class*="stSlider"],
-    div[class*="stCheckbox"] ~ div[class*="stSlider"] {
+    /* 불량 가중치 슬라이더만 label='' 타겟: weight_ key를 가진 슬라이더 */
+    div[class*="stSlider"]:has(input[aria-label=""]) {
         margin-top: -28px !important;
     }
     /* expander 사이 간격 */
@@ -590,7 +589,9 @@ st.markdown("""
         font-weight: 600 !important;
         font-size: 1.3rem;
         margin-bottom: 0.3rem;
-        margin-top: 0.4rem;
+        margin-top: 0.8rem;
+        padding-top: 0.8rem;
+        border-top: 1px solid #2d3142;
     }
     .square-icon {
         width: 18px;
