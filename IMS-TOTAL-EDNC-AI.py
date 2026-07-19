@@ -1485,6 +1485,96 @@ if is_active:
                     st.session_state['optimization_success'] = "Failed"
                     st.session_state['selected_algorithm'] = "N/A"
 
+        if st.session_state['last_res_val'] is not None:
+            st.divider()
+            val = st.session_state['last_res_val']
+            total_risk_percent = int(round(val * 100))
+            total_color = (
+                "#00e5ff" if total_risk_percent < 30
+                else "#ffab00" if total_risk_percent < 70
+                else "#ff5252"
+            )
+            st.markdown(
+                f"""<div style='background-color:#12141d; padding:25px; border-radius:10px;
+                    border:1px solid {total_color}44;'>
+                    <h4 style='margin-top:0; color:#cbd5e1;'>{L['dash_title']}</h4>
+                    <h2 style='color:{total_color}; font-size:3rem; margin:0;'>
+                        {total_risk_percent}<span style='font-size:1.2rem;'>%</span>
+                    </h2>
+                </div>""",
+                unsafe_allow_html=True
+            )
+
+            for target_key, full_name in TARGET_VARS.items():
+                if target_key in st.session_state['last_defect_risks']:
+                    r_val = st.session_state['last_defect_risks'][target_key]
+                    r_perc = int(round(r_val * 100))
+                    is_active_target = st.session_state['defect_switches'].get(target_key, True)
+                    bar_color = (
+                        "#00e5ff" if r_perc < 30
+                        else "#ffab00" if r_perc < 70
+                        else "#ff5252"
+                    )
+                    opacity_style = "opacity: 1.0;" if is_active_target else "opacity: 0.25;"
+
+                    # [추가] 신뢰성 보강: 이 타겟 모델의 교차검증 신뢰도 · 표본 수를 함께 표시
+                    rel = st.session_state.get('model_reliability', {}).get(target_key)
+                    reliability_caption = ""
+                    if rel is not None:
+                        n_total = rel['n_total']
+                        algo_name = rel.get('algo', 'LR')   # [추가] 알고리즘 이름
+                        if rel['cv_score'] is not None:
+                            rel_pct = int(round(rel['cv_score'] * 100))
+                            rel_color = "#00e5ff" if rel_pct >= 80 else "#ffab00" if rel_pct >= 60 else "#ff5252"
+                            reliability_caption = (
+                                f"<span style='color:{rel_color};'>{L['reliability_label']}: {rel_pct}%</span>"
+                                f" · {n_total}{L['reliability_samples']}"
+                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
+                            )
+                        else:
+                            reliability_caption = (
+                                f"<span style='color:#ff5252;'>{L['reliability_na']}</span>"
+                                f" · {n_total}{L['reliability_samples']}"
+                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
+                            )
+                        if rel['low_sample']:
+                            reliability_caption += f" · <span style='color:#ff5252;'>⚠ {L['reliability_low_sample']}</span>"
+
+                    st.markdown(
+                        f"""<div style="margin-bottom: 12px; {opacity_style}">
+                            <span style="font-size:0.95rem; font-weight:600; color:#ffffff;">{full_name}</span>
+                            <div class="custom-progress-container">
+                                <div class="custom-progress-bar"
+                                    style="width: {r_perc}%; background: {bar_color};">
+                                    {r_perc}%
+                                </div>
+                            </div>
+                            <div style="font-size:0.72rem; color:#cbd5e1; margin-top:2px;">{reliability_caption}</div>
+                        </div>""",
+                        unsafe_allow_html=True
+                    )
+
+            if st.session_state['last_opt_df'] is not None:
+                df = st.session_state['last_opt_df'].astype(int)
+                headers = "".join([f"<th>{c}</th>" for c in df.columns])
+                rows = "".join([f"<td>{v}</td>" for v in df.values[0]])
+                st.markdown(
+                    f"""<div style="overflow-x: auto;">
+                        <table class="optimized-table">
+                            <thead><tr>{headers}</tr></thead>
+                            <tbody><tr>{rows}</tr></tbody>
+                        </table>
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+                csv = st.session_state['last_opt_df'].to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    label=L['btn_download'],
+                    data=csv,
+                    file_name='total_optimized_params.csv',
+                    mime='text/csv'
+                )
+
         # ── 공정 개선 가이드 + AI 전문가 진단 통합 expander ─────────
         st.divider()
         _combined_lbl = (
@@ -1584,96 +1674,6 @@ if is_active:
                             {''.join(html_lines)}
                         </div>"""
                         st.markdown(report_html, unsafe_allow_html=True)
-
-        if st.session_state['last_res_val'] is not None:
-            st.divider()
-            val = st.session_state['last_res_val']
-            total_risk_percent = int(round(val * 100))
-            total_color = (
-                "#00e5ff" if total_risk_percent < 30
-                else "#ffab00" if total_risk_percent < 70
-                else "#ff5252"
-            )
-            st.markdown(
-                f"""<div style='background-color:#12141d; padding:25px; border-radius:10px;
-                    border:1px solid {total_color}44;'>
-                    <h4 style='margin-top:0; color:#cbd5e1;'>{L['dash_title']}</h4>
-                    <h2 style='color:{total_color}; font-size:3rem; margin:0;'>
-                        {total_risk_percent}<span style='font-size:1.2rem;'>%</span>
-                    </h2>
-                </div>""",
-                unsafe_allow_html=True
-            )
-
-            for target_key, full_name in TARGET_VARS.items():
-                if target_key in st.session_state['last_defect_risks']:
-                    r_val = st.session_state['last_defect_risks'][target_key]
-                    r_perc = int(round(r_val * 100))
-                    is_active_target = st.session_state['defect_switches'].get(target_key, True)
-                    bar_color = (
-                        "#00e5ff" if r_perc < 30
-                        else "#ffab00" if r_perc < 70
-                        else "#ff5252"
-                    )
-                    opacity_style = "opacity: 1.0;" if is_active_target else "opacity: 0.25;"
-
-                    # [추가] 신뢰성 보강: 이 타겟 모델의 교차검증 신뢰도 · 표본 수를 함께 표시
-                    rel = st.session_state.get('model_reliability', {}).get(target_key)
-                    reliability_caption = ""
-                    if rel is not None:
-                        n_total = rel['n_total']
-                        algo_name = rel.get('algo', 'LR')   # [추가] 알고리즘 이름
-                        if rel['cv_score'] is not None:
-                            rel_pct = int(round(rel['cv_score'] * 100))
-                            rel_color = "#00e5ff" if rel_pct >= 80 else "#ffab00" if rel_pct >= 60 else "#ff5252"
-                            reliability_caption = (
-                                f"<span style='color:{rel_color};'>{L['reliability_label']}: {rel_pct}%</span>"
-                                f" · {n_total}{L['reliability_samples']}"
-                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
-                            )
-                        else:
-                            reliability_caption = (
-                                f"<span style='color:#ff5252;'>{L['reliability_na']}</span>"
-                                f" · {n_total}{L['reliability_samples']}"
-                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
-                            )
-                        if rel['low_sample']:
-                            reliability_caption += f" · <span style='color:#ff5252;'>⚠ {L['reliability_low_sample']}</span>"
-
-                    st.markdown(
-                        f"""<div style="margin-bottom: 12px; {opacity_style}">
-                            <span style="font-size:0.95rem; font-weight:600; color:#ffffff;">{full_name}</span>
-                            <div class="custom-progress-container">
-                                <div class="custom-progress-bar"
-                                    style="width: {r_perc}%; background: {bar_color};">
-                                    {r_perc}%
-                                </div>
-                            </div>
-                            <div style="font-size:0.72rem; color:#cbd5e1; margin-top:2px;">{reliability_caption}</div>
-                        </div>""",
-                        unsafe_allow_html=True
-                    )
-
-            if st.session_state['last_opt_df'] is not None:
-                df = st.session_state['last_opt_df'].astype(int)
-                headers = "".join([f"<th>{c}</th>" for c in df.columns])
-                rows = "".join([f"<td>{v}</td>" for v in df.values[0]])
-                st.markdown(
-                    f"""<div style="overflow-x: auto;">
-                        <table class="optimized-table">
-                            <thead><tr>{headers}</tr></thead>
-                            <tbody><tr>{rows}</tr></tbody>
-                        </table>
-                    </div>""",
-                    unsafe_allow_html=True
-                )
-                csv = st.session_state['last_opt_df'].to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label=L['btn_download'],
-                    data=csv,
-                    file_name='total_optimized_params.csv',
-                    mime='text/csv'
-                )
 
         # [추가] Feature Importance 시각화 섹션 - expander로 접기/펼치기
         fi_all = st.session_state.get('feature_importance', {})
