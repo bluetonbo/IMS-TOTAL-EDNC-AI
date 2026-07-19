@@ -535,13 +535,18 @@ st.markdown("""
     div[class*="stSlider"] {
         padding-top: 0px !important;
         padding-bottom: 0px !important;
-        margin-top: -32px !important;
-        margin-bottom: -4px !important;
+        margin-top: 0px !important;
+        margin-bottom: 0px !important;
     }
     div[class*="stCheckbox"] {
         padding-top: 2px !important;
         padding-bottom: 0px !important;
-        margin-bottom: -4px !important;
+        margin-bottom: 0px !important;
+    }
+    /* 체크박스 바로 다음 슬라이더(불량 가중치)만 간격 축소 */
+    div[class*="stCheckbox"] + div[class*="stSlider"],
+    div[class*="stCheckbox"] ~ div[class*="stSlider"] {
+        margin-top: -28px !important;
     }
     /* expander 사이 간격 */
     div[data-testid="stExpander"] {
