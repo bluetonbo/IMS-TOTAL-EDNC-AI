@@ -298,11 +298,11 @@ LANG_DICT = {
         "tab_master": "▶  Master Data & Analytics",
         "sec_a": "A. Current Injection Parameters",
         "sec_c": "B. Defect Weights & Expert Constraints",
-        "sec_c_sub2": "2. Expert Constraint Settings",
+        "sec_c_sub2": "C. Expert Constraint Settings",
         "lbl_constant": "Select Variables to Keep Constant",
         "lbl_target": " Target",
         "lbl_expert_rel": "Expert Guideline Reliability (%)",
-        "sec_d": "C. Intelligent Diagnosis & Optimization",
+        "sec_d": "D. Optimization & Intelligent Diagnosis",
         "btn_diagnose": "Diagnose Current Risk",
         "btn_optimize": "Optimize Conditions",
         "opt_converged": "Converged",
@@ -370,11 +370,11 @@ LANG_DICT = {
         "tab_master": "▶  마스터 데이터 & 분석",
         "sec_a": "A. 현재 사출 조건 파라미터",
         "sec_c": "B. 불량 가중치 및 전문가 제약 조건",
-        "sec_c_sub2": "2. 전문 제약 조건 설정",
+        "sec_c_sub2": "C. 전문가 제약 조건 설정",
         "lbl_constant": "고정 상태를 유지할 변수 선택",
         "lbl_target": " 목표치",
         "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)",
-        "sec_d": "C. 지능형 진단 및 최적화",
+        "sec_d": "D. 최적화 및 지능형 진단",
         "btn_diagnose": "현재 리스크 진단",
         "btn_optimize": "역추론 최적화 탐색 실행",
         "opt_converged": "수렴 완료",
@@ -554,8 +554,8 @@ st.markdown("""
         color: #00e5ff !important;
         font-weight: 600 !important;
         font-size: 1.3rem;
-        margin-bottom: 1rem;
-        margin-top: 1.5rem;
+        margin-bottom: 0.5rem;
+        margin-top: 0.75rem;
     }
     .square-icon {
         width: 18px;
@@ -1253,7 +1253,7 @@ if is_active:
 
         st.divider()
 
-        # C. 불량 가중치 및 전문가 제약 조건
+        # B. 불량 가중치 / C. 전문가 제약 조건 설정
         st.markdown(
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_c"]}</div>',
             unsafe_allow_html=True
@@ -1276,9 +1276,12 @@ if is_active:
                     disabled=not is_on,
                     key=f"weight_{target_key}"
                 )
-                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-top:2px'></div>", unsafe_allow_html=True)
 
-        st.write(L['sec_c_sub2'])
+        st.markdown(
+            f'<div class="section-title" style="margin-top:0.6rem;margin-bottom:0.5rem;"><span class="square-icon"></span>{L["sec_c_sub2"]}</div>',
+            unsafe_allow_html=True
+        )
         selected_expert_vars = st.multiselect(
             L['lbl_constant'],
             options=st.session_state['ui_display_vars'],
@@ -1302,7 +1305,7 @@ if is_active:
         )
         st.divider()
 
-        # D. 지능형 진단 및 최적화
+        # D. 최적화 및 지능형 진단
         def calculate_total_risk(input_vals_list):
             all_v = st.session_state['global_process_vars']
             df_input = pd.DataFrame([input_vals_list], columns=all_v)
@@ -1851,7 +1854,7 @@ if is_active:
                     unsafe_allow_html=True
                 )
 
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
             # ── Raw Data ── expander ───────────────────────────────────
             raw_label = "+ Raw Data" if is_en else "+ 원시 데이터"
@@ -1872,7 +1875,7 @@ if is_active:
                     )
                 st.dataframe(df_view, use_container_width=True)
 
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
             # ── Defect Distribution ── expander ───────────────────────
             dist_label = "+ Defect Probability Distribution" if is_en else "+ 불량률 분포 히스토그램"
@@ -1965,7 +1968,7 @@ if is_active:
                         </div></body></html>"""
                         components.html(hist_html, height=80 + len(counts) * 28, scrolling=False)
 
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
             # ── Correlation Heatmap ── expander ───────────────────────
             corr_label = "+ Process Variable Correlation Heatmap" if is_en else "+ 변수 상관관계 히트맵"
@@ -2055,10 +2058,10 @@ if is_active:
                         )
 
 
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
             # ── 변수 민감도 분석 expander ─────────────────────────────
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
             sens_label = "+ Variable Sensitivity Analysis" if is_en else "+ 변수 민감도 분석"
             with st.expander(sens_label, expanded=False):
                 fi_all_t2 = st.session_state.get('feature_importance', {})
@@ -2205,7 +2208,7 @@ if is_active:
                         </svg>"""
                         st.markdown(svg, unsafe_allow_html=True)
 
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
             # ── Trend Chart ── expander ───────────────────────────────
             trend_label = "+ Time-Series Trend Chart" if is_en else "+ 시계열 트렌드 차트"
