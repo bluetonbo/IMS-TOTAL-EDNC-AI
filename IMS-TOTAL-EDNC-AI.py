@@ -667,26 +667,27 @@ st.markdown("""
     }
     /* ── 탭 스타일: 플랫 + 활성 탭 하단 빨간 선 ── */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0px;
-        background: #12141d;
-        border-bottom: 1px solid #2d3142;
-        padding-bottom: 0;
+        gap: 0px !important;
+        background: transparent !important;
+        border-bottom: 1px solid #2d3142 !important;
+        padding-bottom: 0 !important;
     }
-    /* 비활성 탭 */
+    /* 비활성 탭 — 박스 없이 플랫 */
     .stTabs [data-baseweb="tab"],
     .stTabs button[data-baseweb="tab"],
     .stTabs [role="tab"],
     .stTabs button[role="tab"] {
-        background-color: #12141d !important;
+        background-color: transparent !important;
         border: none !important;
-        border-bottom: 3px solid transparent !important;
         border-radius: 0 !important;
+        box-shadow: none !important;
         color: #94a3b8 !important;
         font-weight: 600 !important;
         font-size: 0.95rem !important;
         padding: 10px 28px !important;
         opacity: 1 !important;
-        transition: all 0.2s ease;
+        transition: color 0.2s ease;
+        outline: none !important;
     }
     .stTabs [data-baseweb="tab"] *,
     .stTabs [role="tab"] * {
@@ -694,24 +695,27 @@ st.markdown("""
         font-weight: 600 !important;
         opacity: 1 !important;
     }
-    /* 활성 탭: 하단 빨간 선 */
+    /* 활성 탭 — 흰 글자만 */
     .stTabs [aria-selected="true"],
     .stTabs button[aria-selected="true"] {
-        background-color: #12141d !important;
-        border-bottom: none !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
         color: #ffffff !important;
+        font-weight: 700 !important;
         opacity: 1 !important;
     }
     .stTabs [aria-selected="true"] *,
     .stTabs button[aria-selected="true"] * {
         color: #ffffff !important;
+        font-weight: 700 !important;
         opacity: 1 !important;
     }
     /* hover */
     .stTabs [data-baseweb="tab"]:hover,
     .stTabs button[data-baseweb="tab"]:hover {
         color: #e1e1e1 !important;
-        background-color: #1a1c24 !important;
+        background-color: transparent !important;
         opacity: 1 !important;
     }
     .stTabs [data-baseweb="tab"]:hover *,
@@ -719,10 +723,13 @@ st.markdown("""
         color: #e1e1e1 !important;
         opacity: 1 !important;
     }
-    /* 활성 탭 하단 선 — Streamlit 기본 highlight 색상 교체 */
-    [data-baseweb="tab-highlight"] {
+    /* 활성 탭 하단 빨간 선 — Streamlit highlight 요소 직접 색상 변경 */
+    [data-baseweb="tab-highlight"],
+    .stTabs [data-baseweb="tab-highlight"] {
         background-color: #ff3b6b !important;
+        background: #ff3b6b !important;
         height: 3px !important;
+        bottom: 0 !important;
     }
     /* ── Expander 전체 스타일 ── */
     /* 컨테이너 */
