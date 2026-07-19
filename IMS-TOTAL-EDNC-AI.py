@@ -681,17 +681,17 @@ st.markdown("""
         border: none !important;
         border-radius: 0 !important;
         box-shadow: none !important;
-        color: #94a3b8 !important;
+        color: #cbd5e1 !important;
         font-weight: 600 !important;
         font-size: 0.95rem !important;
-        padding: 10px 28px !important;
+        padding: 10px 20px !important;
         opacity: 1 !important;
         transition: color 0.2s ease;
         outline: none !important;
     }
     .stTabs [data-baseweb="tab"] *,
     .stTabs [role="tab"] * {
-        color: #94a3b8 !important;
+        color: #cbd5e1 !important;
         font-weight: 600 !important;
         opacity: 1 !important;
     }
