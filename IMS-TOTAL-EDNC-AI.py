@@ -479,6 +479,11 @@ LANG_DICT = {
         "tab_diag": "▶  Diagnostic & Optimization",
         "tab_master": "▶  Master Data & Analytics",
         "sec_a": "A. Current Injection Parameters",
+        "sec_b_expert": "B. Expert Recommended Condition Settings",
+        "sec_c_result": "C. Optimized Process Conditions",
+        "sec_d_diag": "D. Optimization & Intelligent Diagnosis",
+        "sec_d_weight": "D. Defect Weights",
+        "sec_e": "E. Feature Importance-based Diagnosis & AI Expert Report",
         "sec_c": "B. Defect Weights",
         "sec_c_sub2": "C. Expert Recommended Condition Settings",
         "lbl_constant": "Select Variables to Keep Constant",
@@ -552,6 +557,11 @@ LANG_DICT = {
         "tab_diag": "▶  진단 및 최적화",
         "tab_master": "▶  마스터 데이터 & 분석",
         "sec_a": "A. 현재 사출 조건 파라미터",
+        "sec_b_expert": "B. 전문가 추천 조건 설정",
+        "sec_c_result": "C. 최적 공정 조건",
+        "sec_d_diag": "D. 최적화 및 지능형 진단",
+        "sec_d_weight": "D. 불량 가중치",
+        "sec_e": "E. Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단",
         "sec_c": "B. 불량 가중치",
         "sec_c_sub2": "C. 전문가 추천 조건 설정",
         "lbl_constant": "고정 상태를 유지할 변수 선택",
@@ -1524,41 +1534,9 @@ if is_active:
                         )
                         st.session_state['current_inputs'][var] = ni_val
 
-        # B. 불량 가중치 / C. 전문가 제약 조건 설정
+        # B. 전문가 추천 조건 설정
         st.markdown(
-            f'<div class="section-title"><span class="square-icon"></span>{L["sec_c"]}</div>',
-            unsafe_allow_html=True
-        )
-        active_targets = list(st.session_state['models'].keys())
-        w_cols = st.columns(3)
-        for idx, target_key in enumerate(active_targets):
-            with w_cols[idx % 3]:
-                is_on = st.checkbox(
-                    f"{TARGET_VARS[target_key]}",
-                    value=st.session_state['defect_switches'].get(target_key, True),
-                    key=f"onoff_{target_key}"
-                )
-                st.session_state['defect_switches'][target_key] = is_on
-                _wcur = float(st.session_state['defect_weights'].get(target_key, 1.0))
-                _wc1, _wc2 = st.columns([3, 1])
-                with _wc1:
-                    _wsld = st.slider(
-                        "", 0.0, 10.0, min(_wcur, 10.0),
-                        step=0.5, disabled=not is_on,
-                        key=f"weight_{target_key}"
-                    )
-                with _wc2:
-                    _wnum = st.number_input(
-                        "", 0.0, 10.0, _wsld, step=0.5,
-                        disabled=not is_on,
-                        key=f"weight_num_{target_key}",
-                        label_visibility='collapsed'
-                    )
-                st.session_state['defect_weights'][target_key] = _wnum
-
-
-        st.markdown(
-            f'<div class="section-title" style="margin-top:0.6rem;margin-bottom:0.5rem;"><span class="square-icon"></span>{L["sec_c_sub2"]}</div>',
+            f'<div class="section-title"><span class="square-icon"></span>{L["sec_b_expert"]}</div>',
             unsafe_allow_html=True
         )
         _ms_col, _, _ = st.columns([1, 1, 1])
@@ -1580,7 +1558,6 @@ if is_active:
                         value=int(st.session_state['expert_constraints'][v_name]['limit']),
                         step=1
                     )
-
         st.session_state['expert_reliability'] = (
             st.slider(L['lbl_expert_rel'], 0, 100, int(st.session_state['expert_reliability'] * 100)) / 100.0
         )
@@ -1617,7 +1594,7 @@ if is_active:
             return risks
 
         st.markdown(
-            f'<div class="section-title"><span class="square-icon"></span>{L["sec_d"]}</div>',
+            f'<div class="section-title"><span class="square-icon"></span>{L["sec_d_diag"]}</div>',
             unsafe_allow_html=True
         )
         c_btn1, c_btn2 = st.columns(2)
@@ -1882,11 +1859,47 @@ if is_active:
                     mime='text/csv'
                 )
 
-        # ── 공정 개선 가이드 + AI 전문가 진단 통합 expander ─────────
+        # ── D. 불량 가중치 ────────────────────────────────────────────
+        st.markdown(
+            f'<div class="section-title"><span class="square-icon"></span>{L["sec_d_weight"]}</div>',
+            unsafe_allow_html=True
+        )
+        active_targets = list(st.session_state['models'].keys())
+        w_cols = st.columns(3)
+        for idx, target_key in enumerate(active_targets):
+            with w_cols[idx % 3]:
+                is_on = st.checkbox(
+                    f"{TARGET_VARS[target_key]}",
+                    value=st.session_state['defect_switches'].get(target_key, True),
+                    key=f"onoff_w_{target_key}"
+                )
+                st.session_state['defect_switches'][target_key] = is_on
+                _wcur = float(st.session_state['defect_weights'].get(target_key, 1.0))
+                _wc1, _wc2 = st.columns([3, 1])
+                with _wc1:
+                    _wsld = st.slider(
+                        "", 0.0, 10.0, min(_wcur, 10.0),
+                        step=0.5, disabled=not is_on,
+                        key=f"weight_d_{target_key}"
+                    )
+                with _wc2:
+                    _wnum = st.number_input(
+                        "", 0.0, 10.0, _wsld, step=0.5,
+                        disabled=not is_on,
+                        key=f"weight_num_d_{target_key}",
+                        label_visibility='collapsed'
+                    )
+                st.session_state['defect_weights'][target_key] = _wnum
+
+        # ── E. Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단 ──
+        st.markdown(
+            f'<div class="section-title"><span class="square-icon"></span>{L["sec_e"]}</div>',
+            unsafe_allow_html=True
+        )
         _combined_lbl = (
-            "+ Feature Importance-based Diagnosis & AI Expert Report"
+            "▶  Feature Importance-based Diagnosis & AI Expert Report  (Click to expand/collapse)"
             if st.session_state.lang == "en"
-            else "+ Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단"
+            else "▶  Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단  (클릭하여 펼치기 / 닫기)"
         )
         with st.expander(_combined_lbl, expanded=False):
 
@@ -1998,7 +2011,7 @@ if is_active:
             st.markdown(f"<h3 style='color:#00e5ff;font-size:1.2rem;margin-bottom:1rem;'>{_live_title}</h3>", unsafe_allow_html=True)
 
             # ── (A) 순방향: 목표 불량률 → 최적 공정 조건 ─────────
-            _fwd_title = "Forward Optimization: Set Target Defect Rate → Find Optimal Process Conditions" if _is_live_en else "순방향 최적화: 목표 불량률 설정 → 최적 공정 조건 탐색"
+            _fwd_title = "Backward Optimization: Set Target Defect Rate → Find Optimal Process Conditions" if _is_live_en else "역방향 최적화: 목표 불량률 설정 → 최적 공정 조건 탐색"
             with st.expander(f"▶  {_fwd_title}", expanded=False):
                 st.markdown(
                     f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
@@ -2023,7 +2036,7 @@ if is_active:
                         _fwd_targets[_tk] = _tgt_pct / 100.0
 
                 _fwd_opt_btn = st.button(
-                    "▸ Run Forward Optimization" if _is_live_en else "▸ 순방향 최적화 실행",
+                    "▸ Run Backward Optimization" if _is_live_en else "▸ 역방향 최적화 실행",
                     type="primary", key="fwd_opt_btn"
                 )
 
@@ -2070,8 +2083,8 @@ if is_active:
 
                 _fwd_result = run_blocking_task(
                     "fwd_optimize", _run_fwd_opt,
-                    running_msg=("Running forward optimization..." if _is_live_en else "순방향 최적화 탐색 중..."),
-                    done_msg=("Forward optimization complete!" if _is_live_en else "순방향 최적화 완료!"),
+                    running_msg=("Running backward optimization..." if _is_live_en else "역방향 최적화 탐색 중..."),
+                    done_msg=("Backward optimization complete!" if _is_live_en else "역방향 최적화 완료!"),
                     trigger=_fwd_opt_btn, show_spinner=False
                 )
                 if _fwd_result is not None:
@@ -2081,7 +2094,7 @@ if is_active:
                 if st.session_state.get('fwd_opt_result'):
                     _fr = st.session_state['fwd_opt_result']
                     st.markdown("<br>", unsafe_allow_html=True)
-                    _res_title = "▣ Forward Optimization Result" if _is_live_en else "▣ 순방향 최적화 결과"
+                    _res_title = "▣ Backward Optimization Result" if _is_live_en else "▣ 역방향 최적화 결과"
                     st.markdown(f"**{_res_title}**")
 
                     # 목표 vs 달성 비교
