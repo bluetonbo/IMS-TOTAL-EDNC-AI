@@ -207,10 +207,10 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         f"background:rgba(4,9,18,0.82);z-index:99998;}}"
         f".{_msg_cls} {{position:fixed !important;top:40% !important;left:50% !important;"
         f"transform:translate(-50%, -50%) !important;z-index:99999 !important;"
-        f"background:#0a1628 !important;border-radius:14px 14px 0 0 !important;"
-        f"box-shadow:0 20px 60px rgba(0,0,0,0.7) !important;"
+        f"background:#0a1628 !important;border-radius:14px !important;"
+        f"box-shadow:0 20px 60px rgba(0,0,0,0.85) !important;"
         f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
-        f"padding:26px 30px 10px 30px !important;text-align:center;}}"
+        f"padding:36px 36px 24px 36px !important;text-align:center;}}"
         f"{_btn_rules_css}"
         f"button[kind=\'primary\'] {{position:relative !important;z-index:99999 !important;}}"
         f"</style>"
@@ -1388,14 +1388,22 @@ if is_active:
                     key=f"onoff_{target_key}"
                 )
                 st.session_state['defect_switches'][target_key] = is_on
-                st.session_state['defect_weights'][target_key] = st.slider(
-                    "",
-                    0.0, 5.0,
-                    float(st.session_state['defect_weights'].get(target_key, 1.0)),
-                    step=0.5,
-                    disabled=not is_on,
-                    key=f"weight_{target_key}"
-                )
+                _wcur = float(st.session_state['defect_weights'].get(target_key, 1.0))
+                _wc1, _wc2 = st.columns([3, 1])
+                with _wc1:
+                    _wsld = st.slider(
+                        "", 0.0, 10.0, min(_wcur, 10.0),
+                        step=0.5, disabled=not is_on,
+                        key=f"weight_{target_key}"
+                    )
+                with _wc2:
+                    _wnum = st.number_input(
+                        "", 0.0, 10.0, _wsld, step=0.5,
+                        disabled=not is_on,
+                        key=f"weight_num_{target_key}",
+                        label_visibility='collapsed'
+                    )
+                st.session_state['defect_weights'][target_key] = _wnum
 
 
         st.markdown(
@@ -1793,51 +1801,8 @@ if is_active:
                         </div>"""
                         st.markdown(report_html, unsafe_allow_html=True)
 
-        # [추가] Feature Importance 시각화 섹션 - expander로 접기/펼치기
-        fi_all = st.session_state.get('feature_importance', {})
-        if fi_all:
-            import streamlit.components.v1 as components
-            fi_title = "+ Feature Importance — Top Influential Variables per Defect" if st.session_state.lang == "en" else "+ Feature Importance — 불량별 주요 영향 변수"
-            with st.expander(fi_title, expanded=False):
-                fi_sel_label  = "Select Defect" if st.session_state.lang == "en" else "불량 항목 선택"
-                fi_algo_label = "Algorithm"     if st.session_state.lang == "en" else "알고리즘"
-                fi_top_label  = "Top 15 Variables" if st.session_state.lang == "en" else "상위 15개 변수"
-                fi_target_keys = list(fi_all.keys())
-                fi_sel = st.selectbox(
-                    fi_sel_label,
-                    options=fi_target_keys,
-                    format_func=lambda k: TARGET_VARS.get(k, k),
-                    key="fi_target_sel"
-                )
-                if fi_sel and fi_sel in fi_all:
-                    fi_data   = fi_all[fi_sel]
-                    fi_series = pd.Series(fi_data).sort_values(ascending=False).head(15)
-                    algo_used = st.session_state.get('model_algo_names', {}).get(fi_sel, '')
-                    max_val   = fi_series.max() if fi_series.max() > 0 else 1.0
+        # FI 섹션은 Tab3 원시 데이터 아래로 이동됨
 
-                    bar_rows_html = ""
-                    for var_name, imp_val in fi_series.items():
-                        bar_pct   = imp_val / max_val * 100
-                        bar_color = "#00e5ff" if bar_pct >= 60 else "#10b981" if bar_pct >= 30 else "#94a3b8"
-                        bar_rows_html += f"""
-                        <div style="margin-bottom:8px;">
-                          <div style="display:flex;justify-content:space-between;font-size:13px;color:#e1e1e1;margin-bottom:3px;">
-                            <span style="font-weight:600;">{var_name}</span>
-                            <span style="color:#cbd5e1;">{imp_val:.4f}</span>
-                          </div>
-                          <div style="background:#1e293b;border-radius:3px;height:10px;">
-                            <div style="width:{bar_pct:.1f}%;background:{bar_color};height:10px;border-radius:3px;"></div>
-                          </div>
-                        </div>"""
-
-                    fi_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
-                    <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
-                      <div style="color:#cbd5e1;font-size:12px;margin-bottom:14px;">
-                        {TARGET_VARS.get(fi_sel, fi_sel)} &middot; {fi_algo_label}: <span style="color:#a3e635;">{algo_used}</span> &middot; {fi_top_label}
-                      </div>
-                      {bar_rows_html}
-                    </div></body></html>"""
-                    components.html(fi_html, height=60 + len(fi_series) * 36, scrolling=False)
 
     # ── 실시간 최적화 결과 예측 탭 ──────────────────────────────────
     with t_live:
@@ -1990,7 +1955,9 @@ if is_active:
                             ("Priority" if _is_live_en else "우선순위"): _priority
                         })
                     _cmp_df = pd.DataFrame(_cmp_data)
-                    _cmp_df_sorted = _cmp_df.copy()
+                    import re as _re
+                    _cmp_df['_sort'] = _cmp_df["Diff" if _is_live_en else "차이"].apply(lambda x: int(_re.search(r'\d+', str(x)).group()) if _re.search(r'\d+', str(x)) else 0)
+                    _cmp_df_sorted = _cmp_df.sort_values('_sort', ascending=False).drop(columns=['_sort'])
 
                     st.markdown(
                         f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:0.8rem;'>"
@@ -2003,46 +1970,41 @@ if is_active:
             # ── (C) 예측 성능 분석 ────────────────────────────────
             _perf_exp_title = "▶  Model Prediction Performance Analysis" if _is_live_en else "▶  예측 성능 분석"
             with st.expander(_perf_exp_title, expanded=False):
-                _mm_meta = st.session_state.get('model_metadata', {})
+                _reliability = st.session_state.get('model_reliability', {})
+                _algo_names  = st.session_state.get('model_algo_names', {})
                 _df_inj = st.session_state.get('df_injection', pd.DataFrame())
-                if not _models or _df_inj.empty:
+                if not _models or not _reliability:
                     st.info("데이터 학습 후 확인 가능합니다." if not _is_live_en else "Available after model training.")
                 else:
                     st.markdown(
                         f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
-                        + ("Cross-validation R² and training R² for each defect model. CV R² closer to 1.0 = more reliable prediction." if _is_live_en
-                           else "각 불량별 AI 모델의 학습 R²와 교차검증 CV R² 성능을 표시합니다. CV R²가 1에 가까울수록 신뢰도가 높습니다.")
+                        + ("CV F1 score and sample counts per defect model. Closer to 1.0 = more reliable." if _is_live_en
+                           else "각 불량별 CV F1 점수와 샘플 수를 표시합니다. 1에 가까울수록 신뢰도가 높습니다.")
                         + "</div>", unsafe_allow_html=True
                     )
                     _perf_rows = []
                     for _tk2 in _models.keys():
-                        _meta_str = _mm_meta.get(f'algo_{_tk2.lower()}', 'N/A')
-                        _r2_val = _meta_str.split('R²=')[-1].split(',')[0].rstrip(')') if 'R²=' in _meta_str else 'N/A'
-                        _cv_val = _meta_str.split('CV=')[-1].rstrip(')') if 'CV=' in _meta_str else 'N/A'
-                        _algo_name = _meta_str.split('(')[0].strip() if '(' in _meta_str else _meta_str
-                        try:
-                            _r2_f = float(_r2_val)
-                            _r2_disp = f"{'🟢' if _r2_f >= 0.8 else '🟡' if _r2_f >= 0.6 else '🔴'} {_r2_f:.3f}"
-                        except Exception:
-                            _r2_disp = _r2_val
-                        try:
-                            _cv_f = float(_cv_val)
-                            _cv_disp = f"{'🟢' if _cv_f >= 0.7 else '🟡' if _cv_f >= 0.4 else '🔴'} {_cv_f:.3f}"
-                        except Exception:
-                            _cv_disp = _cv_val
-                        _n_samples = len(_df_inj)
+                        _rel = _reliability.get(_tk2, {})
+                        _cv_f = _rel.get('cv_score', None)
+                        _n_pos = _rel.get('n_pos', 0)
+                        _n_neg = _rel.get('n_neg', 0)
+                        _n_tot = _rel.get('n_total', 0)
+                        _algo_name = _algo_names.get(_tk2, _rel.get('algo', 'N/A'))
+                        _low = _rel.get('low_sample', False)
+                        _cv_disp = (f"{'🟢' if _cv_f>=0.7 else '🟡' if _cv_f>=0.4 else '🔴'} {_cv_f:.3f}") if _cv_f is not None else '⚪ N/A'
                         _perf_rows.append({
                             ("Defect" if _is_live_en else "불량"): TARGET_VARS.get(_tk2, _tk2),
-                            ("Algorithm" if _is_live_en else "선택 알고리즘"): _algo_name,
-                            ("Train R²" if _is_live_en else "학습 R²"): _r2_disp,
-                            ("CV R²" if _is_live_en else "교차검증 R²"): _cv_disp,
-                            ("Samples" if _is_live_en else "학습 샘플 수"): _n_samples
+                            ("Algorithm" if _is_live_en else "알고리즘"): _algo_name,
+                            ("CV F1" if _is_live_en else "CV F1 점수"): _cv_disp,
+                            ("Defect" if _is_live_en else "불량 샘플"): f"{_n_pos}{'⚠️' if _low else ''}",
+                            ("Normal" if _is_live_en else "정상 샘플"): str(_n_neg),
+                            ("Total" if _is_live_en else "총 샘플"): str(_n_tot),
                         })
                     st.dataframe(pd.DataFrame(_perf_rows), use_container_width=True, hide_index=True)
                     st.markdown(
                         "<div style='font-size:0.75rem;color:#64748b;margin-top:0.5rem;'>"
-                        + ("🟢 ≥0.8 Good  🟡 0.6~0.8 Fair  🔴 <0.6 Poor (add more data to improve)" if _is_live_en
-                           else "🟢 ≥0.8 우수  🟡 0.6~0.8 보통  🔴 <0.6 미흡 (데이터 추가 시 개선)")
+                        + ("🟢 ≥0.7 Good  🟡 0.4~0.7 Fair  🔴 <0.4 Poor  ⚠️ Low sample" if _is_live_en
+                           else "🟢 ≥0.7 우수  🟡 0.4~0.7 보통  🔴 <0.4 미흡  ⚠️ 샘플 부족 — 데이터 추가 권장")
                         + "</div>", unsafe_allow_html=True
                     )
 
@@ -2064,7 +2026,7 @@ if is_active:
                     for _tk2 in _models.keys():
                         _risk_v = _last_risks.get(_tk2, 0)
                         _risk_pct = _risk_v * 100
-                        _rec_wgt = round(1.0 + (_risk_v / max(_last_risks.values(), default=1) * 4), 1)
+                        _rec_wgt = round(1.0 + (_risk_v / max(_last_risks.values(), default=1) * 9), 1)
                         _cur_wgt = st.session_state['defect_weights'].get(_tk2, 1.0)
                         _status = "🔴 High" if _risk_pct >= 70 else ("🟡 Med" if _risk_pct >= 30 else "🟢 Low")
                         _wgt_rows.append({
@@ -2075,8 +2037,11 @@ if is_active:
                             ("Recommended Weight" if _is_live_en else "추천 가중치"): f"{_rec_wgt:.1f}",
                             ("Action" if _is_live_en else "조치"): ("↑ Increase" if _rec_wgt > _cur_wgt + 0.5 else ("↓ Decrease" if _rec_wgt < _cur_wgt - 0.5 else "✅ OK"))
                         })
-                    st.dataframe(pd.DataFrame(_wgt_rows), use_container_width=True, hide_index=True)
-                    st.caption("💡 " + ("Weights range 0~5. Apply recommended weights in Section B." if _is_live_en else "가중치 범위: 0~5. 추천값을 B섹션 슬라이더에 적용하세요."))
+                    _wgt_df = pd.DataFrame(_wgt_rows)
+                    _wgt_df['_rs'] = [_last_risks.get(k, 0) for k in _models.keys()]
+                    _wgt_df = _wgt_df.sort_values('_rs', ascending=False).drop(columns=['_rs'])
+                    st.dataframe(_wgt_df, use_container_width=True, hide_index=True)
+                    st.caption("💡 " + ("Weights 0~10. Apply recommended weights in Section B." if _is_live_en else "가중치 0~10. 추천값을 B섹션에 적용하세요."))
 
 
     with t2:
@@ -2229,6 +2194,46 @@ if is_active:
                     )
                 st.dataframe(df_view, use_container_width=True)
 
+
+            # ── Feature Importance (원시 데이터 바로 아래) ─────────────
+            _fi_all_t2 = st.session_state.get('feature_importance', {})
+            if _fi_all_t2:
+                import streamlit.components.v1 as _comp_t2
+                _fi_title_t2 = "+ Feature Importance — Top Influential Variables per Defect" if is_en else "+ Feature Importance — 불량별 주요 영향 변수"
+                with st.expander(_fi_title_t2, expanded=False):
+                    _fi_keys_t2 = list(_fi_all_t2.keys())
+                    _fi_sel_t2 = st.selectbox(
+                        "Select Defect" if is_en else "불량 항목 선택",
+                        options=_fi_keys_t2,
+                        format_func=lambda k: TARGET_VARS.get(k, k),
+                        key="fi_t2_sel"
+                    )
+                    if _fi_sel_t2 and _fi_sel_t2 in _fi_all_t2:
+                        _fi_data_t2 = _fi_all_t2[_fi_sel_t2]
+                        _fi_ser_t2 = pd.Series(_fi_data_t2).sort_values(ascending=False).head(15)
+                        _fi_algo_t2 = st.session_state.get('model_algo_names', {}).get(_fi_sel_t2, '')
+                        _fi_max_t2 = _fi_ser_t2.max() if _fi_ser_t2.max() > 0 else 1.0
+                        _fi_bars_t2 = ""
+                        for _vn, _iv in _fi_ser_t2.items():
+                            _bp = _iv / _fi_max_t2 * 100
+                            _bc = "#00e5ff" if _bp >= 60 else "#10b981" if _bp >= 30 else "#94a3b8"
+                            _fi_bars_t2 += (
+                                f'<div style="margin-bottom:8px;">'
+                                f'<div style="display:flex;justify-content:space-between;font-size:13px;color:#e1e1e1;margin-bottom:3px;">'
+                                f'<span style="font-weight:600;">{_vn}</span>'
+                                f'<span style="color:#cbd5e1;">{_iv:.4f}</span></div>'
+                                f'<div style="background:#1e293b;border-radius:3px;height:10px;">'
+                                f'<div style="width:{_bp:.1f}%;background:{_bc};height:10px;border-radius:3px;"></div>'
+                                f'</div></div>'
+                            )
+                        _fi_html_t2 = (
+                            '<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">'
+                            f'<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">'
+                            f'<div style="color:#cbd5e1;font-size:12px;margin-bottom:14px;">'
+                            f'{TARGET_VARS.get(_fi_sel_t2, _fi_sel_t2)} &middot; Algorithm: <span style="color:#a3e635;">{_fi_algo_t2}</span> &middot; Top 15</div>'
+                            f'{_fi_bars_t2}</div></body></html>'
+                        )
+                        _comp_t2.html(_fi_html_t2, height=60 + len(_fi_ser_t2) * 36, scrolling=False)
             st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
             # ── Defect Distribution ── expander ───────────────────────
