@@ -276,36 +276,34 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
     """, unsafe_allow_html=True)
 
     if _state == "waiting_confirm":
-        # ── 완료: 체크 + 메시지 + 확인 버튼 ──────────────────────
+        # ── 완료: 체크 + 메시지 + 확인 버튼 — 모두 하나의 박스 안에 ──
+        _ok_label = "OK" if _is_en_task else "확인"
+        # 숨겨진 Streamlit 버튼 (실제 클릭 처리용)
+        _hidden_btn_key = f"_modal_ok_{task_key}"
+        # HTML 버튼이 클릭되면 숨겨진 Streamlit 버튼을 프로그래밍적으로 클릭
         st.markdown(f"""
         <div id="mbox_{_uid}">
             <span class="modal_icon_{_uid}">✅</span>
-            <div class="modal_msg_{_uid}" style="color:#10b981;">{done_msg}</div>
+            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:28px;">{done_msg}</div>
+            <button
+                onclick="(() => {{
+                    const btns = window.parent.document.querySelectorAll('button[kind=primary]');
+                    for(const b of btns) {{
+                        if(b.innerText.trim() === '{_ok_label}') {{ b.click(); break; }}
+                    }}
+                }})()"
+                style="width:100%;padding:16px 0;font-size:1.08rem;font-weight:700;
+                       border:none;border-radius:12px;cursor:pointer;
+                       background:linear-gradient(135deg,#10b981,#059669);
+                       color:#fff;letter-spacing:0.04em;">
+                {_ok_label}
+            </button>
         </div>
         """, unsafe_allow_html=True)
-        _ok_label = "OK" if _is_en_task else "확인"
-        # 버튼을 CSS로 모달 박스 아래에 고정
-        st.markdown(f'<div data-modal-ok="{_uid}" style="position:fixed;top:calc(50% + 90px);left:50%;transform:translateX(-50%);width:{_BOX_W-88}px;max-width:calc(92vw - 88px);z-index:99996;"></div>', unsafe_allow_html=True)
-        _confirmed = st.button(_ok_label, type="primary", use_container_width=True, key=f"_modal_ok_{task_key}")
-        # 버튼 위치 강제 고정 CSS
-        _ok_key = f"_modal_ok_{task_key}"
-        st.markdown(f"""<style>
-        div[data-testid="stButton"]:has(button[data-testid="baseButton-primary"][aria-label="{_ok_label}"]) {{
-            position:fixed !important;
-            top:calc(50% + 90px) !important;
-            left:50% !important;
-            transform:translateX(-50%) !important;
-            width:{_BOX_W - 88}px !important;
-            z-index:99996 !important;
-        }}
-        div[data-testid="stButton"]:has(button[data-testid="baseButton-primary"][aria-label="{_ok_label}"]) button {{
-            width:100% !important;
-            padding:16px !important;
-            font-size:1.05rem !important;
-            font-weight:700 !important;
-            border-radius:12px !important;
-        }}
-        </style>""", unsafe_allow_html=True)
+        # 숨겨진 Streamlit 버튼 (HTML 버튼의 onclick 타겟)
+        st.markdown("<div style='display:none;'>", unsafe_allow_html=True)
+        _confirmed = st.button(_ok_label, type="primary", key=_hidden_btn_key)
+        st.markdown("</div>", unsafe_allow_html=True)
         if _confirmed:
             st.session_state[_state_key] = "confirmed"
             st.rerun()
@@ -1659,20 +1657,44 @@ if is_active:
                 best_res = None
                 chosen_algo = "None"
                 
-                # 역추론 최적화 탐색 진행 상황 표시 UI
-                opt_prog_text = st.empty()
-                opt_prog_bar = st.progress(0)
-                opt_prog_detail = st.empty()  # 스텝별 상세 진행 상황(현재 위험도 등) 출력용
+                # 역추론 최적화 탐색 — 모달 박스로 진행 표시
+                _opt_modal_slot = st.empty()
+                opt_prog_detail = st.empty()
+
+                def _show_opt_modal(pct, algo_msg, detail_msg=""):
+                    _opt_modal_slot.markdown(f"""
+                    <style>
+                    #optmdrop {{position:fixed;top:0;left:0;width:100vw;height:100vh;
+                        background:rgba(4,9,18,0.88);z-index:99990;}}
+                    #optmbox {{position:fixed;top:50%;left:50%;
+                        transform:translate(-50%,-50%);z-index:99995;
+                        background:#0d1525;border:1px solid #1e3a5f;border-radius:18px;
+                        box-shadow:0 28px 90px rgba(0,0,0,0.95);
+                        width:480px;max-width:92vw;padding:44px 44px 40px;text-align:center;}}
+                    .optprog {{width:100%;height:8px;background:#1e293b;border-radius:20px;
+                        overflow:hidden;margin:20px 0 8px 0;}}
+                    .optfill {{height:100%;border-radius:20px;
+                        background:linear-gradient(90deg,#00e5ff,#10b981);
+                        width:{pct}%;transition:width 0.4s ease;}}
+                    </style>
+                    <div id="optmdrop"></div>
+                    <div id="optmbox">
+                        <div style="font-size:2.4rem;margin-bottom:16px;">🔄</div>
+                        <div style="font-weight:700;color:#38bdf8;font-size:1.15rem;margin-bottom:4px;">
+                            {algo_msg}
+                        </div>
+                        <div class="optprog"><div class="optfill"></div></div>
+                        <div style="color:#94a3b8;font-size:0.8rem;margin-bottom:6px;">{pct}%</div>
+                        <div style="color:#64748b;font-size:0.78rem;">{detail_msg}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 for i, algo in enumerate(algorithms):
                     pct = int(((i + 1) / len(algorithms)) * 100)
-                    opt_prog_text.markdown(
-                        f"<span style='color:#e1e1e1; font-size:0.85rem;'>▸ <b>{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo} ({pct}%)</b></span>",
-                        unsafe_allow_html=True
-                    )
-                    opt_prog_bar.progress((i + 1) / len(algorithms))
-                    opt_prog_detail.empty()  # 이전 알고리즘의 상세 로그가 남아있지 않도록 초기화
-                    time.sleep(0.2) # 시각적 피드백
+                    _show_opt_modal(pct,
+                        f"{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo}",
+                        f"알고리즘 {i+1}/4 탐색 중...")
+                    time.sleep(0.2)
 
                     state = {'iter': 0}
 
@@ -1682,10 +1704,10 @@ if is_active:
                     def callback_min(xk, *args):
                         state['iter'] += 1
                         val = calculate_total_risk(xk)
-                        opt_prog_detail.markdown(
-                            f"&nbsp;&nbsp; ↳ → **[{algo}]** {L['opt_step_local']} ({L['opt_step_label']}: {state['iter']}) "
-                            f"| {L['opt_current_risk']}: <span style='color:#00e5ff;'>{val*100:.2f}%</span>",
-                            unsafe_allow_html=True
+                        _pct_cb = int(((i + 1) / len(algorithms)) * 100)
+                        _show_opt_modal(_pct_cb,
+                            f"{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo}",
+                            f"{L['opt_step_local']} ({L['opt_step_label']}: {state['iter']}) | {L['opt_current_risk']}: {val*100:.2f}%"
                         )
 
                     try:
@@ -1703,20 +1725,15 @@ if is_active:
                         continue
 
                 # 하이브리드 멀티스타트(무작위 시작점) 단계도 동일하게 상세 진행 표시
-                opt_prog_text.markdown(
-                    f"<span style='color:#e1e1e1; font-size:0.85rem;'>▸ <b>{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)</b></span>",
-                    unsafe_allow_html=True
-                )
-                opt_prog_detail.empty()  # 이전 알고리즘의 상세 로그 초기화
+                _show_opt_modal(95, f"{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)", "전역 탐색 중...")
                 state = {'iter': 0}
 
                 def callback_global(xk, *args):
                     state['iter'] += 1
                     val = calculate_total_risk(xk)
-                    opt_prog_detail.markdown(
-                        f"&nbsp;&nbsp; ↳ ⇒ **[Hybrid Multi-Start]** {L['opt_step_global']} ({L['opt_step_label']}: {state['iter']}) "
-                        f"| {L['opt_current_risk']}: <span style='color:#a3e635;'>{val*100:.2f}%</span>",
-                        unsafe_allow_html=True
+                    _show_opt_modal(95,
+                        f"{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)",
+                        f"{L['opt_step_global']} ({L['opt_step_label']}: {state['iter']}) | {L['opt_current_risk']}: {val*100:.2f}%"
                     )
 
                 try:
@@ -1733,8 +1750,7 @@ if is_active:
                 except Exception:
                     pass
                 
-                opt_prog_text.empty()
-                opt_prog_bar.empty()
+                _opt_modal_slot.empty()
                 opt_prog_detail.empty()
 
                 if best_res is not None:
@@ -1977,7 +1993,7 @@ if is_active:
 
             # ── (A) 순방향: 목표 불량률 → 최적 공정 조건 ─────────
             _fwd_title = "Forward Optimization: Set Target Defect Rate → Find Optimal Process Conditions" if _is_live_en else "순방향 최적화: 목표 불량률 설정 → 최적 공정 조건 탐색"
-            with st.expander(f"▶  {_fwd_title}", expanded=True):
+            with st.expander(f"▶  {_fwd_title}", expanded=False):
                 st.markdown(
                     f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
                     + ("Set the target defect rate for each defect type. The system will find process conditions that achieve all targets simultaneously." if _is_live_en
