@@ -1929,25 +1929,23 @@ if is_active:
                                "💡 가중치를 변경한 후 C섹션에서 진단 또는 최적화를 다시 실행하면 새 위험도와 추천값이 갱신됩니다.")
                 st.caption(_rerun_note)
 
-        # ── D-2. 가중치 슬라이더 (펼치기/닫기) ──────────────────────
-        # 슬라이더 ↔ 숫자 입력 양방향 동기화 콜백
-        def _on_wgt_slider(tk):
-            """슬라이더 조작 → session_state 저장 (number_input도 동기화)"""
-            val = st.session_state.get(f"weight_d_{tk}", 1.0)
-            # 0.5 반올림
-            val = round(round(val / 0.5) * 0.5, 1)
-            st.session_state['defect_weights'][tk] = val
-            st.session_state[f"wgt_sync_{tk}"] = val
+        # ── D-2. 가중치 설정 ───────────────────────────────────────
+        # 핵심 원칙: defect_weights[tk]를 단일 진실의 원천(single source of truth)으로 사용
+        # 슬라이더는 0.5 스냅, number_input은 자유 입력 후 0.5 반올림하여 저장
+        def _wgt_clamp(v):
+            return max(0.0, min(10.0, round(round(float(v) / 0.5) * 0.5, 1)))
 
-        def _on_wgt_num(tk):
-            """숫자 입력 → 0.5 단위 반올림 후 슬라이더와 동기화"""
-            raw = st.session_state.get(f"weight_num_d_{tk}", 1.0)
-            val = round(round(float(raw) / 0.5) * 0.5, 1)
-            val = max(0.0, min(10.0, val))
+        def _on_wgt_num_change(tk):
+            raw = st.session_state.get(f"wnum_{tk}", 1.0)
+            snapped = _wgt_clamp(raw)
+            st.session_state['defect_weights'][tk] = snapped
+            # 슬라이더 위젯 상태도 직접 갱신 → 다음 rerun에 반영
+            st.session_state[f"wsld_{tk}"] = snapped
+
+        def _on_wgt_sld_change(tk):
+            val = _wgt_clamp(st.session_state.get(f"wsld_{tk}", 1.0))
             st.session_state['defect_weights'][tk] = val
-            st.session_state[f"wgt_sync_{tk}"] = val
-            # 슬라이더 키 값도 강제 동기화
-            st.session_state[f"weight_d_{tk}"] = val
+            st.session_state[f"wnum_{tk}"] = val
 
         _d_slider_lbl = "▶  Defect Weight Settings  (Click to expand/collapse)" if _is_d_en else "▶  불량 가중치 설정  (클릭하여 펼치기 / 닫기)"
         with st.expander(_d_slider_lbl, expanded=False):
@@ -1962,36 +1960,43 @@ if is_active:
                     )
                     st.session_state['defect_switches'][target_key] = is_on
 
-                    # 현재 저장된 값 (sync key 우선)
-                    _wcur = float(st.session_state.get(
-                        f"wgt_sync_{target_key}",
+                    # defect_weights가 진실의 원천 — 항상 여기서 읽음
+                    _wval = _wgt_clamp(
                         st.session_state['defect_weights'].get(target_key, 1.0)
-                    ))
-                    _wcur = round(round(_wcur / 0.5) * 0.5, 1)
-                    _wcur = max(0.0, min(10.0, _wcur))
+                    )
+                    # 슬라이더/입력 위젯 상태 초기화 (최초 1회)
+                    if f"wsld_{target_key}" not in st.session_state:
+                        st.session_state[f"wsld_{target_key}"] = _wval
+                    if f"wnum_{target_key}" not in st.session_state:
+                        st.session_state[f"wnum_{target_key}"] = _wval
 
                     _wc1, _wc2 = st.columns([3, 1])
                     with _wc1:
                         st.slider(
-                            "", 0.0, 10.0, _wcur,
+                            "", 0.0, 10.0,
+                            value=st.session_state[f"wsld_{target_key}"],
                             step=0.5, disabled=not is_on,
-                            key=f"weight_d_{target_key}",
-                            on_change=_on_wgt_slider,
+                            key=f"wsld_{target_key}",
+                            on_change=_on_wgt_sld_change,
                             args=(target_key,)
                         )
                     with _wc2:
                         st.number_input(
                             "", 0.0, 10.0,
-                            value=_wcur,
+                            value=st.session_state[f"wnum_{target_key}"],
                             step=0.5,
+                            format="%.1f",
                             disabled=not is_on,
-                            key=f"weight_num_d_{target_key}",
+                            key=f"wnum_{target_key}",
                             label_visibility='collapsed',
-                            on_change=_on_wgt_num,
+                            on_change=_on_wgt_num_change,
                             args=(target_key,)
                         )
-                    # 최종 저장 (콜백 없이 읽힌 경우 대비)
-                    st.session_state['defect_weights'][target_key] = _wcur
+                    # 최종 저장 (위젯 상태 읽어서 항상 최신 유지)
+                    st.session_state['defect_weights'][target_key] = _wgt_clamp(
+                        st.session_state.get(f"wnum_{target_key}",
+                        st.session_state.get(f"wsld_{target_key}", _wval))
+                    )
 
         # ── E. Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단 ──
         st.markdown(
