@@ -276,34 +276,42 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
     """, unsafe_allow_html=True)
 
     if _state == "waiting_confirm":
-        # ── 완료: 체크 + 메시지 + 확인 버튼 — 모두 하나의 박스 안에 ──
+        # ── 완료: 모달 박스 (아이콘 + 메시지) ──────────────────────
         _ok_label = "OK" if _is_en_task else "확인"
-        # 숨겨진 Streamlit 버튼 (실제 클릭 처리용)
-        _hidden_btn_key = f"_modal_ok_{task_key}"
-        # HTML 버튼이 클릭되면 숨겨진 Streamlit 버튼을 프로그래밍적으로 클릭
+        _ok_key   = f"_modal_ok_{task_key}"
+
+        # 모달 박스: 아이콘 + 메시지만 (버튼 영역은 아래 여백으로 비워둠)
         st.markdown(f"""
         <div id="mbox_{_uid}">
             <span class="modal_icon_{_uid}">✅</span>
-            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:28px;">{done_msg}</div>
-            <button
-                onclick="(() => {{
-                    const btns = window.parent.document.querySelectorAll('button[kind=primary]');
-                    for(const b of btns) {{
-                        if(b.innerText.trim() === '{_ok_label}') {{ b.click(); break; }}
-                    }}
-                }})()"
-                style="width:100%;padding:16px 0;font-size:1.08rem;font-weight:700;
-                       border:none;border-radius:12px;cursor:pointer;
-                       background:linear-gradient(135deg,#10b981,#059669);
-                       color:#fff;letter-spacing:0.04em;">
-                {_ok_label}
-            </button>
+            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:80px;">{done_msg}</div>
         </div>
+        <style>
+        /* Streamlit 확인 버튼을 모달 박스 하단 위에 완전히 겹치도록 고정 */
+        div[data-testid="stButton"]:has(> button[kind="primary"]) {{
+            position: fixed !important;
+            top: calc(50% + 60px) !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: {_BOX_W - 88}px !important;
+            max-width: calc(92vw - 80px) !important;
+            z-index: 99999 !important;
+            pointer-events: all !important;
+        }}
+        div[data-testid="stButton"]:has(> button[kind="primary"]) > button {{
+            width: 100% !important;
+            padding: 18px 0 !important;
+            font-size: 1.08rem !important;
+            font-weight: 700 !important;
+            border-radius: 12px !important;
+            background: linear-gradient(135deg, #10b981, #059669) !important;
+            border: none !important;
+            cursor: pointer !important;
+        }}
+        </style>
         """, unsafe_allow_html=True)
-        # 숨겨진 Streamlit 버튼 (HTML 버튼의 onclick 타겟)
-        st.markdown("<div style='display:none;'>", unsafe_allow_html=True)
-        _confirmed = st.button(_ok_label, type="primary", key=_hidden_btn_key)
-        st.markdown("</div>", unsafe_allow_html=True)
+        _confirmed = st.button(_ok_label, type="primary",
+                               use_container_width=True, key=_ok_key)
         if _confirmed:
             st.session_state[_state_key] = "confirmed"
             st.rerun()
