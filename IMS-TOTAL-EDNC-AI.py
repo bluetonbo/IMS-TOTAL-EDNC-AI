@@ -169,11 +169,16 @@ def _build_fact_block(defect_results):
 
 
 def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=False, show_spinner=True):
-    """긴 연산을 화면 정중앙 모달 박스로 표시하며 실행."""
+    """
+    5번째 사진 스타일 모달 박스:
+    - 진행 중: 회전 아이콘 + 파란 메시지 + 진행 바 + % (하나의 박스)
+    - 완료 후: 녹색 체크 + 메시지 + 확인 버튼 (하나의 박스)
+    - backdrop으로 배경 클릭 완전 차단
+    """
     _is_en_task = st.session_state.get('lang', 'en') == 'en'
     if done_msg is None:
-        done_msg = "Done! Click OK to view the result." if _is_en_task else "완료되었습니다! 확인을 누르면 결과가 보입니다."
-    _state_key = f"_modal_state_{task_key}"
+        done_msg = "Done! Click OK to view the result." if _is_en_task else "완료되었습니다! 확인을 누르면 결과가 표시됩니다."
+    _state_key  = f"_modal_state_{task_key}"
     _result_key = f"_modal_result_{task_key}"
     st.session_state.setdefault(_state_key, "idle")
     if trigger:
@@ -184,59 +189,148 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
     if _state == "confirmed":
         st.session_state[_state_key] = "idle"
         return st.session_state.pop(_result_key, None)
-    _msg_cls = f"_blk_msg_{task_key}"
-    _btn_marker_cls = f"_blk_btnmark_{task_key}"
-    _BOX_W = 440
-    _btn_rule_targets = [
-        f'[data-testid="element-container"]:has(.{_btn_marker_cls}) + [data-testid="element-container"]',
-        f'[data-testid="element-container"]:has(.{_btn_marker_cls}) + [data-testid="element-container"] [data-testid="stButton"]',
-        f'.{_msg_cls} ~ [data-testid="stButton"]',
-    ]
-    _btn_rules_css = "".join(
-        f"{sel} {{position:fixed !important;top:40% !important;left:50% !important;"
-        f"transform:translate(-50%, 30px) !important;z-index:99999 !important;"
-        f"background:#0a1628 !important;border-radius:0 0 14px 14px !important;"
-        f"box-shadow:0 20px 60px rgba(0,0,0,0.7) !important;"
-        f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
-        f"padding:0 30px 26px 30px !important;margin:0 !important;}}"
-        for sel in _btn_rule_targets
-    )
-    st.markdown(
-        f"<style>"
-        f".{_msg_cls}-backdrop {{position:fixed;top:0;left:0;width:100vw;height:100vh;"
-        f"background:rgba(4,9,18,0.82);z-index:99998;}}"
-        f".{_msg_cls} {{position:fixed !important;top:40% !important;left:50% !important;"
-        f"transform:translate(-50%, -50%) !important;z-index:99999 !important;"
-        f"background:#0a1628 !important;border-radius:14px 14px 0 0 !important;"
-        f"box-shadow:0 20px 60px rgba(0,0,0,0.85) !important;"
-        f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
-        f"padding:32px 36px 20px 36px !important;text-align:center;}}"
-        f"{_btn_rules_css}"
-        f"button[kind=\'primary\'] {{position:relative !important;z-index:99999 !important;}}"
-        f"</style>"
-        f"<div class='{_msg_cls}-backdrop\'></div>",
-        unsafe_allow_html=True
-    )
+
+    _uid = task_key.replace("-", "_").replace(".", "_")
+    _BOX_W = 460
+
+    # ── 공통 스타일 + backdrop ──────────────────────────────────
+    st.markdown(f"""<style>
+    #mbdrop_{_uid} {{
+        position:fixed;top:0;left:0;width:100vw;height:100vh;
+        background:rgba(4,9,18,0.88);z-index:99990;
+    }}
+    #mbox_{_uid} {{
+        position:fixed;top:50%;left:50%;
+        transform:translate(-50%,-50%);
+        z-index:99995;
+        background:#0d1525;
+        border:1px solid #1e3a5f;
+        border-radius:18px;
+        box-shadow:0 28px 90px rgba(0,0,0,0.95);
+        width:{_BOX_W}px;max-width:92vw;
+        box-sizing:border-box;
+        padding:44px 44px 40px 44px;
+        text-align:center;
+    }}
+    .modal_icon_{_uid} {{
+        font-size:2.6rem;
+        margin-bottom:18px;
+        display:block;
+    }}
+    .modal_msg_{_uid} {{
+        font-weight:700;
+        font-size:1.18rem;
+        line-height:1.5;
+        margin-bottom:4px;
+    }}
+    .modal_sub_{_uid} {{
+        color:#64748b;
+        font-size:0.82rem;
+        margin-top:8px;
+    }}
+    .mprog_track_{_uid} {{
+        width:100%;height:8px;
+        background:#1e293b;
+        border-radius:20px;
+        overflow:hidden;
+        margin:20px 0 8px 0;
+    }}
+    .mprog_fill_{_uid} {{
+        height:100%;border-radius:20px;
+        background:linear-gradient(90deg,#00e5ff,#10b981);
+        transition:width 0.4s ease;
+    }}
+    .mpct_{_uid} {{
+        color:#94a3b8;font-size:0.8rem;
+        margin-bottom:0;
+    }}
+    /* 확인 버튼 위치 고정 */
+    [data-modal-ok="{_uid}"] {{
+        position:fixed !important;
+        top:calc(50% + 90px) !important;
+        left:50% !important;
+        transform:translateX(-50%) !important;
+        width:{_BOX_W - 88}px !important;
+        max-width:calc(92vw - 88px) !important;
+        z-index:99996 !important;
+    }}
+    [data-modal-ok="{_uid}"] button {{
+        width:100% !important;
+        padding:16px !important;
+        font-size:1.05rem !important;
+        font-weight:700 !important;
+        border-radius:12px !important;
+        background:linear-gradient(135deg,#10b981,#059669) !important;
+        border:none !important;
+    }}
+    @keyframes mspin_{_uid} {{
+        0%   {{ transform:rotate(0deg);   }}
+        100% {{ transform:rotate(360deg); }}
+    }}
+    .mspinicon_{_uid} {{
+        display:inline-block;
+        animation:mspin_{_uid} 1.4s linear infinite;
+    }}
+    </style>
+    <div id="mbdrop_{_uid}"></div>
+    """, unsafe_allow_html=True)
+
     if _state == "waiting_confirm":
-        st.markdown(
-            f"<div class='{_msg_cls}\'><span style=\'font-weight:700;color:#10b981;font-size:1.05rem;\'>✅ {done_msg}</span>"
-            f"<span class='{_btn_marker_cls}\' style=\'display:none;\'></span></div>",
-            unsafe_allow_html=True
-        )
+        # ── 완료: 체크 + 메시지 + 확인 버튼 ──────────────────────
+        st.markdown(f"""
+        <div id="mbox_{_uid}">
+            <span class="modal_icon_{_uid}">✅</span>
+            <div class="modal_msg_{_uid}" style="color:#10b981;">{done_msg}</div>
+        </div>
+        """, unsafe_allow_html=True)
         _ok_label = "OK" if _is_en_task else "확인"
+        # 버튼을 CSS로 모달 박스 아래에 고정
+        st.markdown(f'<div data-modal-ok="{_uid}" style="position:fixed;top:calc(50% + 90px);left:50%;transform:translateX(-50%);width:{_BOX_W-88}px;max-width:calc(92vw - 88px);z-index:99996;"></div>', unsafe_allow_html=True)
         _confirmed = st.button(_ok_label, type="primary", use_container_width=True, key=f"_modal_ok_{task_key}")
+        # 버튼 위치 강제 고정 CSS
+        st.markdown(f"""<style>
+        div[data-testid="stButton"]:has(button[key="{f'_modal_ok_{task_key}'}"]),
+        div[data-testid="stButton"]:last-of-type {{
+            position:fixed !important;
+            top:calc(50% + 90px) !important;
+            left:50% !important;
+            transform:translateX(-50%) !important;
+            width:{_BOX_W - 88}px !important;
+            z-index:99996 !important;
+        }}
+        div[data-testid="stButton"]:has(button[key="{f'_modal_ok_{task_key}'}"]) button,
+        div[data-testid="stButton"]:last-of-type button {{
+            width:100% !important;
+            padding:16px !important;
+            font-size:1.05rem !important;
+            font-weight:700 !important;
+            border-radius:12px !important;
+        }}
+        </style>""", unsafe_allow_html=True)
         if _confirmed:
             st.session_state[_state_key] = "confirmed"
             st.rerun()
         return None
     else:
-        st.markdown(
-            f"<div class='{_msg_cls}\'><span style=\'font-weight:700;color:#38bdf8;font-size:1.05rem;\'>⏳ {running_msg}</span>"
-            f"<span class='{_btn_marker_cls}\' style=\'display:none;\'></span></div>",
-            unsafe_allow_html=True
-        )
-        _spinner_slot = st.empty()
-        with _spinner_slot:
+        # ── 진행 중: 회전 아이콘 + 메시지 + 진행 바 ──────────────
+        _pct_val = st.session_state.get(f"_modal_pct_{task_key}", 0)
+        _sub_msg = st.session_state.get(f"_modal_sub_{task_key}",
+                   "Please wait..." if _is_en_task else "잠시 기다려 주세요...")
+        st.markdown(f"""
+        <div id="mbox_{_uid}">
+            <span class="modal_icon_{_uid}">
+                <span class="mspinicon_{_uid}">🔄</span>
+            </span>
+            <div class="modal_msg_{_uid}" style="color:#38bdf8;">{running_msg}</div>
+            <div class="mprog_track_{_uid}">
+                <div class="mprog_fill_{_uid}" style="width:{_pct_val}%;"></div>
+            </div>
+            <div class="mpct_{_uid}">{_pct_val}%</div>
+            <div class="modal_sub_{_uid}">{_sub_msg}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        _slot = st.empty()
+        with _slot:
             if show_spinner:
                 with st.spinner(" "):
                     _result = run_fn()
@@ -377,8 +471,8 @@ LANG_DICT = {
         "tab_diag": "▶  Diagnostic & Optimization",
         "tab_master": "▶  Master Data & Analytics",
         "sec_a": "A. Current Injection Parameters",
-        "sec_c": "B. Defect Weights & Expert Constraints",
-        "sec_c_sub2": "C. Expert Constraint Settings",
+        "sec_c": "B. Defect Weights",
+        "sec_c_sub2": "C. Expert Recommended Condition Settings",
         "lbl_constant": "Select Variables to Keep Constant",
         "lbl_target": " Target",
         "lbl_expert_rel": "Expert Guideline Reliability (%)",
@@ -449,8 +543,8 @@ LANG_DICT = {
         "tab_diag": "▶  진단 및 최적화",
         "tab_master": "▶  마스터 데이터 & 분석",
         "sec_a": "A. 현재 사출 조건 파라미터",
-        "sec_c": "B. 불량 가중치 및 전문가 제약 조건",
-        "sec_c_sub2": "C. 전문가 제약 조건 설정",
+        "sec_c": "B. 불량 가중치",
+        "sec_c_sub2": "C. 전문가 추천 조건 설정",
         "lbl_constant": "고정 상태를 유지할 변수 선택",
         "lbl_target": " 목표치",
         "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)",
@@ -993,6 +1087,9 @@ with st.sidebar:
                 f"▸ <b>{msg}</b></div>", unsafe_allow_html=True
             )
             _show_train_modal(pct, msg, detail)
+            # run_blocking_task 모달과 연동
+            st.session_state["_modal_pct_ai_train"]   = pct
+            st.session_state["_modal_sub_ai_train"]   = msg
 
         done_steps = []
         _step(5, "Initializing...", "Checking uploaded files")
@@ -1366,59 +1463,61 @@ if is_active:
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_a"]}</div>',
             unsafe_allow_html=True
         )
+        _seca_lbl = ("▶  " + L["sec_a"] + "  (Click to expand/collapse)"
+                     if st.session_state.lang == 'en'
+                     else "▶  " + L["sec_a"] + "  (클릭하여 펼치기 / 닫기)")
+        with st.expander(_seca_lbl, expanded=True):
+            # [추가] 섹션 A 슬라이더 ↔ Min/Max 숫자입력 콜백 함수
+            def _on_sl_a_change(var, ver):
+                val = st.session_state.get(f"sl_{var}_{ver}")
+                if val is not None:
+                    st.session_state['current_inputs'][var] = val
+                    st.session_state[f"ni_a_{var}"] = float(val)
 
-        # [추가] 섹션 A 슬라이더 ↔ Min/Max 숫자입력 콜백 함수
-        def _on_sl_a_change(var, ver):
-            val = st.session_state.get(f"sl_{var}_{ver}")
-            if val is not None:
-                st.session_state['current_inputs'][var] = val
-                st.session_state[f"ni_a_{var}"] = float(val)
+            def _on_ni_a_change(var, sl_min, sl_max, ver):
+                raw = st.session_state.get(f"ni_a_{var}", sl_min)
+                clamped = float(max(sl_min, min(raw, sl_max)))
+                st.session_state['current_inputs'][var] = clamped
+                st.session_state[f"sl_{var}_{ver}"] = clamped
 
-        def _on_ni_a_change(var, sl_min, sl_max, ver):
-            raw = st.session_state.get(f"ni_a_{var}", sl_min)
-            clamped = float(max(sl_min, min(raw, sl_max)))
-            st.session_state['current_inputs'][var] = clamped
-            st.session_state[f"sl_{var}_{ver}"] = clamped
+            cols = st.columns(3)
+            for i, var in enumerate(st.session_state['ui_display_vars']):
+                with cols[i % 3]:
+                    curr_val = st.session_state['current_inputs'].get(var, 0)
+                    bounds   = st.session_state['global_bounds'].get(var, (0.0, 100.0))
+                    sl_min   = float(bounds[0])
+                    sl_max   = float(bounds[1])
+                    if sl_min == sl_max:
+                        sl_max = sl_min + 1.0
+                    curr_clamped = float(max(sl_min, min(float(curr_val), sl_max)))
+                    step_v = max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1)
 
-        cols = st.columns(3)
-        for i, var in enumerate(st.session_state['ui_display_vars']):
-            with cols[i % 3]:
-                curr_val = st.session_state['current_inputs'].get(var, 0)
-                bounds   = st.session_state['global_bounds'].get(var, (0.0, 100.0))
-                sl_min   = float(bounds[0])
-                sl_max   = float(bounds[1])
-                if sl_min == sl_max:
-                    sl_max = sl_min + 1.0
-                curr_clamped = float(max(sl_min, min(float(curr_val), sl_max)))
-                step_v = max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1)
+                    if f"ni_a_{var}" not in st.session_state:
+                        st.session_state[f"ni_a_{var}"] = curr_clamped
 
-                # 숫자입력 초기값 세팅
-                if f"ni_a_{var}" not in st.session_state:
-                    st.session_state[f"ni_a_{var}"] = curr_clamped
-
-                sl_col, ni_col = st.columns([3, 1])
-                with sl_col:
-                    st.session_state['current_inputs'][var] = st.slider(
-                        f"{var}",
-                        sl_min, sl_max, curr_clamped,
-                        step=step_v,
-                        key=f"sl_{var}_{st.session_state['ver']}",
-                        on_change=_on_sl_a_change,
-                        args=(var, st.session_state['ver'])
-                    )
-                with ni_col:
-                    ni_val = st.number_input(
-                        "Value",
-                        min_value=sl_min, max_value=sl_max,
-                        value=float(st.session_state['current_inputs'].get(var, curr_clamped)),
-                        step=step_v,
-                        format="%.2f",
-                        key=f"ni_a_{var}",
-                        on_change=_on_ni_a_change,
-                        args=(var, sl_min, sl_max, st.session_state['ver']),
-                        label_visibility="visible"
-                    )
-                    st.session_state['current_inputs'][var] = ni_val
+                    sl_col, ni_col = st.columns([3, 1])
+                    with sl_col:
+                        st.session_state['current_inputs'][var] = st.slider(
+                            f"{var}",
+                            sl_min, sl_max, curr_clamped,
+                            step=step_v,
+                            key=f"sl_{var}_{st.session_state['ver']}",
+                            on_change=_on_sl_a_change,
+                            args=(var, st.session_state['ver'])
+                        )
+                    with ni_col:
+                        ni_val = st.number_input(
+                            "Value",
+                            min_value=sl_min, max_value=sl_max,
+                            value=float(st.session_state['current_inputs'].get(var, curr_clamped)),
+                            step=step_v,
+                            format="%.2f",
+                            key=f"ni_a_{var}",
+                            on_change=_on_ni_a_change,
+                            args=(var, sl_min, sl_max, st.session_state['ver']),
+                            label_visibility="visible"
+                        )
+                        st.session_state['current_inputs'][var] = ni_val
 
         # B. 불량 가중치 / C. 전문가 제약 조건 설정
         st.markdown(
