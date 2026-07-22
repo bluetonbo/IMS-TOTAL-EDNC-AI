@@ -1904,6 +1904,25 @@ if is_active:
                                     else "가중치 0~10. 추천값을 아래 슬라이더에 직접 적용하세요."))
 
         # ── D-2. 가중치 슬라이더 (펼치기/닫기) ──────────────────────
+        # 슬라이더 ↔ 숫자 입력 양방향 동기화 콜백
+        def _on_wgt_slider(tk):
+            """슬라이더 조작 → session_state 저장 (number_input도 동기화)"""
+            val = st.session_state.get(f"weight_d_{tk}", 1.0)
+            # 0.5 반올림
+            val = round(round(val / 0.5) * 0.5, 1)
+            st.session_state['defect_weights'][tk] = val
+            st.session_state[f"wgt_sync_{tk}"] = val
+
+        def _on_wgt_num(tk):
+            """숫자 입력 → 0.5 단위 반올림 후 슬라이더와 동기화"""
+            raw = st.session_state.get(f"weight_num_d_{tk}", 1.0)
+            val = round(round(float(raw) / 0.5) * 0.5, 1)
+            val = max(0.0, min(10.0, val))
+            st.session_state['defect_weights'][tk] = val
+            st.session_state[f"wgt_sync_{tk}"] = val
+            # 슬라이더 키 값도 강제 동기화
+            st.session_state[f"weight_d_{tk}"] = val
+
         _d_slider_lbl = "▶  Defect Weight Settings  (Click to expand/collapse)" if _is_d_en else "▶  불량 가중치 설정  (클릭하여 펼치기 / 닫기)"
         with st.expander(_d_slider_lbl, expanded=False):
             active_targets = list(st.session_state['models'].keys())
@@ -1916,22 +1935,37 @@ if is_active:
                         key=f"onoff_w_{target_key}"
                     )
                     st.session_state['defect_switches'][target_key] = is_on
-                    _wcur = float(st.session_state['defect_weights'].get(target_key, 1.0))
+
+                    # 현재 저장된 값 (sync key 우선)
+                    _wcur = float(st.session_state.get(
+                        f"wgt_sync_{target_key}",
+                        st.session_state['defect_weights'].get(target_key, 1.0)
+                    ))
+                    _wcur = round(round(_wcur / 0.5) * 0.5, 1)
+                    _wcur = max(0.0, min(10.0, _wcur))
+
                     _wc1, _wc2 = st.columns([3, 1])
                     with _wc1:
-                        _wsld = st.slider(
-                            "", 0.0, 10.0, min(_wcur, 10.0),
+                        st.slider(
+                            "", 0.0, 10.0, _wcur,
                             step=0.5, disabled=not is_on,
-                            key=f"weight_d_{target_key}"
+                            key=f"weight_d_{target_key}",
+                            on_change=_on_wgt_slider,
+                            args=(target_key,)
                         )
                     with _wc2:
-                        _wnum = st.number_input(
-                            "", 0.0, 10.0, _wsld, step=0.5,
+                        st.number_input(
+                            "", 0.0, 10.0,
+                            value=_wcur,
+                            step=0.5,
                             disabled=not is_on,
                             key=f"weight_num_d_{target_key}",
-                            label_visibility='collapsed'
+                            label_visibility='collapsed',
+                            on_change=_on_wgt_num,
+                            args=(target_key,)
                         )
-                    st.session_state['defect_weights'][target_key] = _wnum
+                    # 최종 저장 (콜백 없이 읽힌 경우 대비)
+                    st.session_state['defect_weights'][target_key] = _wcur
 
         # ── E. Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단 ──
         st.markdown(
