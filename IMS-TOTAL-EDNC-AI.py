@@ -207,10 +207,10 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         f"background:rgba(4,9,18,0.82);z-index:99998;}}"
         f".{_msg_cls} {{position:fixed !important;top:40% !important;left:50% !important;"
         f"transform:translate(-50%, -50%) !important;z-index:99999 !important;"
-        f"background:#0a1628 !important;border-radius:14px !important;"
+        f"background:#0a1628 !important;border-radius:14px 14px 0 0 !important;"
         f"box-shadow:0 20px 60px rgba(0,0,0,0.85) !important;"
         f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
-        f"padding:36px 36px 24px 36px !important;text-align:center;}}"
+        f"padding:32px 36px 20px 36px !important;text-align:center;}}"
         f"{_btn_rules_css}"
         f"button[kind=\'primary\'] {{position:relative !important;z-index:99999 !important;}}"
         f"</style>"
@@ -935,7 +935,52 @@ with st.sidebar:
                 st.sidebar.error(f"{L['err_load']}{e}")
                 return None
 
-        # [추가] 데이터 로딩 진행 상황 표시
+        # 데이터 로딩/학습 진행 상황 → 화면 중앙 모달로 표시
+        _train_modal_slot = st.empty()
+
+        def _show_train_modal(pct, msg, detail=""):
+            _train_modal_slot.markdown(f"""
+            <style>
+            #train_modal_backdrop {{
+                position:fixed;top:0;left:0;width:100vw;height:100vh;
+                background:rgba(4,9,18,0.88);z-index:99998;pointer-events:all;
+            }}
+            #train_modal_box {{
+                position:fixed;top:50%;left:50%;
+                transform:translate(-50%,-50%);
+                z-index:99999;background:#0d1525;
+                border:1px solid #1e3a5f;border-radius:16px;
+                box-shadow:0 24px 80px rgba(0,0,0,0.9);
+                width:480px;max-width:92vw;
+                box-sizing:border-box;
+                padding:40px 40px 36px 40px;
+                text-align:center;pointer-events:all;
+            }}
+            .train_prog_track {{
+                width:100%;height:8px;background:#1e293b;
+                border-radius:20px;overflow:hidden;margin:16px 0 10px 0;
+            }}
+            .train_prog_fill {{
+                height:100%;border-radius:20px;
+                background:linear-gradient(90deg,#00e5ff,#10b981);
+                transition:width 0.4s ease;
+            }}
+            </style>
+            <div id="train_modal_backdrop"></div>
+            <div id="train_modal_box">
+                <div style="font-size:1.8rem;margin-bottom:12px;">🔄</div>
+                <div style="font-weight:700;color:#00e5ff;font-size:1.1rem;margin-bottom:6px;">
+                    {msg}
+                </div>
+                <div class="train_prog_track">
+                    <div class="train_prog_fill" style="width:{pct}%;"></div>
+                </div>
+                <div style="color:#94a3b8;font-size:0.8rem;margin-bottom:6px;">{pct}%</div>
+                <div style="color:#64748b;font-size:0.78rem;">{detail}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # 사이드바 진행바도 유지 (보조)
         load_prog    = st.sidebar.progress(0)
         load_status  = st.sidebar.empty()
         load_detail  = st.sidebar.empty()
@@ -947,6 +992,7 @@ with st.sidebar:
                 f"border-radius:6px;padding:7px 12px;font-size:0.82rem;color:#e1e1e1;'>"
                 f"▸ <b>{msg}</b></div>", unsafe_allow_html=True
             )
+            _show_train_modal(pct, msg, detail)
 
         done_steps = []
         _step(5, "Initializing...", "Checking uploaded files")
@@ -1104,6 +1150,7 @@ with st.sidebar:
 
                     load_prog.progress(100, text="✅ All done! AI engine ready.")
                     load_status.markdown("✅ **AI Engine ready.**")
+                    _train_modal_slot.empty()  # 모달 제거
                     algo_text.empty()
 
                     # [추가] rerun 후에도 유지되도록 세션에 요약 저장
@@ -1472,21 +1519,31 @@ if is_active:
         c_btn1, c_btn2 = st.columns(2)
 
         with c_btn1:
-            if st.button(L['btn_diagnose'], type="primary"):
+            _diag_btn = st.button(L['btn_diagnose'], type="primary")
+            def _run_diagnose():
                 all_v = st.session_state['global_process_vars']
                 input_vals = [float(st.session_state['current_inputs'].get(v, 0.0)) for v in all_v]
-                st.session_state['last_res_val'] = calculate_total_risk(input_vals)
-                st.session_state['last_defect_risks'] = get_individual_risks(input_vals)
+                risk = calculate_total_risk(input_vals)
+                ind_risks = get_individual_risks(input_vals)
+                new_row = {v: st.session_state['current_inputs'].get(v, 0.0) for v in all_v}
+                for tk, rv in ind_risks.items():
+                    new_row[tk] = rv
+                return {'risk': risk, 'ind_risks': ind_risks, 'new_row': new_row}
+            _diag_result = run_blocking_task(
+                "diagnose", _run_diagnose,
+                running_msg=("⏳ Diagnosing current risk..." if st.session_state.lang == 'en' else "⏳ 현재 공정 리스크 진단 중..."),
+                done_msg=("✅ Diagnosis complete! Click OK to view results." if st.session_state.lang == 'en' else "✅ 진단 완료! 확인을 누르면 결과가 표시됩니다."),
+                trigger=_diag_btn, show_spinner=False
+            )
+            if _diag_result is not None:
+                st.session_state['last_res_val'] = _diag_result['risk']
+                st.session_state['last_defect_risks'] = _diag_result['ind_risks']
                 st.session_state['last_opt_df'] = None
                 st.session_state['optimization_success'] = "N/A"
                 st.session_state['selected_algorithm'] = "N/A"
                 st.session_state['show_feature_guide'] = False
-
-                new_row = {v: st.session_state['current_inputs'].get(v, 0.0) for v in all_v}
-                for target_key, r_val in st.session_state['last_defect_risks'].items():
-                    new_row[target_key] = r_val
-
-                new_df = pd.DataFrame([new_row])
+                all_v = st.session_state['global_process_vars']
+                new_df = pd.DataFrame([_diag_result['new_row']])
                 st.session_state['df_injection'] = pd.concat(
                     [st.session_state['df_injection'], new_df], ignore_index=True
                 )
