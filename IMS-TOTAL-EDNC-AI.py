@@ -467,6 +467,7 @@ LANG_DICT = {
         "warn_upload": "Please upload the Current Data (1) and either Historical (2) or CAE (3) data.",
         "main_title_1": "Total Injection ",
         "main_title_2": "AI Solution System",
+        "main_desc_txt": "Comprehensive Defect Diagnostic & Multi-Objective Optimization System (10 Key Defects)",
         "main_desc": "Comprehensive Defect Diagnostic & Multi-Objective Optimization System v6.6 (10 Key Defects)",
         "m_status": "System Status",
         "m_vars": "Analyzed Variables",
@@ -539,6 +540,7 @@ LANG_DICT = {
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
         "main_title_1": "통합 사출 ",
         "main_title_2": "AI 솔루션 시스템",
+        "main_desc_txt": "종합 불량 진단 및 다목적 최적화 시스템 (10대 핵심 불량)",
         "main_desc": "종합 불량 진단 및 다목적 최적화 시스템 v6.6 (10대 핵심 불량)",
         "m_status": "시스템 상태",
         "m_vars": "분석된 변수",
@@ -601,7 +603,7 @@ LANG_DICT = {
 st.set_page_config(layout="wide", page_title="Total Injection Defect AI Solution System")
 
 if "lang" not in st.session_state:
-    st.session_state.lang = "en"
+    st.session_state.lang = "ko"
 
 L = LANG_DICT[st.session_state.lang]
 
@@ -1137,7 +1139,7 @@ with st.sidebar:
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
 
                 if not vars_list or df_comb.empty:
-                    st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다.")
+                    st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다." if st.session_state.lang != "en" else "No analyzable variables found or data is empty.")
                 else:
                     models_dict, scalers_dict = {}, {}
                     reliability_dict = {}
@@ -1248,8 +1250,8 @@ with st.sidebar:
                     for v in vars_list:
                         st.session_state['current_inputs'][v] = int(round(float(init_row.get(v, 0))))
 
-                    load_prog.progress(100, text="✅ All done! AI engine ready.")
-                    load_status.markdown("✅ **AI Engine ready.**")
+                    load_prog.progress(100, text="✅ All done! AI engine ready." if st.session_state.lang == "en" else "✅ 모든 학습 완료! AI 준비 완료.")
+                    load_status.markdown("✅ **AI Engine ready.**" if st.session_state.lang == "en" else "✅ **AI 엔진 준비 완료.**")
                     _train_modal_slot.empty()  # 모달 제거
                     algo_text.empty()
 
@@ -1697,7 +1699,7 @@ if is_active:
                     pct = int(((i + 1) / len(algorithms)) * 100)
                     _show_opt_modal(pct,
                         f"{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo}",
-                        f"알고리즘 {i+1}/4 탐색 중...")
+                        f"({i+1}/4) {algo} 탐색 중..." if st.session_state.lang != "en" else f"({i+1}/4) Searching {algo}...")
                     time.sleep(0.2)
 
                     state = {'iter': 0}
@@ -1729,7 +1731,7 @@ if is_active:
                         continue
 
                 # 하이브리드 멀티스타트(무작위 시작점) 단계도 동일하게 상세 진행 표시
-                _show_opt_modal(95, f"{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)", "전역 탐색 중...")
+                _show_opt_modal(95, f"{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)", "전역 탐색 중..." if st.session_state.lang != "en" else "Global multi-start search...")
                 state = {'iter': 0}
 
                 def callback_global(xk, *args):
