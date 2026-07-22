@@ -1864,32 +1864,74 @@ if is_active:
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_d_weight"]}</div>',
             unsafe_allow_html=True
         )
-        active_targets = list(st.session_state['models'].keys())
-        w_cols = st.columns(3)
-        for idx, target_key in enumerate(active_targets):
-            with w_cols[idx % 3]:
-                is_on = st.checkbox(
-                    f"{TARGET_VARS[target_key]}",
-                    value=st.session_state['defect_switches'].get(target_key, True),
-                    key=f"onoff_w_{target_key}"
+
+        # ── D-1. 가중치 추천 (진단 결과 기반) ───────────────────────
+        _is_d_en = st.session_state.lang == 'en'
+        _d_wgt_rec_lbl = "▶  Defect Weight Recommendation (based on diagnosis)" if _is_d_en else "▶  불량 가중치 추천 (진단 결과 기반)"
+        with st.expander(_d_wgt_rec_lbl, expanded=False):
+            _d_last_risks = st.session_state.get('last_defect_risks', {})
+            _d_models = st.session_state.get('models', {})
+            if not _d_last_risks:
+                st.info("진단 또는 최적화를 먼저 실행해 주세요." if not _is_d_en else "Please run diagnosis or optimization first.")
+            else:
+                st.markdown(
+                    f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:0.8rem;'>"
+                    + ("Recommended weights based on current risk. Apply to sliders below." if _is_d_en
+                       else "현재 위험도 기반 추천 가중치입니다. 아래 슬라이더에 적용하세요.")
+                    + "</div>", unsafe_allow_html=True
                 )
-                st.session_state['defect_switches'][target_key] = is_on
-                _wcur = float(st.session_state['defect_weights'].get(target_key, 1.0))
-                _wc1, _wc2 = st.columns([3, 1])
-                with _wc1:
-                    _wsld = st.slider(
-                        "", 0.0, 10.0, min(_wcur, 10.0),
-                        step=0.5, disabled=not is_on,
-                        key=f"weight_d_{target_key}"
+                _d_wgt_rows = []
+                for _d_tk in _d_models.keys():
+                    _d_risk_v = _d_last_risks.get(_d_tk, 0)
+                    _d_risk_pct = _d_risk_v * 100
+                    _d_rec_wgt = round(1.0 + (_d_risk_v / max(_d_last_risks.values(), default=1) * 9), 1)
+                    _d_cur_wgt = st.session_state['defect_weights'].get(_d_tk, 1.0)
+                    _d_status = "🔴 High" if _d_risk_pct >= 70 else ("🟡 Med" if _d_risk_pct >= 30 else "🟢 Low")
+                    _d_action = "↑ Increase" if _d_rec_wgt > _d_cur_wgt + 0.5 else ("↓ Decrease" if _d_rec_wgt < _d_cur_wgt - 0.5 else "✅ OK")
+                    _d_wgt_rows.append({
+                        ("Defect" if _is_d_en else "불량"): TARGET_VARS.get(_d_tk, _d_tk),
+                        ("Risk (%)" if _is_d_en else "현재 위험도 (%)"): f"{_d_risk_pct:.1f}%",
+                        ("Level" if _is_d_en else "위험 수준"): _d_status,
+                        ("Current" if _is_d_en else "현재 가중치"): f"{_d_cur_wgt:.1f}",
+                        ("Recommended" if _is_d_en else "추천 가중치"): f"{_d_rec_wgt:.1f}",
+                        ("Action" if _is_d_en else "조치"): _d_action
+                    })
+                _d_wgt_df = pd.DataFrame(_d_wgt_rows)
+                _d_wgt_df['_rs'] = [_d_last_risks.get(k, 0) for k in _d_models.keys()]
+                _d_wgt_df = _d_wgt_df.sort_values('_rs', ascending=False).drop(columns=['_rs'])
+                st.dataframe(_d_wgt_df, use_container_width=True, hide_index=True)
+                st.caption("💡 " + ("Weights 0~10. Apply recommended values to sliders below." if _is_d_en
+                                    else "가중치 0~10. 추천값을 아래 슬라이더에 직접 적용하세요."))
+
+        # ── D-2. 가중치 슬라이더 (펼치기/닫기) ──────────────────────
+        _d_slider_lbl = "▶  Defect Weight Settings  (Click to expand/collapse)" if _is_d_en else "▶  불량 가중치 설정  (클릭하여 펼치기 / 닫기)"
+        with st.expander(_d_slider_lbl, expanded=False):
+            active_targets = list(st.session_state['models'].keys())
+            w_cols = st.columns(3)
+            for idx, target_key in enumerate(active_targets):
+                with w_cols[idx % 3]:
+                    is_on = st.checkbox(
+                        f"{TARGET_VARS[target_key]}",
+                        value=st.session_state['defect_switches'].get(target_key, True),
+                        key=f"onoff_w_{target_key}"
                     )
-                with _wc2:
-                    _wnum = st.number_input(
-                        "", 0.0, 10.0, _wsld, step=0.5,
-                        disabled=not is_on,
-                        key=f"weight_num_d_{target_key}",
-                        label_visibility='collapsed'
-                    )
-                st.session_state['defect_weights'][target_key] = _wnum
+                    st.session_state['defect_switches'][target_key] = is_on
+                    _wcur = float(st.session_state['defect_weights'].get(target_key, 1.0))
+                    _wc1, _wc2 = st.columns([3, 1])
+                    with _wc1:
+                        _wsld = st.slider(
+                            "", 0.0, 10.0, min(_wcur, 10.0),
+                            step=0.5, disabled=not is_on,
+                            key=f"weight_d_{target_key}"
+                        )
+                    with _wc2:
+                        _wnum = st.number_input(
+                            "", 0.0, 10.0, _wsld, step=0.5,
+                            disabled=not is_on,
+                            key=f"weight_num_d_{target_key}",
+                            label_visibility='collapsed'
+                        )
+                    st.session_state['defect_weights'][target_key] = _wnum
 
         # ── E. Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단 ──
         st.markdown(
