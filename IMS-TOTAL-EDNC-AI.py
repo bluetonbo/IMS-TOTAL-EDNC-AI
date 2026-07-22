@@ -1867,18 +1867,36 @@ if is_active:
 
         # ── D-1. 가중치 추천 (진단 결과 기반) ───────────────────────
         _is_d_en = st.session_state.lang == 'en'
-        _d_wgt_rec_lbl = "▶  Defect Weight Recommendation (based on diagnosis)" if _is_d_en else "▶  불량 가중치 추천 (진단 결과 기반)"
+        _d_has_result = bool(st.session_state.get('last_defect_risks'))
+        _d_wgt_badge = " ✅" if _d_has_result else " (진단 필요)"
+        _d_wgt_badge_en = " ✅" if _d_has_result else " (Run diagnosis first)"
+        _d_wgt_rec_lbl = f"▶  Defect Weight Recommendation{_d_wgt_badge_en}" if _is_d_en else f"▶  불량 가중치 추천{_d_wgt_badge}"
         with st.expander(_d_wgt_rec_lbl, expanded=False):
             _d_last_risks = st.session_state.get('last_defect_risks', {})
             _d_models = st.session_state.get('models', {})
             if not _d_last_risks:
                 st.info("진단 또는 최적화를 먼저 실행해 주세요." if not _is_d_en else "Please run diagnosis or optimization first.")
             else:
+                # 최신 진단/최적화 시각 표시
+                _last_opt_is_done = st.session_state.get('last_opt_df') is not None
+                _last_res_val = st.session_state.get('last_res_val')
+                _result_type = ("Optimization" if _last_opt_is_done else "Diagnosis") if _is_d_en else ("최적화 후" if _last_opt_is_done else "진단 후")
+                _total_risk_pct = round(_last_res_val * 100, 1) if _last_res_val is not None else 0.0
                 st.markdown(
-                    f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:0.8rem;'>"
-                    + ("Recommended weights based on current risk. Apply to sliders below." if _is_d_en
-                       else "현재 위험도 기반 추천 가중치입니다. 아래 슬라이더에 적용하세요.")
-                    + "</div>", unsafe_allow_html=True
+                    f"<div style='background:#0a1628;border:1px solid #1e3a5f;border-radius:8px;"
+                    f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
+                    f"<span style='color:#94a3b8;'>"
+                    + ("📊 Based on latest " + _result_type + " result. " if _is_d_en
+                       else f"📊 최근 {_result_type} 결과 기준. ")
+                    + ("Total risk: " if _is_d_en else "종합 위험도: ")
+                    + f"<b style='color:#{'ff5252' if _total_risk_pct>=70 else 'ffab00' if _total_risk_pct>=30 else '10b981'}'>{_total_risk_pct}%</b>"
+                    + ("</span><br><span style='color:#64748b;font-size:0.76rem;'>"
+                       + ("ℹ️ Individual defect risk reflects each model's prediction probability. "
+                          "Changing weights affects only the total weighted risk — re-run diagnosis/optimization to recalculate." if _is_d_en
+                          else "ℹ️ 개별 불량 위험도는 각 모델의 예측 확률입니다. "
+                               "가중치 변경은 종합 위험도에만 반영되며, 새 위험도를 보려면 진단/최적화를 다시 실행하세요.")
+                       + "</span></div>"),
+                    unsafe_allow_html=True
                 )
                 _d_wgt_rows = []
                 for _d_tk in _d_models.keys():
@@ -1887,7 +1905,13 @@ if is_active:
                     _d_rec_wgt = round(1.0 + (_d_risk_v / max(_d_last_risks.values(), default=1) * 9), 1)
                     _d_cur_wgt = st.session_state['defect_weights'].get(_d_tk, 1.0)
                     _d_status = "🔴 High" if _d_risk_pct >= 70 else ("🟡 Med" if _d_risk_pct >= 30 else "🟢 Low")
-                    _d_action = "↑ Increase" if _d_rec_wgt > _d_cur_wgt + 0.5 else ("↓ Decrease" if _d_rec_wgt < _d_cur_wgt - 0.5 else "✅ OK")
+                    # 가중치가 이미 추천값 이상이면 "현재 적용 중"으로 표시
+                    if _d_cur_wgt >= _d_rec_wgt - 0.3:
+                        _d_action = "✅ OK"
+                    elif _d_rec_wgt > _d_cur_wgt + 0.5:
+                        _d_action = f"↑ {_d_rec_wgt:.1f} 권장" if not _is_d_en else f"↑ Set to {_d_rec_wgt:.1f}"
+                    else:
+                        _d_action = f"↓ {_d_rec_wgt:.1f} 권장" if not _is_d_en else f"↓ Set to {_d_rec_wgt:.1f}"
                     _d_wgt_rows.append({
                         ("Defect" if _is_d_en else "불량"): TARGET_VARS.get(_d_tk, _d_tk),
                         ("Risk (%)" if _is_d_en else "현재 위험도 (%)"): f"{_d_risk_pct:.1f}%",
@@ -1900,8 +1924,10 @@ if is_active:
                 _d_wgt_df['_rs'] = [_d_last_risks.get(k, 0) for k in _d_models.keys()]
                 _d_wgt_df = _d_wgt_df.sort_values('_rs', ascending=False).drop(columns=['_rs'])
                 st.dataframe(_d_wgt_df, use_container_width=True, hide_index=True)
-                st.caption("💡 " + ("Weights 0~10. Apply recommended values to sliders below." if _is_d_en
-                                    else "가중치 0~10. 추천값을 아래 슬라이더에 직접 적용하세요."))
+                _rerun_note = ("💡 Re-run Diagnosis or Optimization after changing weights to see updated results."
+                               if _is_d_en else
+                               "💡 가중치를 변경한 후 C섹션에서 진단 또는 최적화를 다시 실행하면 새 위험도와 추천값이 갱신됩니다.")
+                st.caption(_rerun_note)
 
         # ── D-2. 가중치 슬라이더 (펼치기/닫기) ──────────────────────
         # 슬라이더 ↔ 숫자 입력 양방향 동기화 콜백
