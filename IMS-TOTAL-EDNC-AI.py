@@ -195,9 +195,12 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
 
     # ── 공통 스타일 + backdrop ──────────────────────────────────
     st.markdown(f"""<style>
-    #mbdrop_{_uid} {{
+    /* backdrop: body::before로 구현해 별도 div 태그 불필요 */
+    body::before {{
+        content:'';
         position:fixed;top:0;left:0;width:100vw;height:100vh;
         background:rgba(4,9,18,0.88);z-index:99990;
+        display:block;
     }}
     #mbox_{_uid} {{
         position:fixed;top:50%;left:50%;
@@ -272,7 +275,6 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         animation:mspin_{_uid} 1.4s linear infinite;
     }}
     </style>
-    <div id="mbdrop_{_uid}"></div>
     """, unsafe_allow_html=True)
 
     if _state == "waiting_confirm":
@@ -1040,10 +1042,7 @@ with st.sidebar:
         def _show_train_modal(pct, msg, detail=""):
             _train_modal_slot.markdown(f"""
             <style>
-            #train_modal_backdrop {{
-                position:fixed;top:0;left:0;width:100vw;height:100vh;
-                background:rgba(4,9,18,0.88);z-index:99998;pointer-events:all;
-            }}
+            /* backdrop: body::before로 대체 */
             #train_modal_box {{
                 position:fixed;top:50%;left:50%;
                 transform:translate(-50%,-50%);
@@ -1065,7 +1064,6 @@ with st.sidebar:
                 transition:width 0.4s ease;
             }}
             </style>
-            <div id="train_modal_backdrop"></div>
             <div id="train_modal_box">
                 <div style="font-size:1.8rem;margin-bottom:12px;">🔄</div>
                 <div style="font-weight:700;color:#00e5ff;font-size:1.1rem;margin-bottom:6px;">
@@ -1672,8 +1670,7 @@ if is_active:
                 def _show_opt_modal(pct, algo_msg, detail_msg=""):
                     _opt_modal_slot.markdown(f"""
                     <style>
-                    #optmdrop {{position:fixed;top:0;left:0;width:100vw;height:100vh;
-                        background:rgba(4,9,18,0.88);z-index:99990;}}
+                    /* backdrop: body::before 방식 사용 */
                     #optmbox {{position:fixed;top:50%;left:50%;
                         transform:translate(-50%,-50%);z-index:99995;
                         background:#0d1525;border:1px solid #1e3a5f;border-radius:18px;
@@ -1685,7 +1682,6 @@ if is_active:
                         background:linear-gradient(90deg,#00e5ff,#10b981);
                         width:{pct}%;transition:width 0.4s ease;}}
                     </style>
-                    <div id="optmdrop"></div>
                     <div id="optmbox">
                         <div style="font-size:2.4rem;margin-bottom:16px;">🔄</div>
                         <div style="font-weight:700;color:#38bdf8;font-size:1.15rem;margin-bottom:4px;">
