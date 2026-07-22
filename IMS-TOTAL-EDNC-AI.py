@@ -288,9 +288,9 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         st.markdown(f'<div data-modal-ok="{_uid}" style="position:fixed;top:calc(50% + 90px);left:50%;transform:translateX(-50%);width:{_BOX_W-88}px;max-width:calc(92vw - 88px);z-index:99996;"></div>', unsafe_allow_html=True)
         _confirmed = st.button(_ok_label, type="primary", use_container_width=True, key=f"_modal_ok_{task_key}")
         # 버튼 위치 강제 고정 CSS
+        _ok_key = f"_modal_ok_{task_key}"
         st.markdown(f"""<style>
-        div[data-testid="stButton"]:has(button[key="{f'_modal_ok_{task_key}'}"]),
-        div[data-testid="stButton"]:last-of-type {{
+        div[data-testid="stButton"]:has(button[data-testid="baseButton-primary"][aria-label="{_ok_label}"]) {{
             position:fixed !important;
             top:calc(50% + 90px) !important;
             left:50% !important;
@@ -298,8 +298,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
             width:{_BOX_W - 88}px !important;
             z-index:99996 !important;
         }}
-        div[data-testid="stButton"]:has(button[key="{f'_modal_ok_{task_key}'}"]) button,
-        div[data-testid="stButton"]:last-of-type button {{
+        div[data-testid="stButton"]:has(button[data-testid="baseButton-primary"][aria-label="{_ok_label}"]) button {{
             width:100% !important;
             padding:16px !important;
             font-size:1.05rem !important;
@@ -1466,7 +1465,7 @@ if is_active:
         _seca_lbl = ("▶  " + L["sec_a"] + "  (Click to expand/collapse)"
                      if st.session_state.lang == 'en'
                      else "▶  " + L["sec_a"] + "  (클릭하여 펼치기 / 닫기)")
-        with st.expander(_seca_lbl, expanded=True):
+        with st.expander(_seca_lbl, expanded=False):
             # [추가] 섹션 A 슬라이더 ↔ Min/Max 숫자입력 콜백 함수
             def _on_sl_a_change(var, ver):
                 val = st.session_state.get(f"sl_{var}_{ver}")
