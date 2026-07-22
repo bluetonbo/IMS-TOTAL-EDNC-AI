@@ -168,6 +168,86 @@ def _build_fact_block(defect_results):
 
 
 
+def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=False, show_spinner=True):
+    """긴 연산을 화면 정중앙 모달 박스로 표시하며 실행."""
+    _is_en_task = st.session_state.get('lang', 'en') == 'en'
+    if done_msg is None:
+        done_msg = "Done! Click OK to view the result." if _is_en_task else "완료되었습니다! 확인을 누르면 결과가 보입니다."
+    _state_key = f"_modal_state_{task_key}"
+    _result_key = f"_modal_result_{task_key}"
+    st.session_state.setdefault(_state_key, "idle")
+    if trigger:
+        st.session_state[_state_key] = "running"
+    _state = st.session_state[_state_key]
+    if _state == "idle":
+        return None
+    if _state == "confirmed":
+        st.session_state[_state_key] = "idle"
+        return st.session_state.pop(_result_key, None)
+    _msg_cls = f"_blk_msg_{task_key}"
+    _btn_marker_cls = f"_blk_btnmark_{task_key}"
+    _BOX_W = 440
+    _btn_rule_targets = [
+        f'[data-testid="element-container"]:has(.{_btn_marker_cls}) + [data-testid="element-container"]',
+        f'[data-testid="element-container"]:has(.{_btn_marker_cls}) + [data-testid="element-container"] [data-testid="stButton"]',
+        f'.{_msg_cls} ~ [data-testid="stButton"]',
+    ]
+    _btn_rules_css = "".join(
+        f"{sel} {{position:fixed !important;top:40% !important;left:50% !important;"
+        f"transform:translate(-50%, 30px) !important;z-index:99999 !important;"
+        f"background:#0a1628 !important;border-radius:0 0 14px 14px !important;"
+        f"box-shadow:0 20px 60px rgba(0,0,0,0.7) !important;"
+        f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
+        f"padding:0 30px 26px 30px !important;margin:0 !important;}}"
+        for sel in _btn_rule_targets
+    )
+    st.markdown(
+        f"<style>"
+        f".{_msg_cls}-backdrop {{position:fixed;top:0;left:0;width:100vw;height:100vh;"
+        f"background:rgba(4,9,18,0.82);z-index:99998;}}"
+        f".{_msg_cls} {{position:fixed !important;top:40% !important;left:50% !important;"
+        f"transform:translate(-50%, -50%) !important;z-index:99999 !important;"
+        f"background:#0a1628 !important;border-radius:14px 14px 0 0 !important;"
+        f"box-shadow:0 20px 60px rgba(0,0,0,0.7) !important;"
+        f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
+        f"padding:26px 30px 10px 30px !important;text-align:center;}}"
+        f"{_btn_rules_css}"
+        f"button[kind=\'primary\'] {{position:relative !important;z-index:99999 !important;}}"
+        f"</style>"
+        f"<div class='{_msg_cls}-backdrop\'></div>",
+        unsafe_allow_html=True
+    )
+    if _state == "waiting_confirm":
+        st.markdown(
+            f"<div class='{_msg_cls}\'><span style=\'font-weight:700;color:#10b981;font-size:1.05rem;\'>✅ {done_msg}</span>"
+            f"<span class='{_btn_marker_cls}\' style=\'display:none;\'></span></div>",
+            unsafe_allow_html=True
+        )
+        _ok_label = "OK" if _is_en_task else "확인"
+        _confirmed = st.button(_ok_label, type="primary", use_container_width=True, key=f"_modal_ok_{task_key}")
+        if _confirmed:
+            st.session_state[_state_key] = "confirmed"
+            st.rerun()
+        return None
+    else:
+        st.markdown(
+            f"<div class='{_msg_cls}\'><span style=\'font-weight:700;color:#38bdf8;font-size:1.05rem;\'>⏳ {running_msg}</span>"
+            f"<span class='{_btn_marker_cls}\' style=\'display:none;\'></span></div>",
+            unsafe_allow_html=True
+        )
+        _spinner_slot = st.empty()
+        with _spinner_slot:
+            if show_spinner:
+                with st.spinner(" "):
+                    _result = run_fn()
+            else:
+                _result = run_fn()
+        st.session_state[_result_key] = _result
+        st.session_state[_state_key] = "waiting_confirm"
+        st.rerun()
+        return None
+
+
 def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko", is_optimized=True):
     try:
         client = Groq(api_key=GROQ_API_KEY)
@@ -444,8 +524,13 @@ if not st.session_state.authenticated:
 
     col_space, col_lang = st.columns([9, 1])
     with col_lang:
-        if st.button("KO / EN", key="lang_btn_auth"):
-            st.session_state.lang = "ko" if st.session_state.lang == "en" else "en"
+        _lang_opt = ["KO", "EN"]
+        _cur_lang = "KO" if st.session_state.lang == "ko" else "EN"
+        _sel_lang = st.selectbox("🌐", _lang_opt,
+            index=_lang_opt.index(_cur_lang),
+            label_visibility="collapsed", key="lang_sel_auth")
+        if (_sel_lang == "KO") != (st.session_state.lang == "ko"):
+            st.session_state.lang = "ko" if _sel_lang == "KO" else "en"
             st.rerun()
 
     _, center, _ = st.columns([0.5, 2, 0.5])
@@ -1223,7 +1308,10 @@ if not is_active:
     st.info(L['info_standby'])
 
 if is_active:
-    t1, t2 = st.tabs([L['tab_diag'], L['tab_master']])
+    _tab_live_ko = "▶  실시간 최적화 결과 예측"
+    _tab_live_en = "▶  Real-Time Optimization Prediction"
+    _tab_live_lbl = _tab_live_en if st.session_state.lang == 'en' else _tab_live_ko
+    t1, t_live, t2 = st.tabs([L['tab_diag'], _tab_live_lbl, L['tab_master']])
 
     with t1:
         # A. 현재 사출 조건 파라미터 입력 (최적화 후 결과값이 여기에 연동됨)
@@ -1750,6 +1838,246 @@ if is_active:
                       {bar_rows_html}
                     </div></body></html>"""
                     components.html(fi_html, height=60 + len(fi_series) * 36, scrolling=False)
+
+    # ── 실시간 최적화 결과 예측 탭 ──────────────────────────────────
+    with t_live:
+        _is_live_en = st.session_state.lang == 'en'
+        _models = st.session_state.get('models', {})
+        _scalers = st.session_state.get('scalers', {})
+        _proc_vars = st.session_state.get('global_process_vars', [])
+        _bounds = st.session_state.get('global_bounds', {})
+        _cur = st.session_state.get('current_inputs', {})
+
+        if not _models or not _proc_vars:
+            st.info("AI 모델 학습 후 사용 가능합니다." if not _is_live_en else "Available after AI model training.")
+        else:
+            # ── 상단: 3열 메트릭 ──────────────────────────────────
+            _live_title = "Real-Time Optimization Prediction" if _is_live_en else "실시간 최적화 결과 예측"
+            st.markdown(f"<h3 style='color:#00e5ff;font-size:1.2rem;margin-bottom:1rem;'>{_live_title}</h3>", unsafe_allow_html=True)
+
+            # ── (A) 순방향: 목표 불량률 → 최적 공정 조건 ─────────
+            _fwd_title = "Forward Optimization: Set Target Defect Rate → Find Optimal Process Conditions" if _is_live_en else "순방향 최적화: 목표 불량률 설정 → 최적 공정 조건 탐색"
+            with st.expander(f"▶  {_fwd_title}", expanded=True):
+                st.markdown(
+                    f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
+                    + ("Set the target defect rate for each defect type. The system will find process conditions that achieve all targets simultaneously." if _is_live_en
+                       else "각 불량 유형별 목표 불량률을 설정하면, 모든 목표를 동시에 달성하는 최적 공정 조건을 탐색합니다.")
+                    + "</div>", unsafe_allow_html=True
+                )
+                _active_targets = list(_models.keys())
+                _fwd_targets = {}
+                _fwd_cols = st.columns(min(3, len(_active_targets)))
+                for _fi, _tk in enumerate(_active_targets):
+                    with _fwd_cols[_fi % 3]:
+                        _lbl = TARGET_VARS.get(_tk, _tk)
+                        _tgt_pct = st.slider(
+                            f"{_lbl}",
+                            min_value=0, max_value=100,
+                            value=st.session_state.get(f'fwd_target_{_tk}', 30),
+                            step=5, key=f'fwd_tgt_{_tk}',
+                            help=("Target maximum defect rate (%)" if _is_live_en else "목표 최대 불량률 (%)")
+                        )
+                        st.session_state[f'fwd_target_{_tk}'] = _tgt_pct
+                        _fwd_targets[_tk] = _tgt_pct / 100.0
+
+                _fwd_opt_btn = st.button(
+                    "▸ Run Forward Optimization" if _is_live_en else "▸ 순방향 최적화 실행",
+                    type="primary", key="fwd_opt_btn"
+                )
+
+                def _run_fwd_opt():
+                    _all_v = st.session_state['global_process_vars']
+                    _bnds = [st.session_state['global_bounds'].get(v, (0,100)) for v in _all_v]
+                    _x0 = [float(st.session_state['current_inputs'].get(v, (_bnds[i][0]+_bnds[i][1])/2)) for i, v in enumerate(_all_v)]
+                    _tgts = {k: st.session_state.get(f'fwd_target_{k}', 0.3) for k in st.session_state['models'].keys()}
+
+                    def _fwd_obj(x):
+                        _df = pd.DataFrame([x], columns=_all_v)
+                        _total_penalty = 0.0
+                        for _tk2, _mdl in st.session_state['models'].items():
+                            _sc = st.session_state['scalers'][_tk2]
+                            _prob = _mdl.predict_proba(_sc.transform(_df))[0, 1]
+                            _target_prob = _tgts.get(_tk2, 0.3)
+                            if _prob > _target_prob:
+                                _total_penalty += (_prob - _target_prob) ** 2 * 10
+                            else:
+                                _total_penalty += _prob * 0.1
+                        return _total_penalty
+
+                    _best_res = None
+                    _best_val = float('inf')
+                    for _algo in ['L-BFGS-B', 'SLSQP', 'Powell']:
+                        try:
+                            _r = minimize(_fwd_obj, _x0, method=_algo, bounds=_bnds, options={'maxiter': 500})
+                            if _r.fun < _best_val:
+                                _best_val = _r.fun
+                                _best_res = _r
+                        except Exception:
+                            continue
+
+                    if _best_res is None:
+                        return None
+                    _fx = [np.clip(v, _bnds[i][0], _bnds[i][1]) for i, v in enumerate(_best_res.x)]
+                    _opt_dict = {v: int(round(val)) for v, val in zip(_all_v, _fx)}
+                    _df_res = pd.DataFrame([_fx], columns=_all_v)
+                    _achieved = {}
+                    for _tk2, _mdl in st.session_state['models'].items():
+                        _sc = st.session_state['scalers'][_tk2]
+                        _achieved[_tk2] = float(_mdl.predict_proba(_sc.transform(_df_res))[0, 1])
+                    return {'opt_dict': _opt_dict, 'achieved': _achieved, 'fx': _fx}
+
+                _fwd_result = run_blocking_task(
+                    "fwd_optimize", _run_fwd_opt,
+                    running_msg=("Running forward optimization..." if _is_live_en else "순방향 최적화 탐색 중..."),
+                    done_msg=("Forward optimization complete!" if _is_live_en else "순방향 최적화 완료!"),
+                    trigger=_fwd_opt_btn, show_spinner=False
+                )
+                if _fwd_result is not None:
+                    st.session_state['fwd_opt_result'] = _fwd_result
+                    st.rerun()
+
+                if st.session_state.get('fwd_opt_result'):
+                    _fr = st.session_state['fwd_opt_result']
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    _res_title = "▣ Forward Optimization Result" if _is_live_en else "▣ 순방향 최적화 결과"
+                    st.markdown(f"**{_res_title}**")
+
+                    # 목표 vs 달성 비교
+                    _cmp_rows = []
+                    for _tk2 in _models.keys():
+                        _tgt_v = _fwd_targets.get(_tk2, 0.3) * 100
+                        _ach_v = _fr['achieved'].get(_tk2, 0) * 100
+                        _ok = "✅" if _ach_v <= _tgt_v else "⚠️"
+                        _cmp_rows.append({
+                            ("Defect" if _is_live_en else "불량"): TARGET_VARS.get(_tk2, _tk2),
+                            ("Target (%)" if _is_live_en else "목표율 (%)"): f"{_tgt_v:.0f}%",
+                            ("Achieved (%)" if _is_live_en else "달성율 (%)"): f"{_ach_v:.1f}%",
+                            ("Result" if _is_live_en else "판정"): _ok
+                        })
+                    st.dataframe(pd.DataFrame(_cmp_rows), use_container_width=True, hide_index=True)
+
+                    # 최적 공정 조건 표
+                    _opt_df_fwd = pd.DataFrame([{v: _fr['opt_dict'].get(v, 0) for v in st.session_state['ui_display_vars']}])
+                    st.markdown(f"**{'Optimal Process Conditions' if _is_live_en else '추천 최적 공정 조건'}**")
+                    st.dataframe(_opt_df_fwd.astype(int), use_container_width=True, hide_index=True)
+                    _csv_fwd = _opt_df_fwd.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        "📥 Download CSV" if _is_live_en else "📥 최적 조건 다운로드 (.csv)",
+                        _csv_fwd, "forward_optimal_conditions.csv", "text/csv"
+                    )
+
+            # ── (B) AI 추천값 vs 현재 조건 비교 ──────────────────
+            _cmp_exp_title = "▶  AI Recommended vs Current Condition Comparison" if _is_live_en else "▶  AI 추천값 vs 현재 조건 비교"
+            with st.expander(_cmp_exp_title, expanded=False):
+                _opt_df = st.session_state.get('last_opt_df')
+                if _opt_df is None:
+                    st.info("역추론 최적화를 먼저 실행해 주세요." if not _is_live_en else "Please run inverse optimization first.")
+                else:
+                    _all_v2 = st.session_state['ui_display_vars']
+                    _cmp_data = []
+                    for _v in _all_v2:
+                        _ai_val = int(_opt_df[_v].iloc[0]) if _v in _opt_df.columns else 0
+                        _cur_val = int(st.session_state['current_inputs'].get(_v, 0))
+                        _diff = _ai_val - _cur_val
+                        _abs_diff = abs(_diff)
+                        _arrow = "↑" if _diff > 0 else ("↓" if _diff < 0 else "−")
+                        _priority = "🔴 High" if _abs_diff > 10 else ("🟡 Med" if _abs_diff > 3 else "🟢 Low")
+                        _cmp_data.append({
+                            ("Variable" if _is_live_en else "변수"): _v,
+                            ("AI Recommended" if _is_live_en else "AI 추천값"): _ai_val,
+                            ("Current" if _is_live_en else "현재값"): _cur_val,
+                            ("Diff" if _is_live_en else "차이"): f"{_arrow} {_diff:+d}",
+                            ("Priority" if _is_live_en else "우선순위"): _priority
+                        })
+                    _cmp_df = pd.DataFrame(_cmp_data)
+                    _cmp_df_sorted = _cmp_df.copy()
+
+                    st.markdown(
+                        f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:0.8rem;'>"
+                        + ("Variables sorted by magnitude of change. Red = high priority adjustment." if _is_live_en
+                           else "변화 폭이 큰 순으로 정렬합니다. 빨간색 = 우선 조정 대상.")
+                        + "</div>", unsafe_allow_html=True
+                    )
+                    st.dataframe(_cmp_df_sorted, use_container_width=True, hide_index=True)
+
+            # ── (C) 예측 성능 분석 ────────────────────────────────
+            _perf_exp_title = "▶  Model Prediction Performance Analysis" if _is_live_en else "▶  예측 성능 분석"
+            with st.expander(_perf_exp_title, expanded=False):
+                _mm_meta = st.session_state.get('model_metadata', {})
+                _df_inj = st.session_state.get('df_injection', pd.DataFrame())
+                if not _models or _df_inj.empty:
+                    st.info("데이터 학습 후 확인 가능합니다." if not _is_live_en else "Available after model training.")
+                else:
+                    st.markdown(
+                        f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
+                        + ("Cross-validation R² and training R² for each defect model. CV R² closer to 1.0 = more reliable prediction." if _is_live_en
+                           else "각 불량별 AI 모델의 학습 R²와 교차검증 CV R² 성능을 표시합니다. CV R²가 1에 가까울수록 신뢰도가 높습니다.")
+                        + "</div>", unsafe_allow_html=True
+                    )
+                    _perf_rows = []
+                    for _tk2 in _models.keys():
+                        _meta_str = _mm_meta.get(f'algo_{_tk2.lower()}', 'N/A')
+                        _r2_val = _meta_str.split('R²=')[-1].split(',')[0].rstrip(')') if 'R²=' in _meta_str else 'N/A'
+                        _cv_val = _meta_str.split('CV=')[-1].rstrip(')') if 'CV=' in _meta_str else 'N/A'
+                        _algo_name = _meta_str.split('(')[0].strip() if '(' in _meta_str else _meta_str
+                        try:
+                            _r2_f = float(_r2_val)
+                            _r2_disp = f"{'🟢' if _r2_f >= 0.8 else '🟡' if _r2_f >= 0.6 else '🔴'} {_r2_f:.3f}"
+                        except Exception:
+                            _r2_disp = _r2_val
+                        try:
+                            _cv_f = float(_cv_val)
+                            _cv_disp = f"{'🟢' if _cv_f >= 0.7 else '🟡' if _cv_f >= 0.4 else '🔴'} {_cv_f:.3f}"
+                        except Exception:
+                            _cv_disp = _cv_val
+                        _n_samples = len(_df_inj)
+                        _perf_rows.append({
+                            ("Defect" if _is_live_en else "불량"): TARGET_VARS.get(_tk2, _tk2),
+                            ("Algorithm" if _is_live_en else "선택 알고리즘"): _algo_name,
+                            ("Train R²" if _is_live_en else "학습 R²"): _r2_disp,
+                            ("CV R²" if _is_live_en else "교차검증 R²"): _cv_disp,
+                            ("Samples" if _is_live_en else "학습 샘플 수"): _n_samples
+                        })
+                    st.dataframe(pd.DataFrame(_perf_rows), use_container_width=True, hide_index=True)
+                    st.markdown(
+                        "<div style='font-size:0.75rem;color:#64748b;margin-top:0.5rem;'>"
+                        + ("🟢 ≥0.8 Good  🟡 0.6~0.8 Fair  🔴 <0.6 Poor (add more data to improve)" if _is_live_en
+                           else "🟢 ≥0.8 우수  🟡 0.6~0.8 보통  🔴 <0.6 미흡 (데이터 추가 시 개선)")
+                        + "</div>", unsafe_allow_html=True
+                    )
+
+            # ── (D) 불량 가중치 추천 ──────────────────────────────
+            _wgt_exp_title = "▶  Defect Weight Recommendation" if _is_live_en else "▶  불량 가중치 추천"
+            with st.expander(_wgt_exp_title, expanded=False):
+                _last_risks = st.session_state.get('last_defect_risks', {})
+                if not _last_risks:
+                    st.info("진단 또는 최적화를 먼저 실행해 주세요." if not _is_live_en else "Please run diagnosis or optimization first.")
+                else:
+                    st.markdown(
+                        f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
+                        + ("Recommended weights are calculated based on current risk levels. High-risk defects should have higher weights." if _is_live_en
+                           else "현재 진단된 위험도를 기반으로 불량 가중치 추천값을 계산합니다. 위험도가 높은 불량에 높은 가중치를 부여하세요.")
+                        + "</div>", unsafe_allow_html=True
+                    )
+                    _wgt_rows = []
+                    _total_risk = sum(_last_risks.values()) + 1e-9
+                    for _tk2 in _models.keys():
+                        _risk_v = _last_risks.get(_tk2, 0)
+                        _risk_pct = _risk_v * 100
+                        _rec_wgt = round(1.0 + (_risk_v / max(_last_risks.values(), default=1) * 4), 1)
+                        _cur_wgt = st.session_state['defect_weights'].get(_tk2, 1.0)
+                        _status = "🔴 High" if _risk_pct >= 70 else ("🟡 Med" if _risk_pct >= 30 else "🟢 Low")
+                        _wgt_rows.append({
+                            ("Defect" if _is_live_en else "불량"): TARGET_VARS.get(_tk2, _tk2),
+                            ("Risk (%)" if _is_live_en else "현재 위험도 (%)"): f"{_risk_pct:.1f}%",
+                            ("Status" if _is_live_en else "위험 수준"): _status,
+                            ("Current Weight" if _is_live_en else "현재 가중치"): f"{_cur_wgt:.1f}",
+                            ("Recommended Weight" if _is_live_en else "추천 가중치"): f"{_rec_wgt:.1f}",
+                            ("Action" if _is_live_en else "조치"): ("↑ Increase" if _rec_wgt > _cur_wgt + 0.5 else ("↓ Decrease" if _rec_wgt < _cur_wgt - 0.5 else "✅ OK"))
+                        })
+                    st.dataframe(pd.DataFrame(_wgt_rows), use_container_width=True, hide_index=True)
+                    st.caption("💡 " + ("Weights range 0~5. Apply recommended weights in Section B." if _is_live_en else "가중치 범위: 0~5. 추천값을 B섹션 슬라이더에 적용하세요."))
+
 
     with t2:
         if not st.session_state['df_injection'].empty:
