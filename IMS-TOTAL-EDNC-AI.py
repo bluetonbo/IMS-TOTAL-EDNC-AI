@@ -1408,15 +1408,15 @@ _LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAvgAAADhCAIAAAAyBlbOAAA/UUlEQVR4nO3dZ3wUVRc
 col_logo, col_title, col_lang_switch = st.columns([1.4, 7.1, 1.5])
 with col_logo:
     st.markdown(
-        f"<div style='display:flex;align-items:center;height:100%;padding-top:4px;'>"
-        f"<img src='data:image/png;base64,{_LOGO_B64}' "
-        f"style='width:100%;max-width:130px;object-fit:contain;'>"
+        f"<div style='display:flex;align-items:flex-start;height:100%;padding-top:8px;'>"
+        f"<img src='data:image/png;base64,{{_LOGO_B64}}' "
+        f"style='width:100%;max-width:120px;object-fit:contain;'>"
         f"</div>",
         unsafe_allow_html=True
     )
 with col_title:
     st.markdown(
-        f"<h1 style='text-align: left; margin-bottom: 0;'>"
+        f"<h1 style='text-align: left; margin-bottom: 0; margin-top: 0; line-height:1.1;'>"
         f"{L['main_title_1']}<span style='color:#00e5ff;'>{L['main_title_2']}</span></h1>",
         unsafe_allow_html=True
     )
