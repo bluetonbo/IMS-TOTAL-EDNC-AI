@@ -620,11 +620,11 @@ L = LANG_DICT[st.session_state.lang]
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "temp_pwd_list" not in st.session_state:
-    import datetime as _dt_init
+    from datetime import datetime as _dtnow, timedelta as _tdelta
     st.session_state.temp_pwd_list = {
         "ednc1234": {
-            "expires": _dt_init.datetime.now() + _dt_init.timedelta(days=7),
-            "created": _dt_init.datetime.now()
+            "expires": _dtnow.now() + _tdelta(days=7),
+            "created": _dtnow.now()
         }
     }
 if "is_owner" not in st.session_state:
@@ -677,7 +677,7 @@ if not st.session_state.authenticated:
                 return False
             if info['expires'] is None:  # 만료일 없음 = 무기한
                 return True
-            return datetime.datetime.now() < info['expires']
+            return datetime.now() < info['expires']
 
         pwd = st.text_input(L['enter_pwd'], type="password")
         if st.button(L['connect_sys']):
@@ -1382,11 +1382,11 @@ with st.sidebar:
         if st.sidebar.button("➕ " + ("추가" if _is_ko_sb else "Add"), key="sb_add_tp"):
             if _new_tp and _new_tp != "nt1234":
                 _days_sb = _day_map_sb.get(_exp_opt)
-                import datetime as _dt_sb
-                _exp_dt_sb = (_dt_sb.datetime.now() + _dt_sb.timedelta(days=_days_sb)) if _days_sb else None
+                from datetime import datetime as _dtnow2, timedelta as _tdelta2
+                _exp_dt_sb = (_dtnow2.now() + _tdelta2(days=_days_sb)) if _days_sb else None
                 st.session_state.temp_pwd_list[_new_tp] = {
                     'expires': _exp_dt_sb,
-                    'created': _dt_sb.datetime.now()
+                    'created': _dtnow2.now()
                 }
                 st.sidebar.success(("추가됨: " if _is_ko_sb else "Added: ") + _new_tp)
                 st.rerun()
@@ -1402,13 +1402,12 @@ with st.sidebar:
                 ("등록된 임시 비번" if _is_ko_sb else "Registered Passwords") + "</div>",
                 unsafe_allow_html=True
             )
-            import datetime as _dt_list
             for _tp_k, _tp_v in list(st.session_state.temp_pwd_list.items()):
                 _exp_v = _tp_v['expires']
                 if _exp_v is None:
                     _st_icon, _st_txt = "🟢", ("무기한" if _is_ko_sb else "No Expiry")
-                elif _dt_list.datetime.now() < _exp_v:
-                    _hrs_v = int((_exp_v - _dt_list.datetime.now()).total_seconds() // 3600)
+                elif datetime.now() < _exp_v:
+                    _hrs_v = int((_exp_v - datetime.now()).total_seconds() // 3600)
                     _st_icon, _st_txt = "🟡", f"{'잔여' if _is_ko_sb else 'Left'}: {_hrs_v}h"
                 else:
                     _st_icon, _st_txt = "🔴", ("만료됨" if _is_ko_sb else "Expired")
