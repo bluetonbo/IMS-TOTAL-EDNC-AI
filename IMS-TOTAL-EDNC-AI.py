@@ -1349,6 +1349,81 @@ with st.sidebar:
             unsafe_allow_html=True
         )
 
+    # ── 소유자 전용: 임시 비번 관리 패널 ──────────────────────────
+    if st.session_state.get('is_owner', False):
+        st.sidebar.markdown("---")
+        _is_ko_sb = st.session_state.lang != 'en'
+        st.sidebar.markdown(
+            "<div style='color:#00e5ff;font-weight:700;font-size:0.9rem;margin-bottom:8px;'>🔐 " +
+            ("임시 비번 관리" if _is_ko_sb else "Temp Password Manager") + "</div>",
+            unsafe_allow_html=True
+        )
+        # 새 임시 비번 추가
+        _new_tp = st.sidebar.text_input(
+            "새 임시 비번" if _is_ko_sb else "New Temp Password",
+            key="sb_new_tp"
+        )
+        _exp_opt = st.sidebar.selectbox(
+            "유효기간" if _is_ko_sb else "Expires in",
+            ["1일" if _is_ko_sb else "1 Day",
+             "3일" if _is_ko_sb else "3 Days",
+             "7일" if _is_ko_sb else "7 Days",
+             "30일" if _is_ko_sb else "30 Days",
+             "무기한" if _is_ko_sb else "No Expiry"],
+            key="sb_exp_sel"
+        )
+        _day_map_sb = {
+            "1일": 1, "1 Day": 1,
+            "3일": 3, "3 Days": 3,
+            "7일": 7, "7 Days": 7,
+            "30일": 30, "30 Days": 30,
+            "무기한": None, "No Expiry": None
+        }
+        if st.sidebar.button("➕ " + ("추가" if _is_ko_sb else "Add"), key="sb_add_tp"):
+            if _new_tp and _new_tp != "nt1234":
+                _days_sb = _day_map_sb.get(_exp_opt)
+                import datetime as _dt_sb
+                _exp_dt_sb = (_dt_sb.datetime.now() + _dt_sb.timedelta(days=_days_sb)) if _days_sb else None
+                st.session_state.temp_pwd_list[_new_tp] = {
+                    'expires': _exp_dt_sb,
+                    'created': _dt_sb.datetime.now()
+                }
+                st.sidebar.success(("추가됨: " if _is_ko_sb else "Added: ") + _new_tp)
+                st.rerun()
+            elif _new_tp == "nt1234":
+                st.sidebar.error("소유자 비번은 사용 불가" if _is_ko_sb else "Cannot use owner password.")
+            else:
+                st.sidebar.warning("비번을 입력하세요." if _is_ko_sb else "Enter a password.")
+
+        # 등록된 임시 비번 목록
+        if st.session_state.temp_pwd_list:
+            st.sidebar.markdown(
+                "<div style='font-size:0.78rem;color:#94a3b8;margin:8px 0 4px;'>" +
+                ("등록된 임시 비번" if _is_ko_sb else "Registered Passwords") + "</div>",
+                unsafe_allow_html=True
+            )
+            import datetime as _dt_list
+            for _tp_k, _tp_v in list(st.session_state.temp_pwd_list.items()):
+                _exp_v = _tp_v['expires']
+                if _exp_v is None:
+                    _st_icon, _st_txt = "🟢", ("무기한" if _is_ko_sb else "No Expiry")
+                elif _dt_list.datetime.now() < _exp_v:
+                    _hrs_v = int((_exp_v - _dt_list.datetime.now()).total_seconds() // 3600)
+                    _st_icon, _st_txt = "🟡", f"{'잔여' if _is_ko_sb else 'Left'}: {_hrs_v}h"
+                else:
+                    _st_icon, _st_txt = "🔴", ("만료됨" if _is_ko_sb else "Expired")
+                _rc1, _rc2 = st.sidebar.columns([3, 1])
+                _rc1.markdown(
+                    f"<span style='font-size:0.8rem;'>{_st_icon} <code>{_tp_k}</code><br>"
+                    f"<span style='color:#64748b;font-size:0.72rem;'>{_st_txt}</span></span>",
+                    unsafe_allow_html=True
+                )
+                if _rc2.button("🗑️", key=f"sb_del_{_tp_k}"):
+                    del st.session_state.temp_pwd_list[_tp_k]
+                    st.rerun()
+        else:
+            st.sidebar.caption("등록된 임시 비번 없음" if _is_ko_sb else "No temp passwords.")
+
     st.sidebar.markdown("---")
     st.sidebar.markdown(
         f"<h3 style='color:#00e5ff; font-size:1.1rem;'>{L['db_export_title']}</h3>",
