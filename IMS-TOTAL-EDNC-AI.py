@@ -64,9 +64,11 @@ def _save_temp_pwds(pwd_dict):
     """임시 비번 목록을 파일에 저장"""
     raw = {}
     for pwd, info in pwd_dict.items():
+        exp = info.get("expires")
+        cre = info.get("created")
         raw[pwd] = {
-            "expires": info["expires"].isoformat() if info.get("expires") else None,
-            "created": info["created"].isoformat() if isinstance(info.get("created"), datetime) else str(info.get("created", ""))
+            "expires": exp.isoformat() if isinstance(exp, datetime) else (exp if isinstance(exp, str) else None),
+            "created": cre.isoformat() if isinstance(cre, datetime) else (cre if isinstance(cre, str) else str(datetime.now()))
         }
     try:
         with open(_TEMP_PWD_FILE, "w", encoding="utf-8") as f:
