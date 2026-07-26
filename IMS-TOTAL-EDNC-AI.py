@@ -27,6 +27,53 @@ except ImportError:
 
 GROQ_API_KEY = "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"
 
+# ── 임시 비번 파일 기반 영구 저장 함수 ──────────────────────────────
+_TEMP_PWD_FILE = "temp_pwd_store.json"
+
+def _load_temp_pwds():
+    """파일에서 임시 비번 목록 로드 — 앱 재시작 후에도 유지"""
+    if not os.path.exists(_TEMP_PWD_FILE):
+        from datetime import timedelta
+        default = {
+            "ednc1234": {
+                "expires": (datetime.now() + timedelta(days=7)).isoformat(),
+                "created": datetime.now().isoformat()
+            }
+        }
+        _save_temp_pwds(default)
+        return {
+            "ednc1234": {
+                "expires": datetime.now() + timedelta(days=7),
+                "created": datetime.now()
+            }
+        }
+    try:
+        with open(_TEMP_PWD_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        result = {}
+        for pwd, info in raw.items():
+            result[pwd] = {
+                "expires": datetime.fromisoformat(info["expires"]) if info.get("expires") else None,
+                "created": datetime.fromisoformat(info["created"]) if info.get("created") else datetime.now()
+            }
+        return result
+    except Exception:
+        return {}
+
+def _save_temp_pwds(pwd_dict):
+    """임시 비번 목록을 파일에 저장"""
+    raw = {}
+    for pwd, info in pwd_dict.items():
+        raw[pwd] = {
+            "expires": info["expires"].isoformat() if info.get("expires") else None,
+            "created": info["created"].isoformat() if isinstance(info.get("created"), datetime) else str(info.get("created", ""))
+        }
+    try:
+        with open(_TEMP_PWD_FILE, "w", encoding="utf-8") as f:
+            json.dump(raw, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
 #  AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
 NUM_ACTIONS = 3
 
