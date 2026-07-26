@@ -688,6 +688,7 @@ if not st.session_state.authenticated:
             elif _check_temp_pwd(pwd):
                 st.session_state.authenticated = True
                 st.session_state.is_owner = False
+                st.session_state.logged_temp_pwd = pwd
                 st.rerun()
             else:
                 st.error(L['invalid_pwd'])
@@ -1052,6 +1053,38 @@ st.markdown("""
 # =================================================================
 with st.sidebar:
     st.markdown(f"<h2 style='color:#FFFFFF; font-size:1.5rem;'>{L['data_mgmt']}</h2>", unsafe_allow_html=True)
+
+    # ── 임시 비번 로그인 시 유효기간 표시 ────────────────────────
+    if not st.session_state.get('is_owner', False):
+        _is_ko_exp = st.session_state.lang != 'en'
+        _logged_pwd = st.session_state.get('logged_temp_pwd', '')
+        _tp_info = st.session_state.temp_pwd_list.get(_logged_pwd, {})
+        _exp_dt = _tp_info.get('expires')
+        if _exp_dt is None:
+            _exp_msg   = "🟢 " + ("무기한 사용 가능" if _is_ko_exp else "No Expiry")
+            _exp_color = "#10b981"
+        else:
+            _remain  = _exp_dt - datetime.now()
+            _total_h = int(_remain.total_seconds() // 3600)
+            _days_r  = _total_h // 24
+            _hrs_r   = _total_h % 24
+            if _remain.total_seconds() > 0:
+                if _days_r > 0:
+                    _time_str = f"{_days_r}일 {_hrs_r}시간" if _is_ko_exp else f"{_days_r}d {_hrs_r}h"
+                else:
+                    _time_str = f"{_hrs_r}시간" if _is_ko_exp else f"{_hrs_r}h"
+                _icon      = "🟡" if _total_h < 24 else "🟢"
+                _exp_color = "#ffab00" if _total_h < 24 else "#10b981"
+                _exp_msg   = _icon + " " + ("잔여 사용기간: " if _is_ko_exp else "Expires in: ") + _time_str
+            else:
+                _exp_msg   = "🔴 " + ("사용 기간 만료" if _is_ko_exp else "Access Expired")
+                _exp_color = "#ff5252"
+        st.markdown(
+            f"<div style='background:#0d1525;border:1px solid #1e3a5f;border-radius:8px;"
+            f"padding:8px 12px;margin-bottom:10px;font-size:0.82rem;"
+            f"color:{_exp_color};font-weight:600;'>{_exp_msg}</div>",
+            unsafe_allow_html=True
+        )
 
     with st.sidebar.form(key='data_upload_form'):
         u1 = st.file_uploader(L['upload_1'], type=['csv', 'xlsx'])
