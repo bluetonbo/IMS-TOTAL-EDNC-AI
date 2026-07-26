@@ -31,37 +31,42 @@ GROQ_API_KEY = "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"
 _TEMP_PWD_FILE = "temp_pwd_store.json"
 
 def _load_temp_pwds():
-    """파일에서 임시 비번 목록 로드 — 앱 재시작 후에도 유지"""
-    if not os.path.exists(_TEMP_PWD_FILE):
-        from datetime import timedelta
-        default = {
-            "ednc1234": {
-                "expires": (datetime.now() + timedelta(days=7)).isoformat(),
-                "created": datetime.now().isoformat()
-            }
+    """
+    임시 비번 목록 로드.
+    파일 저장이 가능한 환경이면 파일에서 읽고,
+    불가능하면 session_state의 기존 값을 유지한다.
+    절대로 만료일을 새로 갱신하지 않는다.
+    """
+    from datetime import timedelta
+    # 이미 session_state에 있으면 그대로 반환 (만료일 유지)
+    if "temp_pwd_list" in st.session_state and st.session_state.temp_pwd_list:
+        return st.session_state.temp_pwd_list
+    # 파일이 있으면 읽기
+    if os.path.exists(_TEMP_PWD_FILE):
+        try:
+            with open(_TEMP_PWD_FILE, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            result = {}
+            for pwd, info in raw.items():
+                result[pwd] = {
+                    "expires": datetime.fromisoformat(info["expires"]) if info.get("expires") else None,
+                    "created": datetime.fromisoformat(info["created"]) if info.get("created") else datetime.now()
+                }
+            return result
+        except Exception:
+            pass
+    # 파일도 없고 session_state도 없는 경우에만 기본값 생성 (최초 1회)
+    default = {
+        "ednc1234": {
+            "expires": datetime.now() + timedelta(days=7),
+            "created": datetime.now()
         }
-        _save_temp_pwds(default)
-        return {
-            "ednc1234": {
-                "expires": datetime.now() + timedelta(days=7),
-                "created": datetime.now()
-            }
-        }
-    try:
-        with open(_TEMP_PWD_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        result = {}
-        for pwd, info in raw.items():
-            result[pwd] = {
-                "expires": datetime.fromisoformat(info["expires"]) if info.get("expires") else None,
-                "created": datetime.fromisoformat(info["created"]) if info.get("created") else datetime.now()
-            }
-        return result
-    except Exception:
-        return {}
+    }
+    _save_temp_pwds(default)
+    return default
 
 def _save_temp_pwds(pwd_dict):
-    """임시 비번 목록을 파일에 저장"""
+    """임시 비번 목록을 파일에 저장 (가능한 환경에서만)"""
     raw = {}
     for pwd, info in pwd_dict.items():
         exp = info.get("expires")
@@ -74,7 +79,7 @@ def _save_temp_pwds(pwd_dict):
         with open(_TEMP_PWD_FILE, "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)
     except Exception:
-        pass
+        pass  # 파일 저장 불가 환경(Streamlit Cloud 등)에서는 무시
 
 #  AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
 NUM_ACTIONS = 3
@@ -714,11 +719,9 @@ if not st.session_state.authenticated:
             st.session_state.temp_pwd_list = {}  # {비번: 만료일(datetime)}
 
         def _check_temp_pwd(p):
-            """임시 비번 유효성 검사 — 파일에서 항상 최신 목록 확인"""
-            # 파일에서 최신 목록 로드하여 세션 동기화
-            _fresh = _load_temp_pwds()
-            st.session_state.temp_pwd_list = _fresh
-            info = _fresh.get(p)
+            """임시 비번 유효성 검사 — session_state 목록 기준 (만료일 갱신 없음)"""
+            # session_state의 기존 목록 사용 (재로드 금지 — 재로드 시 만료일이 초기화됨)
+            info = st.session_state.temp_pwd_list.get(p)
             if info is None:
                 return False
             if info['expires'] is None:  # 만료일 없음 = 무기한
