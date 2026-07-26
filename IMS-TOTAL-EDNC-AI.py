@@ -620,13 +620,7 @@ L = LANG_DICT[st.session_state.lang]
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "temp_pwd_list" not in st.session_state:
-    from datetime import datetime as _dtnow, timedelta as _tdelta
-    st.session_state.temp_pwd_list = {
-        "ednc1234": {
-            "expires": _dtnow.now() + _tdelta(days=7),
-            "created": _dtnow.now()
-        }
-    }
+    st.session_state.temp_pwd_list = _load_temp_pwds()
 if "is_owner" not in st.session_state:
     st.session_state.is_owner = False
 
@@ -671,8 +665,11 @@ if not st.session_state.authenticated:
             st.session_state.temp_pwd_list = {}  # {비번: 만료일(datetime)}
 
         def _check_temp_pwd(p):
-            """임시 비번 유효성 검사"""
-            info = st.session_state.temp_pwd_list.get(p)
+            """임시 비번 유효성 검사 — 파일에서 항상 최신 목록 확인"""
+            # 파일에서 최신 목록 로드하여 세션 동기화
+            _fresh = _load_temp_pwds()
+            st.session_state.temp_pwd_list = _fresh
+            info = _fresh.get(p)
             if info is None:
                 return False
             if info['expires'] is None:  # 만료일 없음 = 무기한
@@ -1421,6 +1418,7 @@ with st.sidebar:
                     'expires': _exp_dt_sb,
                     'created': _dtnow2.now()
                 }
+                _save_temp_pwds(st.session_state.temp_pwd_list)
                 st.sidebar.success(("추가됨: " if _is_ko_sb else "Added: ") + _new_tp)
                 st.rerun()
             elif _new_tp == "nt1234":
@@ -1452,6 +1450,7 @@ with st.sidebar:
                 )
                 if _rc2.button("🗑️", key=f"sb_del_{_tp_k}"):
                     del st.session_state.temp_pwd_list[_tp_k]
+                    _save_temp_pwds(st.session_state.temp_pwd_list)
                     st.rerun()
         else:
             st.sidebar.caption("등록된 임시 비번 없음" if _is_ko_sb else "No temp passwords.")
