@@ -1,72 +1,61 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import cross_val_score
 from scipy.optimize import minimize
+try:
+    from xgboost import XGBRegressor
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
+import io
 import sqlite3
 import json
 import os
-import time
-from datetime import datetime
+import re
 from groq import Groq
-
-try:
-    from xgboost import XGBClassifier
-    _HAS_XGB = True
-except ImportError:
-    _HAS_XGB = False
-
-try:
-    from lightgbm import LGBMClassifier
-    _HAS_LGBM = True
-except ImportError:
-    _HAS_LGBM = False
-
-GROQ_API_KEY = "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"
+from datetime import datetime
+import time
 
 # ── 임시 비번 파일 기반 영구 저장 함수 ──────────────────────────────
-_TEMP_PWD_FILE = "temp_pwd_store.json"
+_TEMP_PWD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_pwd_store.json")
 
 def _load_temp_pwds():
-    """
-    임시 비번 목록 로드.
-    파일 저장이 가능한 환경이면 파일에서 읽고,
-    불가능하면 session_state의 기존 값을 유지한다.
-    절대로 만료일을 새로 갱신하지 않는다.
-    """
-    from datetime import timedelta
-    # 이미 session_state에 있으면 그대로 반환 (만료일 유지)
-    if "temp_pwd_list" in st.session_state and st.session_state.temp_pwd_list:
-        return st.session_state.temp_pwd_list
-    # 파일이 있으면 읽기
-    if os.path.exists(_TEMP_PWD_FILE):
-        try:
-            with open(_TEMP_PWD_FILE, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            result = {}
-            for pwd, info in raw.items():
-                result[pwd] = {
-                    "expires": datetime.fromisoformat(info["expires"]) if info.get("expires") else None,
-                    "created": datetime.fromisoformat(info["created"]) if info.get("created") else datetime.now()
-                }
-            return result
-        except Exception:
-            pass
-    # 파일도 없고 session_state도 없는 경우에만 기본값 생성 (최초 1회)
-    default = {
-        "ednc1234": {
-            "expires": datetime.now() + timedelta(days=7),
-            "created": datetime.now()
+    """파일에서 임시 비번 목록 로드 — 앱 재시작 후에도 유지"""
+    if not os.path.exists(_TEMP_PWD_FILE):
+        from datetime import timedelta
+        default = {
+            "joint1234": {
+                "expires": (datetime.now() + timedelta(days=7)).isoformat(),
+                "created": datetime.now().isoformat()
+            }
         }
-    }
-    _save_temp_pwds(default)
-    return default
+        _save_temp_pwds(default)
+        return {
+            "joint1234": {
+                "expires": datetime.now() + timedelta(days=7),
+                "created": datetime.now()
+            }
+        }
+    try:
+        with open(_TEMP_PWD_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        result = {}
+        for pwd, info in raw.items():
+            result[pwd] = {
+                "expires": datetime.fromisoformat(info["expires"]) if info.get("expires") else None,
+                "created": datetime.fromisoformat(info["created"]) if info.get("created") else datetime.now()
+            }
+        return result
+    except Exception:
+        return {}
 
 def _save_temp_pwds(pwd_dict):
-    """임시 비번 목록을 파일에 저장 (가능한 환경에서만)"""
+    """임시 비번 목록을 파일에 저장"""
     raw = {}
     for pwd, info in pwd_dict.items():
         exp = info.get("expires")
@@ -79,598 +68,413 @@ def _save_temp_pwds(pwd_dict):
         with open(_TEMP_PWD_FILE, "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)
     except Exception:
-        pass  # 파일 저장 불가 환경(Streamlit Cloud 등)에서는 무시
+        pass
 
-#  AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
-NUM_ACTIONS = 3
+def _r2_score(y_true, y_pred):
+    """sklearn.metrics 없이 R² 계산 (Python 3.14 segfault 회피)"""
+    ya = np.array(y_true, dtype=float)
+    yp = np.array(y_pred, dtype=float)
+    ss_tot = float(np.sum((ya - ya.mean()) ** 2))
+    ss_res = float(np.sum((ya - yp) ** 2))
+    return float(1 - ss_res / ss_tot) if ss_tot > 1e-12 else 0.0
 
-#  핵심 조치 사항에 미리 포함할 내용 — 원하는 지시문을 자유롭게 입력하세요
-# 사용하려면 앞의 # 을 제거하고, 빈 리스트([])로 두면 AI가 자동 생성합니다.
-# 리포트는 항상 이 한국어 원문을 기준으로 1회 생성된 뒤 필요 시 영어로 번역되므로,
-# 영어 버전을 별도로 관리할 필요가 없습니다.
-PRESET_ACTIONS_KO = [
-    "가장 불량 가능성이 높고, 50% 이상이고, 상위 3개의 조건을 모두 만족하는 불량에 대한 객관적 분석으로 해결책 도출하세요.",
-    "가장 불량 가능성이 높고, 50%이상이고, 상위 3개의 3개 조건을 만족하는 불량들 간의 Trade Off에 대한 분석을 하세요.",
-    "이러한 불량에 대한 유변학적이나 이론적 기술을 설명하세요."
-]
+def auto_select_best_model(X, y):
+    """
+    데이터 특성을 분석하여 회귀 문제에 최적인 알고리즘을 자동 선택합니다.
+    - LinearRegression / Ridge: 소규모·선형 데이터
+    - RandomForest / ExtraTrees: 중규모·비선형 데이터
+    - GradientBoosting / XGBoost: 대규모·복잡한 패턴
+    교차검증(CV) R² 기준으로 최고 성능 모델을 반환합니다.
+    """
+    n_samples, n_features = X.shape
+    cv_folds = min(3, max(2, n_samples // 5))
 
-import re
+    candidates = {}
 
-def _choose_regularization(n_pos, n_neg):
-    """샘플이 극히 적은 타겟일수록 과적합 위험이 크므로 규제(C)를 더 강하게 줍니다.
-    (알고리즘은 그대로 LogisticRegression을 쓰되, 규제 강도만 표본 수에 맞게 조정)"""
-    min_class = min(n_pos, n_neg)
-    if min_class < 5:
-        return 0.1   # 표본이 매우 적음 → 강한 규제
-    elif min_class < 15:
-        return 0.5   # 표본이 다소 적음 → 중간 규제
-    return 1.0       # sklearn 기본값
+    # 항상 포함: 선형 모델 (기준선)
+    candidates['Linear'] = LinearRegression()
+    candidates['Ridge'] = Ridge(alpha=1.0)
 
-
-def _cross_val_reliability(X, y, n_pos, n_neg, C):
-    """학습 정확도가 아니라 K-fold 교차검증 정확도로 모델 신뢰도를 측정합니다.
-    표본이 너무 적어 유의미한 교차검증이 불가능하면 None(측정 불가)을 반환합니다."""
-    min_class = min(n_pos, n_neg)
-    if min_class < 2:
-        return None  # 각 폴드에 최소 1개씩도 배정 못 함 → 교차검증 불가
-    n_splits = min(5, min_class)
-    try:
-        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-        scores = cross_val_score(
-            LogisticRegression(max_iter=1000, C=C), X, y, cv=cv, scoring='accuracy'
+    # 샘플 수에 관계없이 항상 트리 모델 포함 (소규모 데이터 대응)
+    n_est = min(100, max(10, n_samples // 3))
+    candidates['RandomForest'] = RandomForestRegressor(
+        n_estimators=n_est, random_state=42, n_jobs=-1
+    )
+    candidates['ExtraTrees'] = ExtraTreesRegressor(
+        n_estimators=n_est, random_state=42, n_jobs=-1
+    )
+    candidates['GradientBoosting'] = GradientBoostingRegressor(
+        n_estimators=n_est, random_state=42
+    )
+    if XGBOOST_AVAILABLE:
+        candidates['XGBoost'] = XGBRegressor(
+            n_estimators=n_est, random_state=42,
+            verbosity=0, eval_metric='rmse'
         )
-        return float(np.mean(scores))
-    except Exception:
-        return None
+
+    best_name  = 'Linear'
+    best_score = -999
+    best_model = LinearRegression()
+
+    for name, clf in candidates.items():
+        try:
+            scores = cross_val_score(
+                clf, X, y, cv=cv_folds, scoring='r2', error_score=-999
+            )
+            mean_score = float(scores.mean())
+            if mean_score > best_score:
+                best_score = mean_score
+                best_name  = name
+                best_model = clf
+        except Exception:
+            continue
+
+    return best_model, best_name, round(best_score, 3)
 
 
-def _auto_select_best_model(X, y, n_pos, n_neg, C, algo_status_fn=None):
-    """[추가] LR / RF / XGB / LGBM 4종을 교차검증 정확도로 비교해 가장 좋은 모델을 반환.
-    표본이 너무 적거나 패키지가 없으면 가능한 후보 중 최선을 선택합니다.
-    반환: (fitted_model, algo_name, cv_score, feature_importances_or_None)"""
-    min_class = min(n_pos, n_neg)
-    n_splits  = max(2, min(5, min_class))
+if 'df_caulking' not in st.session_state: st.session_state['df_caulking'] = pd.DataFrame()
+if 'scaler' not in st.session_state: st.session_state['scaler'] = None
+if 'opt_result_x' not in st.session_state: st.session_state['opt_result_x'] = None
+if 'sim_result_x' not in st.session_state: st.session_state['sim_result_x'] = None
+if 'sim_confidence' not in st.session_state: st.session_state['sim_confidence'] = 0.0
+if 'feature_importance' not in st.session_state: st.session_state['feature_importance'] = {}
+if 'algo_summary' not in st.session_state: st.session_state['algo_summary'] = {}
 
-    candidates = {
-        'LogisticRegression': LogisticRegression(max_iter=1000, C=C),
-        'RandomForest':       RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+# 1. 페이지 설정
+st.set_page_config(
+    layout="wide", 
+    page_title="JOINT AI - Process Optimization Suite",
+)
+
+# 2. 콘솔 스타일 CSS
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+    
+    .stApp {
+        background-color: #0f0f0f !important;
+        color: #ececec !important;
+        font-family: 'Inter', sans-serif;
     }
-    if _HAS_XGB:
-        candidates['XGBoost'] = XGBClassifier(
-            n_estimators=100, learning_rate=0.1, use_label_encoder=False,
-            eval_metric='logloss', random_state=42, verbosity=0
-        )
-    if _HAS_LGBM:
-        candidates['LightGBM'] = LGBMClassifier(
-            n_estimators=100, learning_rate=0.1, random_state=42,
-            verbose=-1, n_jobs=-1
-        )
 
-    best_name  = 'LogisticRegression'
-    best_score = -1.0
-    best_model = candidates['LogisticRegression']
+    /* 메인 컨텐츠 영역이 사이드바를 제외한 전체 폭을 항상 사용하도록 강제 */
+    [data-testid="stAppViewContainer"] .main .block-container {
+        max-width: 100% !important;
+        width: 100% !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+    
+    [data-testid="stSidebar"] {
+        background-color: #161616 !important;
+        border-right: 1px solid #262626;
+        min-width: 360px !important;
+    }
+    
+    .scrollable-box {
+        max-height: 400px;
+        overflow-y: auto;
+        padding: 15px;
+        background-color: #161616;
+        border: 1px solid #2e2e2e;
+        border-radius: 6px;
+        color: #ececec;
+    }
+    
+    h1, h2, h3, h4 {
+        font-family: 'Inter', sans-serif;
+        font-weight: 600 !important;
+        letter-spacing: -0.01em;
+        color: #f2f2f2 !important;
+    }
+    
+    .glass-card {
+        background: #1a1a1a;
+        border: 1px solid #2e2e2e;
+        border-radius: 6px;
+        padding: 16px 20px;
+        margin-bottom: 16px;
+    }
+    
+    .glass-card-title {
+        color: #ff9f1c;
+        font-size: 0.9rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 12px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #262626;
+    }
 
-    if min_class >= 2:
-        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-        algo_list = list(candidates.items())
-        for a_idx, (name, clf) in enumerate(algo_list):
-            # [추가] 콜백으로 현재 시도 중인 알고리즘 표시
-            if algo_status_fn:
-                algo_status_fn(name, a_idx + 1, len(algo_list))
-            try:
-                scores = cross_val_score(clf, X, y, cv=cv, scoring='accuracy')
-                mean_score = float(np.mean(scores))
-                if mean_score > best_score:
-                    best_score = mean_score
-                    best_name  = name
-                    best_model = clf
-            except Exception:
-                continue
+    .stButton>button, .stDownloadButton>button {
+        height: 2.8rem !important;
+        font-size: 0.9rem !important;
+        border-radius: 4px !important;
+        background: #10b981 !important;
+        color: #ffffff !important;
+        font-weight: 600;
+        border: none !important;
+        transition: all 0.2s ease;
+        width: 100%;
+    }
 
-    # 최종 전체 데이터로 재학습
-    if algo_status_fn:
-        algo_status_fn(f"Final fit: {best_name} ✓", len(candidates), len(candidates))
-    best_model.fit(X, y)
+    /* 0. 설명/보조 문구 가독성 보정 (너무 어둡지 않게, 과하지 않게) */
+    label, .stTextInput label, .stSelectbox label, .stSlider label,
+    .stNumberInput label, .stRadio label, .stFileUploader label,
+    [data-testid="stWidgetLabel"] p {
+        color: #b8b8b8 !important;
+    }
+    ::placeholder {
+        color: #8a8a8a !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stFileUploaderDropzoneInstructions"] span,
+    [data-testid="stFileUploaderDropzoneInstructions"] small {
+        color: #aaaaaa !important;
+    }
+    .stCaption, [data-testid="stCaptionContainer"] {
+        color: #aaaaaa !important;
+    }
 
-    # Feature Importance 추출 (LR은 coef_ 사용)
-    if hasattr(best_model, 'feature_importances_'):
-        fi = best_model.feature_importances_
-    elif hasattr(best_model, 'coef_'):
-        fi = np.abs(best_model.coef_[0])
-    else:
-        fi = None
+    /* 진행바 문구 및 info/warning/error/success 알림 문구 밝기 보정 (사이드바 포함) */
+    [data-testid="stProgress"] p,
+    [data-testid="stProgress"] span,
+    [data-testid="stProgress"] div,
+    [data-testid="stProgress"] *,
+    [data-testid="stSidebar"] [data-testid="stProgress"] * {
+        color: #e8e8e8 !important;
+    }
+    [data-testid="stAlert"] p,
+    [data-testid="stAlert"] span,
+    [data-testid="stAlert"] div,
+    [data-testid="stAlert"] *,
+    [data-testid="stSidebar"] [data-testid="stAlert"] *,
+    [data-testid="stAlertContentInfo"] p,
+    [data-testid="stAlertContentWarning"] p,
+    [data-testid="stAlertContentError"] p,
+    [data-testid="stAlertContentSuccess"] p {
+        color: #efefef !important;
+    }
+    [data-testid="stSidebar"] h3 {
+        color: #ffb300 !important;
+    }
 
-    cv_score = best_score if best_score >= 0 else None
-    return best_model, best_name, cv_score, fi
+    /* 파일 업로더 드롭존 배경을 다크 테마 색상으로 강제 지정 (라이트 배경 방지) */
+    [data-testid="stFileUploaderDropzone"] {
+        background-color: #1a1a1a !important;
+        border: 1px solid #2e2e2e !important;
+    }
+    [data-testid="stFileUploaderDropzone"] button {
+        background-color: #262626 !important;
+        color: #ececec !important;
+        border: 1px solid #3d3d3d !important;
+        height: 2.1rem !important;
+        min-height: unset !important;
+        padding: 0 14px !important;
+        font-size: 0.8rem !important;
+        width: auto !important;
+    }
+    [data-testid="stFileUploaderDropzoneInstructions"] p,
+    [data-testid="stFileUploaderDropzoneInstructions"] svg {
+        color: #aaaaaa !important;
+        fill: #aaaaaa !important;
+    }
+    [data-testid="stFileUploaderFile"] {
+        background-color: #1a1a1a !important;
+        border: 1px solid #2e2e2e !important;
+        border-radius: 6px !important;
+    }
 
+    /* 2. 회색조 보조 문구 전반 시인성 개선 */
+    [data-testid="stFileUploaderFileName"],
+    [data-testid="stFileUploaderFile"] span,
+    [data-testid="stFileUploaderFile"] small,
+    [data-testid="stFileUploaderFileErrorMessage"] {
+        color: #d6d6d6 !important;
+    }
+    [data-testid="stExpander"] summary p,
+    [data-testid="stExpander"] summary span,
+    [data-testid="stExpander"] svg {
+        color: #dcdcdc !important;
+    }
+    .stTabs [data-baseweb="tab"] p,
+    .stTabs [data-baseweb="tab"] {
+        color: #b8b8b8 !important;
+    }
+    .stTabs [aria-selected="true"] p {
+        color: #ffffff !important;
+    }
+    [data-testid="stMarkdownContainer"] small,
+    .stMarkdown small {
+        color: #b8b8b8 !important;
+    }
 
-def _build_fact_block(defect_results):
-    """[분석 결과]를 LLM이 스스로 판단하게 두지 않고, 파이썬이 이미 임계치(DEFECT_THRESHOLD)
-    기준으로 고위험/저위험을 판정해서 '사실'로 정리해 넘깁니다. 모델은 이 판정을 그대로
-    신뢰하기만 하면 되므로, 실측치와 무관하게 위험도를 과장/추측하는 할루시네이션을 줄입니다."""
-    if not isinstance(defect_results, dict) or not defect_results:
-        return (
-            f"[분석 결과]: {defect_results}\n"
-            "(진단/최적화 데이터가 없어 신뢰할 수 있는 분석을 수행할 수 없습니다. "
-            "이 경우 절대 추측하지 말고 '데이터 부족으로 판단 불가'라고만 답하세요.)"
-        )
+    /* ── 탭 시인성 ── */
+    .stTabs [data-baseweb="tab-list"] { border-bottom: 2px solid #3a3a3a; gap: 8px; }
+    .stTabs [data-baseweb="tab"], .stTabs button[data-baseweb="tab"], .stTabs [role="tab"] {
+        background-color: #171717 !important; border: 1px solid #3a3a3a !important;
+        border-bottom: none !important; border-radius: 8px 8px 0 0 !important;
+        color: #ececec !important; font-weight: 700 !important; opacity: 1 !important;
+        padding: 10px 22px !important;
+    }
+    .stTabs [data-baseweb="tab"] * { color: #ececec !important; opacity: 1 !important; }
+    .stTabs [aria-selected="true"], .stTabs button[aria-selected="true"] {
+        background-color: #3d2a0f44 !important; border-color: #ff9f1c !important; color: #ff9f1c !important;
+    }
+    .stTabs [aria-selected="true"] * { color: #ff9f1c !important; }
+    [data-baseweb="tab"] { opacity: 1 !important; }
+    /* ── Expander ── */
+    [data-testid="stExpander"] { border: 1px solid #3a3a3a !important; border-radius: 8px !important; background: #1c1c1c !important; margin-bottom: 6px !important; overflow: hidden !important; }
+    [data-testid="stExpander"] details { background: #1c1c1c !important; }
+    [data-testid="stExpander"] details[open] { background: #1c1c1c !important; }
+    .streamlit-expanderHeader, [data-testid="stExpander"] details summary { background: #1c1c1c !important; color: #d4d4d4 !important; font-weight: 600 !important; border: none !important; border-radius: 8px !important; padding: 12px 16px !important; }
+    [data-testid="stExpander"] details[open] summary { background: #2a1f0f !important; color: #ff9f1c !important; border-bottom: 1px solid #3a3a3a !important; border-radius: 8px 8px 0 0 !important; }
+    .streamlit-expanderHeader:focus, [data-testid="stExpander"] *:focus, [data-testid="stExpander"] summary:focus-visible { outline: none !important; box-shadow: none !important; }
+    .streamlit-expanderContent, [data-testid="stExpander"] details > div { background: #131313 !important; border-top: 1px solid #3a3a3a !important; border-radius: 0 0 8px 8px !important; }
 
-    threshold_pct = int(DEFECT_THRESHOLD * 100)
-    high_risk = {k: v for k, v in defect_results.items() if v >= DEFECT_THRESHOLD}
-    low_risk = {k: v for k, v in defect_results.items() if v < DEFECT_THRESHOLD}
-
-    def _fmt(d):
-        return ", ".join(
-            f"{TARGET_VARS.get(k, k)}: {v*100:.1f}%"
-            for k, v in sorted(d.items(), key=lambda x: -x[1])
-        )
-
-    lines = [
-        f"[사실 확인 - 아래는 파이썬이 이미 {threshold_pct}% 기준으로 판정을 마친 결과입니다. "
-        f"이 판정을 그대로 신뢰하고, 절대 재해석하거나 다른 결론을 새로 만들지 마세요]"
-    ]
-    if high_risk:
-        lines.append(f"- 위험(≥{threshold_pct}%) 불량 {len(high_risk)}개: {_fmt(high_risk)}")
-    else:
-        lines.append(
-            f"- 위험(≥{threshold_pct}%) 불량: 없음 (전체 불량이 기준치 미만입니다. "
-            "위험이 있는 것처럼 서술하거나 잠재적 위험을 추측하지 마세요.)"
-        )
-    if low_risk:
-        lines.append(f"- 안전(<{threshold_pct}%) 불량 {len(low_risk)}개: {_fmt(low_risk)}")
-    return "\n".join(lines)
-
-
-
-def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=False, show_spinner=True):
-    """
-    5번째 사진 스타일 모달 박스:
-    - 진행 중: 회전 아이콘 + 파란 메시지 + 진행 바 + % (하나의 박스)
-    - 완료 후: 녹색 체크 + 메시지 + 확인 버튼 (하나의 박스)
-    - backdrop으로 배경 클릭 완전 차단
-    """
-    _is_en_task = st.session_state.get('lang', 'en') == 'en'
-    if done_msg is None:
-        done_msg = "Done! Click OK to view the result." if _is_en_task else "완료되었습니다! 확인을 누르면 결과가 표시됩니다."
-    _state_key  = f"_modal_state_{task_key}"
-    _result_key = f"_modal_result_{task_key}"
-    st.session_state.setdefault(_state_key, "idle")
-    if trigger:
-        st.session_state[_state_key] = "running"
-    _state = st.session_state[_state_key]
-    if _state == "idle":
-        return None
-    if _state == "confirmed":
-        st.session_state[_state_key] = "idle"
-        return st.session_state.pop(_result_key, None)
-
-    _uid = task_key.replace("-", "_").replace(".", "_")
-    _BOX_W = 460
-
-    # ── 공통 스타일 + backdrop ──────────────────────────────────
-    st.markdown(f"""<style>
-    /* backdrop: body::before로 구현해 별도 div 태그 불필요 */
-    body::before {{
-        content:'';
-        position:fixed;top:0;left:0;width:100vw;height:100vh;
-        background:rgba(4,9,18,0.88);z-index:99990;
-        display:block;
-    }}
-    #mbox_{_uid} {{
-        position:fixed;top:50%;left:50%;
-        transform:translate(-50%,-50%);
-        z-index:99995;
-        background:#0d1525;
-        border:1px solid #1e3a5f;
-        border-radius:18px;
-        box-shadow:0 28px 90px rgba(0,0,0,0.95);
-        width:{_BOX_W}px;max-width:92vw;
-        box-sizing:border-box;
-        padding:44px 44px 40px 44px;
-        text-align:center;
-    }}
-    .modal_icon_{_uid} {{
-        font-size:2.6rem;
-        margin-bottom:18px;
-        display:block;
-    }}
-    .modal_msg_{_uid} {{
-        font-weight:700;
-        font-size:1.18rem;
-        line-height:1.5;
-        margin-bottom:4px;
-    }}
-    .modal_sub_{_uid} {{
-        color:#64748b;
-        font-size:0.82rem;
-        margin-top:8px;
-    }}
-    .mprog_track_{_uid} {{
-        width:100%;height:8px;
-        background:#1e293b;
-        border-radius:20px;
-        overflow:hidden;
-        margin:20px 0 8px 0;
-    }}
-    .mprog_fill_{_uid} {{
-        height:100%;border-radius:20px;
-        background:linear-gradient(90deg,#00e5ff,#10b981);
-        transition:width 0.4s ease;
-    }}
-    .mpct_{_uid} {{
-        color:#94a3b8;font-size:0.8rem;
-        margin-bottom:0;
-    }}
-    /* 확인 버튼 위치 고정 */
-    [data-modal-ok="{_uid}"] {{
-        position:fixed !important;
-        top:calc(50% + 90px) !important;
-        left:50% !important;
-        transform:translateX(-50%) !important;
-        width:{_BOX_W - 88}px !important;
-        max-width:calc(92vw - 88px) !important;
-        z-index:99996 !important;
-    }}
-    [data-modal-ok="{_uid}"] button {{
-        width:100% !important;
-        padding:16px !important;
-        font-size:1.05rem !important;
-        font-weight:700 !important;
-        border-radius:12px !important;
-        background:linear-gradient(135deg,#10b981,#059669) !important;
-        border:none !important;
-    }}
-    @keyframes mspin_{_uid} {{
-        0%   {{ transform:rotate(0deg);   }}
-        100% {{ transform:rotate(360deg); }}
-    }}
-    .mspinicon_{_uid} {{
-        display:inline-block;
-        animation:mspin_{_uid} 1.4s linear infinite;
-    }}
+    /* 전체 슬라이더 Min/Max 박스 위로 올리기 */
+    [data-testid="stSlider"] + div [data-testid="stNumberInput"],
+    div[data-testid="column"]:nth-child(2) [data-testid="stNumberInput"],
+    div[data-testid="column"]:nth-child(3) [data-testid="stNumberInput"] {
+        margin-top: -18px !important;
+    }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-    if _state == "waiting_confirm":
-        # ── 완료: 모달 박스 (아이콘 + 메시지) ──────────────────────
-        _ok_label = "OK" if _is_en_task else "확인"
-        _ok_key   = f"_modal_ok_{task_key}"
-
-        # 모달 박스: 아이콘 + 메시지만 (버튼 영역은 아래 여백으로 비워둠)
-        st.markdown(f"""
-        <div id="mbox_{_uid}">
-            <span class="modal_icon_{_uid}">✅</span>
-            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:80px;">{done_msg}</div>
-        </div>
-        <style>
-        /* Streamlit 확인 버튼을 모달 박스 하단 위에 완전히 겹치도록 고정 */
-        div[data-testid="stButton"]:has(> button[kind="primary"]) {{
-            position: fixed !important;
-            top: calc(50% + 60px) !important;
-            left: 50% !important;
-            transform: translateX(-50%) !important;
-            width: {_BOX_W - 88}px !important;
-            max-width: calc(92vw - 80px) !important;
-            z-index: 99999 !important;
-            pointer-events: all !important;
-        }}
-        div[data-testid="stButton"]:has(> button[kind="primary"]) > button {{
-            width: 100% !important;
-            padding: 18px 0 !important;
-            font-size: 1.08rem !important;
-            font-weight: 700 !important;
-            border-radius: 12px !important;
-            background: linear-gradient(135deg, #10b981, #059669) !important;
-            border: none !important;
-            cursor: pointer !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-        _confirmed = st.button(_ok_label, type="primary",
-                               use_container_width=True, key=_ok_key)
-        if _confirmed:
-            st.session_state[_state_key] = "confirmed"
-            st.rerun()
-        return None
-    else:
-        # ── 진행 중: 회전 아이콘 + 메시지 + 진행 바 ──────────────
-        _pct_val = st.session_state.get(f"_modal_pct_{task_key}", 0)
-        _sub_msg = st.session_state.get(f"_modal_sub_{task_key}",
-                   "Please wait..." if _is_en_task else "잠시 기다려 주세요...")
-        st.markdown(f"""
-        <div id="mbox_{_uid}">
-            <span class="modal_icon_{_uid}">
-                <span class="mspinicon_{_uid}">🔄</span>
-            </span>
-            <div class="modal_msg_{_uid}" style="color:#38bdf8;">{running_msg}</div>
-            <div class="mprog_track_{_uid}">
-                <div class="mprog_fill_{_uid}" style="width:{_pct_val}%;"></div>
-            </div>
-            <div class="mpct_{_uid}">{_pct_val}%</div>
-            <div class="modal_sub_{_uid}">{_sub_msg}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        _slot = st.empty()
-        with _slot:
-            if show_spinner:
-                with st.spinner(" "):
-                    _result = run_fn()
-            else:
-                _result = run_fn()
-        st.session_state[_result_key] = _result
-        st.session_state[_state_key] = "waiting_confirm"
-        st.rerun()
-        return None
-
-
-def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko", is_optimized=True):
-    try:
-        client = Groq(api_key=GROQ_API_KEY)
-
-        # 사전 지정 조치 사항 (한국어 원문을 기준으로 사용)
-        preset_text = ""
-        if PRESET_ACTIONS_KO:
-            preset_text = "\n\n[사전 지정 분석 항목 - 아래 항목들을 번호 순서대로 빠짐없이 먼저 분석하여 답변하세요]:\n"
-            preset_text += "\n".join(f"{i+1}. {item}" for i, item in enumerate(PRESET_ACTIONS_KO))
-
-        fact_block = _build_fact_block(defect_results)
-
-        # [파라미터]가 최적화 결과인지, 아직 최적화하지 않은 현재 진단 조건인지 명시
-        # (혼동 방지: 진단 조건을 최적화된 추천값처럼 서술하지 않도록)
-        params_label = "[최적화된 추천 파라미터]" if is_optimized else "[현재 진단 조건 파라미터 - 아직 최적화되지 않은 값입니다]"
-        params_note = (
-            "" if is_optimized else
-            "\n(주의: 아래 파라미터는 '조건 최적화'를 실행하기 전, 현재 설정된 진단 조건입니다. "
-            "최적화된 추천값이 아니므로, 리포트에서 이를 '최적화 결과'나 '추천 조건'처럼 서술하지 말고 "
-            "'현재 조건' 또는 '진단 조건'이라고 명확히 구분해서 표현하세요.)"
-        )
-
-        prompt_ko = f"""당신은 20년 경력의 사출 성형 공정 전문가입니다.
-
-{fact_block}
-
-{params_label}: {optimized_params}{params_note}{preset_text}
-
-<중요 - 반드시 지켜야 할 원칙>
-- 위 [사실 확인]에 없는 내용을 추측하거나 새로 만들어내지 마세요.
-- 확실하지 않은 내용은 "데이터 부족으로 판단 불가"라고 답하세요.
-- 본문에 등장하는 모든 수치(%, 값)는 위 [사실 확인]/{params_label}에 있는 값과 정확히 일치해야 하며,
-  임의로 새로운 수치를 만들거나 반올림 외의 방식으로 바꾸지 마세요.
-- 위험(≥{int(DEFECT_THRESHOLD*100)}%) 불량이 "없음"이라고 되어 있다면, 잠재적 위험이나 향후 가능성을
-  추측해서 서술하지 말고 사실 그대로만 전달하세요.
-- 사전 지정 분석 항목이 특정 조건(예: 위험도 {int(DEFECT_THRESHOLD*100)}% 이상인 불량의 존재)을
-  전제로 한다면, 실제로 그런 불량이 없을 경우 "해당 조건을 만족하는 불량이 없습니다"라고 명확히
-  밝히고 억지로 답을 만들어내지 마세요.
-
-위 [사전 지정 분석 항목]이 있다면 그 항목들을 번호 순서대로 절대 빠짐없이 전부 분석하여 답변한 뒤,
-마지막에 별도 섹션으로 "현장 작업자를 위한 핵심 조치 사항"을 정확히 {num_actions}개 작성하세요.
-(사전 지정 분석 항목과 최종 핵심 조치 사항은 서로 다른 별개의 항목이므로, 핵심 조치 사항이 {num_actions}개라고 해서
-사전 지정 분석 항목을 생략하거나 그 개수에 맞춰 줄이지 마세요.)
-반드시 한국어로만 답하세요. 생각 과정(thinking)은 출력하지 말고 최종 답변만 작성하세요."""
-
-        # ---------------------------------------------------------
-        # [변경] 언어별로 매번 독립적으로 리포트를 생성하면, 같은 데이터를 넣어도
-        # 모델이 호출마다 다시 추론하기 때문에 한국어/영어 리포트의 "결론 자체"가
-        # 달라질 수 있습니다(실제 확인됨). 이를 막기 위해 항상 한국어로 리포트를
-        # 1회만 생성한 뒤, 영어가 필요하면 그 결과를 그대로 "번역"만 하여 반환합니다.
-        # → 두 언어의 수치·결론·구조가 항상 100% 일치합니다.
-        # ---------------------------------------------------------
-        response_ko = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. "
-                        "영어를 절대 사용하지 마세요. 제공된 데이터에 없는 사실을 추측하거나 지어내지 마세요."
-                    )
-                },
-                {"role": "user", "content": prompt_ko}
-            ],
-            temperature=0,
-        )
-        report_ko = response_ko.choices[0].message.content
-
-        if lang != "en":
-            return report_ko
-
-        translate_prompt = f"""다음은 사출 성형 공정 AI 분석 리포트(한국어 원문)입니다. 이 내용을 영어로 정확하게 번역하세요.
-내용을 추가하거나 재해석하거나 결론을 바꾸지 마세요. 원문의 수치·사실·구조(표, 번호 목록, 소제목 등)를 그대로 유지한 채 번역만 하세요.
-
-[한국어 원문]
-{report_ko}"""
-
-        response_en = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a professional technical translator. Translate the given Korean text "
-                        "into English precisely and faithfully. Do not add, omit, reinterpret, or change "
-                        "any facts, numbers, or conclusions. Preserve the original structure (tables, "
-                        "numbered lists, headings) exactly. Respond only in English."
-                    )
-                },
-                {"role": "user", "content": translate_prompt}
-            ],
-            temperature=0,
-        )
-        report_en = response_en.choices[0].message.content
-        return report_en
-    except Exception as e:
-        err_prefix = "Report generation error: " if lang == "en" else "리포트 생성 오류: "
-        return f"{err_prefix}{str(e)}"
-
-
-# --- i18n 언어 사전 정의 ---
+# 3. 다국어 사전
 LANG_DICT = {
-    "en": {
-        "page_title": "Total Injection Defect AI Solution System",
-        "access_title": "Injection Molding AI System Access",
-        "enter_pwd": "Enter Password",
-        "connect_sys": "Connect System",
-        "invalid_pwd": "Invalid Password. Please try again.",
-        "data_mgmt": "Data Management",
-        "upload_1": "1. Current Optimal Conditions Data",
-        "upload_2": "2. Historical Cumulative Data",
-        "upload_3": "3. CAE Analysis Data",
-        "run_ai": "Run AI Learning & Solution",
-        "err_load": "Error loading file: ",
-        "err_vars": "Could not find 10 defect variables in the uploaded data.",
-        "warn_upload": "Please upload the Current Data (1) and either Historical (2) or CAE (3) data.",
-        "main_title_1": "Total Injection ",
-        "main_title_2": "AI Solution System",
-        "main_desc_txt": "Comprehensive Defect Diagnostic & Multi-Objective Optimization System (10 Key Defects)",
-        "main_desc": "Comprehensive Defect Diagnostic & Multi-Objective Optimization System v6.6 (10 Key Defects)",
-        "m_status": "System Status",
-        "m_vars": "Analyzed Variables",
-        "m_reliability": "Expert Reliability",
-        "m_opt": "Optimization Status / Algorithm",
-        "status_active": "Operational",
-        "status_standby": "Standby",
-        "info_standby": "Please upload the converted data in the sidebar and start AI learning.",
-        "tab_diag": "▶  Diagnostic & Optimization",
-        "tab_master": "▶  Master Data & Analytics",
-        "sec_a": "A. Current Injection Parameters",
-        "sec_b_expert": "B. Expert Recommended Condition Settings",
-        "sec_c_result": "C. Optimized Process Conditions",
-        "sec_d_diag": "C. Optimized Process Conditions",
-        "sec_d_weight": "D. Defect Weights",
-        "sec_e": "E. Feature Importance-based Diagnosis & AI Expert Report",
-        "sec_c": "B. Defect Weights",
-        "sec_c_sub2": "C. Expert Recommended Condition Settings",
-        "lbl_constant": "Select Variables to Keep Constant",
-        "lbl_target": " Target",
-        "lbl_expert_rel": "Expert Guideline Reliability (%)",
-        "sec_d": "D. Optimization & Intelligent Diagnosis",
-        "btn_diagnose": "Diagnose Current Risk",
-        "btn_optimize": "Optimize Conditions",
-        "opt_converged": "Converged",
-        "opt_failed": "Failed",
-        "dash_title": "AI Intelligent Dashboard",
-        "opt_success_msg": "AI Recommendation Derived Successfully",
-        "diag_success_msg": "Diagnosis Complete (based on current, not-yet-optimized conditions)",
-        "warn_need_diagnose": "⚠ To generate the AI Expert Report, please run 'Diagnose Current Risk' or 'Optimize Conditions' above first.",
-        "btn_ai_report": "▸ Generate AI Expert Report",
-        "report_box_title": "AI Expert Report",
-        "spinner_analyzing": "Analyzing...",
-        "btn_download": "Download Optimal Parameters (.csv)",
-        "db_save_empty": "No data available to save. Please run AI Learning first.",
-        "db_pc_download": "↓ Download Saved DB File to PC Directly",
-        "db_export_title": "▤ External Database Export",
-        "db_prepare_btn": "▸ Generate & Save DB Snapshot",
-        "db_prepared_msg": "Prepared File: ",
-        "db_current_latest": "✓ The file contains the latest data state.",
-        "learning_progress": "Target Model Learning",
-        "opt_progress": "Algorithm Search in Progress",
-        "opt_step_local": "Fine-tuning in progress",
-        "opt_step_global": "Global re-search in progress",
-        "opt_current_risk": "Current Risk",
-        "reliability_label": "Model Reliability (cross-validated)",
-        "reliability_na": "Not measurable (too few samples)",
-        "reliability_low_sample": "Low sample warning",
-        "reliability_samples": "samples",
-        "opt_step_label": "Step",
-        "btn_feature_guide": "Generate Feature Importance-based Process Diagnosis Guide",
-        "guide_title": "Process Improvement Guide (Result Diagnosis Report)",
-        "guide_subtitle": "Optimization Result Diagnosis Report",
-        "guide_pred_rel": "Prediction Reliability",
-        "guide_unachievable": "Unachievable",
-        "guide_out_of_spec": "Out of Spec",
-        "guide_normal": "Normal Achievement",
-        "guide_all_success": "All Targets Achieved Normally",
-        "guide_success_msg": "Based on the analysis of the current input data, all valid quality targets are predicted to perfectly reach the target specification range you set. You can apply the currently derived process conditions directly to the field.",
-        "guide_partial_msg": "Based on the analysis, some quality targets have a high risk of defect. Please review the recommended process conditions."
-    },
-    "ko": {
-        "page_title": "통합 사출 불량 AI 솔루션 시스템",
-        "access_title": "사출 성형 AI 시스템 접속",
-        "enter_pwd": "비밀번호 입력",
-        "connect_sys": "시스템 연결",
-        "invalid_pwd": "비밀번호가 올바르지 않습니다. 다시 시도해 주세요.",
-        "data_mgmt": "데이터 관리",
-        "upload_1": "1. 현재 최적 조건 데이터",
-        "upload_2": "2. 누적 이력 데이터",
-        "upload_3": "3. CAE 해석 데이터",
-        "run_ai": "학습 초기화 및 데이터 통합 학습 실행",
-        "err_load": "파일 로드 오류: ",
-        "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
-        "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
-        "main_title_1": "통합 사출 ",
-        "main_title_2": "AI 솔루션 시스템",
-        "main_desc_txt": "종합 불량 진단 및 다목적 최적화 시스템 (10대 핵심 불량)",
-        "main_desc": "종합 불량 진단 및 다목적 최적화 시스템 v6.6 (10대 핵심 불량)",
-        "m_status": "시스템 상태",
-        "m_vars": "분석된 변수",
-        "m_reliability": "전문가 신뢰도",
-        "m_opt": "최적화 상태 / 사용 알고리즘",
-        "status_active": "가동 중",
-        "status_standby": "대기 중",
-        "info_standby": "사이드바에 변환된 데이터를 업로드하고 AI 학습을 시작해 주세요.",
-        "tab_diag": "▶  진단 및 최적화",
-        "tab_master": "▶  마스터 데이터 & 분석",
-        "sec_a": "A. 현재 사출 조건 파라미터",
-        "sec_b_expert": "B. 전문가 추천 조건 설정",
-        "sec_c_result": "C. 최적 공정 조건",
-        "sec_d_diag": "C. 최적 공정 조건",
-        "sec_d_weight": "D. 불량 가중치",
-        "sec_e": "E. Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단",
-        "sec_c": "B. 불량 가중치",
-        "sec_c_sub2": "C. 전문가 추천 조건 설정",
-        "lbl_constant": "고정 상태를 유지할 변수 선택",
-        "lbl_target": " 목표치",
-        "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)",
-        "sec_d": "D. 최적화 및 지능형 진단",
-        "btn_diagnose": "현재 리스크 진단",
-        "btn_optimize": "역추론 최적화 탐색 실행",
-        "opt_converged": "수렴 완료",
-        "opt_failed": "최적화 실패",
-        "dash_title": "AI 지능형 대시보드",
-        "opt_success_msg": "AI 추천 조건 도출 완료",
-        "diag_success_msg": "진단 완료 (아직 최적화되지 않은 현재 조건 기준)",
-        "warn_need_diagnose": "⚠ AI 전문가 리포트를 생성하려면 먼저 위의 '현재 리스크 진단' 또는 '조건 최적화'를 실행해 주세요.",
-        "btn_ai_report": "▸ AI 전문가 리포트 생성",
-        "report_box_title": "AI 전문가 리포트",
-        "spinner_analyzing": "분석 중...",
-        "btn_download": "최적 파라미터 다운로드 (.csv)",
-        "db_save_empty": "저장할 데이터가 없습니다. 먼저 데이터 업로드 후 AI 가동을 완료해 주세요.",
-        "db_pc_download": "↓ 내보낸 DB 파일 PC로 직접 다운로드",
-        "db_export_title": "▤ 데이터베이스 외부 내보내기",
-        "db_prepare_btn": "▸ DB 스냅샷 생성 및 서버 저장",
+    "KO": {
+        "title": "JOINT 설계 & 공정 최적화   V1.5",
+        "console": "데이터 컨트롤",
+        "upload_title": "입력 데이터",
+        "upload_help": "신규 입력 데이터 파일 업로드 (CSV, XLSX, DB)",
+        "upload_hist_help": "기존 누적 DB 파일 업로드 (선택)",
+        "init_btn": "학습 초기화 및 데이터 통합 학습 실행",
+        "tab1": "Spec.(품질) 타겟팅 최적화",
+        "tab2": "설계 & 공정 변수 타겟팅 최적화",
+        "tab3": "마스터 데이터 & 분석",
+        "tab4": "실시간 최적화 결과 예측",
+        "bound_title": "경계 조건 최적화 도구",
+        "bound_mode": "안전 경계 제한 모드",
+        "kpi_title": "목표 품질 타겟 값 범위 설정",
+        "run_opt": "역추론 최적화 탐색 실행",
+        "pred_title": "예측 성능 분석",
+        "rec_title": "추천 공정 스펙 조건 (34개 입력 변수)",
+        "live_input": "실시간 가상 타겟 범위 설정 (What-If)",
+        "run_sim": "가상 역최적화 파라미터 도출",
+        "sim_title": "시뮬레이션 역산 도출 결과 (34개 공정 변수)",
+        "sim_pred_title": "도출 조건 기준 최종 예측 품질",
+        "engine_inactive": "학습 비활성화: 사이드바를 통해 입력 데이터를 업로드하십시오.",
+        "best_algo": "최적 선택 알고리즘",
+        "opt_conf": "목표 최적화 신뢰도",
+        "dl_format": "내보내기 파일 포맷 선택",
+        "dl_btn_spec": "추천 스펙 데이터 다운로드",
+        "dl_btn_pred": "예측 성능 데이터 다운로드",
+        "db_export_title": "💾 데이터베이스 외부 내보내기",
+        "db_prepare_btn": " DB 스냅샷 생성 및 서버 저장",
+        "db_current_latest": " 최신 데이터 상태가 파일에 이미 반영되어 있습니다.",
         "db_prepared_msg": "준비된 파일: ",
-        "db_current_latest": "✓ 최신 데이터 상태가 파일에 이미 반영되어 있습니다.",
-        "learning_progress": "타겟 값 모델 학습 중",
-        "opt_progress": "알고리즘 탐색 중",
-        "opt_step_local": "미세 정밀 조정 중",
-        "opt_step_global": "전역 재탐색 중",
-        "opt_current_risk": "현재 위험도",
-        "reliability_label": "모델 신뢰도(교차검증)",
-        "reliability_na": "측정 불가(표본 부족)",
-        "reliability_low_sample": "표본 부족 경고",
-        "reliability_samples": "개 표본",
-        "opt_step_label": "Step",
-        "btn_feature_guide": "Feature Importance 기반 공정 진단 가이드 생성",
-        "guide_title": "공정 개선 가이드 (결과 진단 리포트)",
-        "guide_subtitle": "최적화 결과 진단 리포트",
-        "guide_pred_rel": "예측 신뢰도",
-        "guide_unachievable": "달성 불가",
-        "guide_out_of_spec": "스펙 이탈",
-        "guide_normal": "정상 달성",
-        "guide_all_success": "전체 타겟 정상 달성",
-        "guide_success_msg": "현재 입력된 데이터를 바탕으로 분석한 결과, 모든 유효 품질 타겟(타겟 값)이 설정하신 목표 스펙 범위 내에 완벽하게 도달할 수 있는 것으로 예측되었습니다. 현재 도출된 공정 조건(추천 공정 스펙)을 현장에 바로 적용하셔도 좋습니다.",
-        "guide_partial_msg": "분석 결과 일부 품질 타겟에서 불량 위험도가 높게 나타났습니다. 도출된 공정 조건을 바탕으로 현장 적용 전 세밀한 검토가 필요합니다."
+        "db_pc_download": "📥 내보낸 DB 파일 PC로 직접 다운로드",
+        "db_save_empty": "저장할 데이터가 없습니다. 먼저 데이터 업로드 후 엔진 초기화를 완료해 주세요.",
+        "ai_title": " JOINT AI 공정 인사이트 가이드",
+        "ai_btn": "LLM 기반 공정 가이드라인 생성",
+        "ai_loading": "최적화 변수와 품질 타겟 값 데이터를 분석하여 팩토리 가이드를 생성 중입니다..."
+    },
+    "EN": {
+        "title": "JOINT PROCESS INTELLIGENCE",
+        "console": "CONTROL CONSOLE",
+        "upload_title": "Master Data Stream",
+        "upload_help": "Upload New Log File (CSV, XLSX, DB)",
+        "upload_hist_help": "Upload Existing History DB File (Optional)",
+        "init_btn": "RUN ENGINE INIT & DATA MERGE",
+        "tab1": "QUALITY SPEC. TARGETING",
+        "tab2": "DESIGN & PROCESS VAR. TARGETING",
+        "tab3": "MASTER DATA & ANALYTICS",
+        "tab4": "REAL-TIME OPTIMIZATION PREDICTION",
+        "bound_title": "Boundary Condition Optimizer",
+        "bound_mode": "Safety Bound Limit Mode",
+        "kpi_title": "Target Quality KPIs Range Configurator",
+        "run_opt": "RUN INVERSE INFERENCE SEARCH",
+        "pred_title": "Predicted Performance Analysis",
+        "rec_title": "Recommended Process Specifications (34 Variables)",
+        "live_input": "Real-time Virtual Target Range Configurator (What-If)",
+        "run_sim": "EXECUTE VIRTUAL INVERSE OPTIMIZATION",
+        "sim_title": "Inversed Simulation Results (34 Process Variables)",
+        "sim_pred_title": "Final Predicted Quality via Inversed Specs",
+        "engine_inactive": "CORE ENGINE INACTIVE: Please upload log data via sidebar.",
+        "best_algo": "Selected Best Algorithm",
+        "opt_conf": "Target Optimization Confidence",
+        "dl_format": "Select Export File Format",
+        "dl_btn_spec": "DOWNLOAD RECOMMENDED SPECS",
+        "dl_btn_pred": "DOWNLOAD PREDICTED PERFORMANCE",
+        "db_export_title": "💾 External Database Export",
+        "db_prepare_btn": " Generate & Save DB Snapshot",
+        "db_current_latest": " The file contains the latest data state.",
+        "db_prepared_msg": "Prepared File: ",
+        "db_pc_download": "📥 Download Saved DB File to PC Directly",
+        "db_save_empty": "No data available to save. Please run Engine Initialization first.",
+        "ai_title": " JOINT AI Process Insight Guidance",
+        "ai_btn": "Generate LLM-based Process Guidelines",
+        "ai_loading": "Analyzing optimized variables and quality KPI data to generate factory guidance..."
     }
 }
 
-# 0. 페이지 설정
-st.set_page_config(layout="wide", page_title="Total Injection Defect AI Solution System")
-
 if "lang" not in st.session_state:
-    st.session_state.lang = "ko"
+    st.session_state["lang"] = "KO"
 
-L = LANG_DICT[st.session_state.lang]
+LOGIN_TEXT = {
+    "KO": {
+        "badge": "JOINT AI SYSTEM",
+        "title": "AI 머신러닝을 이용한 JOINT 설계 & 공정 최적화",
+        "pwd_label": "비밀번호 입력",
+        "auth_btn": "시스템 접속",
+        "invalid": "비밀번호가 올바르지 않습니다.",
+        "expired": "임시 비밀번호 사용 기간이 만료되었습니다.",
+        "owner_only": "소유자 비번은 사용할 수 없습니다.",
+        "enter_pwd_warn": "비번을 입력하세요.",
+        "no_expiry": "무기한 사용 가능",
+        "expires_in": "잔여 사용기간: ",
+        "access_expired": "사용 기간 만료",
+        "temp_mgr_title": "임시 비번 관리",
+        "new_temp_pwd": "새 임시 비번",
+        "expiry_period": "유효기간",
+        "add_btn": "추가",
+        "added_msg": "추가됨: ",
+        "registered_pwds": "등록된 임시 비번",
+        "no_registered": "등록된 임시 비번 없음",
+        "left_label": "잔여",
+        "expired_label": "만료됨",
+        "unlimited_label": "무기한",
+        "exp_1d": "1일", "exp_3d": "3일", "exp_7d": "7일", "exp_30d": "30일", "exp_none": "무기한"
+    },
+    "EN": {
+        "badge": "JOINT AI SYSTEM",
+        "title": "Joint Design and Process Optimization using AI Machine Learning",
+        "pwd_label": "Enter Password",
+        "auth_btn": "Authenticate",
+        "invalid": "Invalid credentials.",
+        "expired": "This temporary password has expired.",
+        "owner_only": "Cannot use owner password.",
+        "enter_pwd_warn": "Enter a password.",
+        "no_expiry": "No Expiry",
+        "expires_in": "Expires in: ",
+        "access_expired": "Access Expired",
+        "temp_mgr_title": "Temp Password Manager",
+        "new_temp_pwd": "New Temp Password",
+        "expiry_period": "Expires in",
+        "add_btn": "Add",
+        "added_msg": "Added: ",
+        "registered_pwds": "Registered Passwords",
+        "no_registered": "No temp passwords.",
+        "left_label": "Left",
+        "expired_label": "Expired",
+        "unlimited_label": "No Expiry",
+        "exp_1d": "1 Day", "exp_3d": "3 Days", "exp_7d": "7 Days", "exp_30d": "30 Days", "exp_none": "No Expiry"
+    }
+}
 
+# 4. 인증 시스템
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "temp_pwd_list" not in st.session_state:
@@ -678,58 +482,79 @@ if "temp_pwd_list" not in st.session_state:
 if "is_owner" not in st.session_state:
     st.session_state.is_owner = False
 
+OWNER_PWD = "nt1234"  # 소유자 비번 (항상 유효)
+
+def _check_temp_pwd(p):
+    """임시 비번 유효성 검사 — 파일에서 항상 최신 목록 확인"""
+    _fresh = _load_temp_pwds()
+    st.session_state.temp_pwd_list = _fresh
+    info = _fresh.get(p)
+    if info is None:
+        return False
+    if info['expires'] is None:  # 만료일 없음 = 무기한
+        return True
+    return datetime.now() < info['expires']
+
 if not st.session_state.authenticated:
-    st.markdown("""
-        <style>
-        .stApp { background-color: #0b0c10 !important; color: #e1e1e1 !important; }
-        h2 { color: #1e88e5 !important; font-weight: 800 !important; }
-        .stTextInput label p { color: #FFFFFF !important; font-size: 1.1rem !important; font-weight: 600 !important; }
-        .stButton>button {
-            background: linear-gradient(180deg, #1e88e5 0%, #1565c0 100%) !important;
-            color: #FFFFFF !important;
-            font-weight: 700 !important;
-            border: 1px solid #1976d2 !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    col_space, col_lang = st.columns([9, 1])
-    with col_lang:
-        _lang_opt = ["KO", "EN"]
-        _cur_lang = "KO" if st.session_state.lang == "ko" else "EN"
-        _sel_lang = st.selectbox("🌐", _lang_opt,
-            index=_lang_opt.index(_cur_lang),
-            label_visibility="collapsed", key="lang_sel_auth")
-        if (_sel_lang == "KO") != (st.session_state.lang == "ko"):
-            st.session_state.lang = "ko" if _sel_lang == "KO" else "en"
-            st.rerun()
-
-    _, center, _ = st.columns([0.5, 2, 0.5])
+    _, center, _ = st.columns([1, 1.8, 1])
     with center:
-        # 로그인 화면 로고 — 왼쪽 정렬
-        _login_logo = "<img src='data:image/png;base64,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' style='width:160px;object-fit:contain;'>"
-        st.markdown('<div style="text-align:left;margin-bottom:12px;padding-top:8px;">' + _login_logo + '</div>', unsafe_allow_html=True)
-        st.markdown(f"<br><h2 style='text-align: center;'>{L['access_title']}</h2>", unsafe_allow_html=True)
-        # ── 비밀번호 설정 ──────────────────────────────────
-        OWNER_PWD  = "nt1234"          # 소유자 비번 (항상 유효)
+        st.markdown("<div style='height:40px;'></div>", unsafe_allow_html=True)
 
-        # 임시 비번은 st.session_state에 저장 (앱 재시작 시 초기화됨)
-        # 영구 보존 원할 시 shelve/파일로 대체 가능
-        if 'temp_pwd_list' not in st.session_state:
-            st.session_state.temp_pwd_list = {}  # {비번: 만료일(datetime)}
+        # 언어 선택 - 배경 밝은 회색, 글자 검정
+        st.markdown("""<style>
+            div[data-testid="stSelectbox"] > div > div {
+                background-color: #ececec !important;
+                color: #262626 !important;
+                border-color: #d4d4d4 !important;
+            }
+            div[data-testid="stSelectbox"] > div > div > div {
+                color: #262626 !important;
+            }
+            div[data-baseweb="select"] > div {
+                background-color: #ececec !important;
+                border-color: #d4d4d4 !important;
+            }
+            div[data-baseweb="select"] span {
+                color: #262626 !important;
+            }
+        </style>""", unsafe_allow_html=True)
 
-        def _check_temp_pwd(p):
-            """임시 비번 유효성 검사 — session_state 목록 기준 (만료일 갱신 없음)"""
-            # session_state의 기존 목록 사용 (재로드 금지 — 재로드 시 만료일이 초기화됨)
-            info = st.session_state.temp_pwd_list.get(p)
-            if info is None:
-                return False
-            if info['expires'] is None:  # 만료일 없음 = 무기한
-                return True
-            return datetime.now() < info['expires']
+        _, lang_select_col = st.columns([5, 1.1])
+        with lang_select_col:
+            lang_display_options = ["KO", "EN"]
+            current_display = st.session_state["lang"]
+            lang_choice_login = st.selectbox(
+                "Language", lang_display_options,
+                index=lang_display_options.index(current_display),
+                label_visibility="collapsed",
+                key="login_lang_select"
+            )
+            new_lang = lang_choice_login
+            if new_lang != st.session_state["lang"]:
+                st.session_state["lang"] = new_lang
+                st.rerun()
 
-        pwd = st.text_input(L['enter_pwd'], type="password")
-        if st.button(L['connect_sys']):
+        LT = LOGIN_TEXT[st.session_state["lang"]]
+
+        # 제목 박스 - 세로 2/3 축소 (padding 44px→22px)
+        st.markdown(
+            f"""<div class='glass-card' style='text-align:center; padding:22px 36px; margin-top:12px;'>
+                <div style='color:#ff9f1c; font-size:0.78rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:8px;'>{LT['badge']}</div>
+                <h2 style='color:#f2f2f2; font-size:1.35rem; font-weight:600; line-height:1.4; margin:0 0 4px 0;'>{LT['title']}</h2>
+                <div style='width:56px; height:2px; background:#10b981; margin:12px auto 0 auto;'></div>
+            </div>""",
+            unsafe_allow_html=True
+        )
+
+        _pw_col, _btn_col = st.columns([4, 1])
+        with _pw_col:
+            pwd = st.text_input(LT['pwd_label'], type="password",
+                                label_visibility="collapsed",
+                                placeholder=LT['pwd_label'])
+        with _btn_col:
+            _login_btn = st.button(LT['auth_btn'], type="primary",
+                                   use_container_width=True)
+        if _login_btn:
             if pwd == OWNER_PWD:
                 st.session_state.authenticated = True
                 st.session_state.is_owner = True
@@ -740,795 +565,1580 @@ if not st.session_state.authenticated:
                 st.session_state.logged_temp_pwd = pwd
                 st.rerun()
             else:
-                st.error(L['invalid_pwd'])
-
-
+                st.error(LT['invalid'])
     st.stop()
 
+col_title, col_lang = st.columns([8, 1])
+with col_lang:
+    lang_choice = st.selectbox("🌐 Lang", ["KO", "EN"], index=0 if st.session_state["lang"] == "KO" else 1, label_visibility="collapsed")
+    if lang_choice != st.session_state["lang"]:
+        st.session_state["lang"] = lang_choice
+        st.rerun()
 
-# 10대 사출 불량 마스터 변수 정의
-TARGET_VARS = {
-    'Short_Shot': 'Short Shot (Short_Shot)',
-    'Flash': 'Flash / Burr (Flash)',
-    'Sink_Mark': 'Sink Mark / Shrinkage (Sink_Mark)',
-    'Weld': 'Weld Line (Weld)',
-    'Flow_Mark': 'Flow Mark (Flow_Mark)',
-    'Silver_Streak': 'Silver Streak (Silver_Streak)',
-    'Jetting': 'Jetting (Jetting)',
-    'Burn_Mark': 'Burn Mark (Burn_Mark)',
-    'Void': 'Void (Void)',
-    'Warpage': 'Warpage (Warpage)'
+L_G = LANG_DICT[st.session_state["lang"]]
+
+# 5. 입력 변수 및 타겟 정의 (ABAMS, RBAMS 추가됨)
+X_list = [
+    'CID', 'CIDP', 'CID1', 'CID2', 'CID3', 'CID4', 'COD1', 'COD2', 'CODC',
+    'CH1', 'CH2', 'CH3', 'CH4', 'CH5', 'CH6',
+    'BSD', 'BSR', 'BSRA', 'BSRT', 'BSH', 'BSRD',
+    'BROD1', 'BROD2', 'BROD3', 'BROD4', 'BROD5', 'BRFD',
+    'BRH1', 'BRT', 'BRH2', 'BRH3', 'BRH4', 'BROR', 'BRFT',
+    'SR', 'SCH', 'SIH', 'SD1', 'SD2', 'SH1', 'SP', 'SH2', 'SF', 'COHA'
+]
+target_vars = ['BT', 'RT', 'AGB', 'RGB', 'AGA', 'RGA', 'AGI', 'RGI', 'ABAMS', 'RBAMS', 'ASBPI', 'ASAPI', 'AFG', 'RSBPI', 'RSAPI', 'RFG']
+
+# 기본 Spec 가이드 텍스트 (ABAMS, RBAMS 스펙 25.0 ~ 100.0 수정)
+def generate_combined_report(process_specs, predicted_kpis, feasibility_info,
+                              confidence_score, mode="Optimization", range_key_prefix=''):
+    """
+    Feature Importance 기반 진단 + LLM 가이드라인을 하나의 보고서로 통합 생성.
+    1단계: generate_diagnosis_guide()로 FI 분석 텍스트 생성
+    2단계: FI 분석 결과를 LLM 프롬프트에 포함하여 더 풍부한 가이드라인 생성
+    3단계: 두 결과를 하나의 보고서로 합쳐서 반환
+    """
+    is_en = st.session_state.get('lang', 'KO') == 'EN'
+
+    # ── 1단계: FI 기반 진단 ────────────────────────────────────────
+    fi_guide = generate_diagnosis_guide(
+        feasibility_info=feasibility_info,
+        predicted_kpis=predicted_kpis,
+        opt_result_x=None,
+        confidence_score=confidence_score,
+        range_key_prefix=range_key_prefix
+    )
+
+    # ── 2단계: FI 진단 요약을 LLM 프롬프트에 추가 ──────────────────
+    api_key = None
+    try:
+        if "GROQ_API_KEY" in st.secrets:
+            api_key = st.secrets["GROQ_API_KEY"]
+    except Exception:
+        api_key = None
+    if not api_key:
+        api_key = os.environ.get("GROQ_API_KEY")
+
+    if not api_key:
+        # LLM 없이 FI 진단만 반환
+        if is_en:
+            return fi_guide + "\n\n---\n⚠️ LLM API key not configured — only FI-based diagnosis is provided."
+        return fi_guide + "\n\n---\n⚠️ LLM API 키 미설정 — FI 기반 진단만 제공됩니다."
+
+    client = Groq(api_key=api_key)
+
+    # 개선③: 모든 수치를 소수점 3자리로 통일
+    specs_str = "\n".join([
+        f"  - {k} [{VAR_GLOSSARY.get(k, 'No definition' if is_en else '정의 없음')}]: {v:.3f}"
+        for k, v in process_specs.items()
+    ])
+
+    # 개선②: 데이터 범위(외삽) 초과 변수 사전 계산 — AI가 임의 판단하지 않고 이 목록을 그대로 인용
+    extrapolation_items = []
+    for k, v in process_specs.items():
+        try:
+            _rng = db.get(k)
+        except Exception:
+            _rng = None
+        if _rng is not None:
+            _lo_x, _hi_x = _rng
+            if v < _lo_x or v > _hi_x:
+                extrapolation_items.append((k, v, _lo_x, _hi_x))
+    if extrapolation_items:
+        if is_en:
+            extrapolation_str = "\n".join([
+                f"  - {k}: current value {v:.3f} is outside the training data range ({lo:.3f} ~ {hi:.3f}) — extrapolation risk"
+                for k, v, lo, hi in extrapolation_items
+            ])
+        else:
+            extrapolation_str = "\n".join([
+                f"  - {k}: 현재값 {v:.3f}이(가) 학습 데이터 범위({lo:.3f} ~ {hi:.3f})를 벗어남 — 외삽 위험"
+                for k, v, lo, hi in extrapolation_items
+            ])
+    else:
+        extrapolation_str = ("None — all variables are within the training data range." if is_en
+                              else "없음 — 모든 변수가 학습 데이터 범위 내에 있습니다.")
+
+    kpis_lines = []
+    spec_ok_list, spec_warn_list, spec_na_list = [], [], []
+    for k, v in predicted_kpis.items():
+        if v is None:
+            continue
+        # 화면에 표시되는 값과 일치시키기 위해, 사용자가 현재 설정한 Range를 우선 사용
+        # (없으면 고정 기본 스펙 SPEC_GUIDE로 대체)
+        _cur_range_k = st.session_state.get(f'{range_key_prefix}{k.lower()}_s_val')
+        if _cur_range_k is not None:
+            spec_range = f"{float(_cur_range_k[0]):.3f}~{float(_cur_range_k[1]):.3f}"
+        else:
+            spec_range = SPEC_GUIDE.get(k, "N/A")
+        glossary   = TARGET_GLOSSARY.get(k, k)
+        na_tgts    = st.session_state.get('na_spec_targets', [])
+        if k in na_tgts or spec_range == "N/A" or "~" not in spec_range:
+            spec_na_list.append(k)
+            if is_en:
+                kpis_lines.append(f"  - {k} [{glossary}]: {v:.3f}  (Spec: N/A — excluded from optimization)")
+            else:
+                kpis_lines.append(f"  - {k} [{glossary}]: {v:.3f}  (스펙: N/A — 최적화 제외)")
+        else:
+            lo, hi = map(float, spec_range.split("~"))
+            in_spec = lo <= v <= hi
+            margin_lo, margin_hi = v - lo, hi - v
+            (spec_ok_list if in_spec else spec_warn_list).append(k)
+            if is_en:
+                status = "Pass" if in_spec else "Fail"
+                kpis_lines.append(
+                    f"  - {k} [{glossary}]: {v:.3f}  "
+                    f"(Spec: {spec_range} / Judgement: {status} / "
+                    f"Lower margin: {margin_lo:+.3f}, Upper margin: {margin_hi:+.3f})"
+                )
+            else:
+                status = "적합" if in_spec else "이탈"
+                kpis_lines.append(
+                    f"  - {k} [{glossary}]: {v:.3f}  "
+                    f"(스펙: {spec_range} / 판정: {status} / "
+                    f"하한여유: {margin_lo:+.3f}, 상한여유: {margin_hi:+.3f})"
+                )
+    kpis_str = "\n".join(kpis_lines)
+
+    # FI 진단 핵심 요약 (LLM에 전달)
+    fi_summary_lines = []
+    for line in fi_guide.split("\n"):
+        if any(k in line for k in ['####', '| ', 'GAP', '우선 조정', 'Priority', 'Feature Importance', '권장', '경로', 'Path', '예측값', 'Predicted', '스펙 이탈', 'Out-of-Spec', '달성 불가', 'Infeasible']):
+            fi_summary_lines.append(line)
+    fi_summary = "\n".join(fi_summary_lines[:40])  # 최대 40줄만 전달
+
+    # 개선①: Tab1(역방향)/Tab2(순방향) 방향성을 명확히 구분
+    if is_en:
+        mode_desc = {
+            "Optimization": "recommended process specs derived via inverse optimization (backward: quality target → process variables)",
+            "Simulation":   "process variables derived via forward search within a user-defined design/process variable range (forward: process variables → quality check)"
+        }.get(mode, "process optimization result")
+        direction_term = "inverse optimization (backward)" if mode == "Optimization" else "forward search"
+    else:
+        mode_desc = {
+            "Optimization": "역최적화 알고리즘으로 도출한 추천 공정 스펙 결과 (역방향: 품질 타겟 → 설계/공정 변수)",
+            "Simulation":   "설계/공정 변수 목표 범위 내에서 순방향 탐색으로 도출한 결과 (순방향: 설계/공정 변수 → 품질 확인)"
+        }.get(mode, "공정 최적화 결과")
+        direction_term = "역최적화(역방향)" if mode == "Optimization" else "순방향 탐색"
+
+    doc_no = f"JOINT-OPS-CABJ-{datetime.now().strftime('%Y%m%d')}-001"
+    today  = datetime.now().strftime("%B %d, %Y") if is_en else datetime.now().strftime("%Y년 %m월 %d일")
+
+    if is_en:
+        system_instruction = (
+            "You are an AI assistant specialized in process engineering, embedded in the JOINT AI - Process "
+            "Optimization Suite. You are trained on VOLVO SPA1/2 CABJ (ball stud joint) swaging assembly "
+            "process data, and support two directions of analysis: "
+            "Tab1 (backward: derive a design/process variable combination via inverse optimization that "
+            "satisfies a quality target) and Tab2 (forward: search for a combination that satisfies the "
+            f"quality spec within a user-defined design/process variable target range). "
+            f"The current analysis mode is **{mode}** ({direction_term}) — use only terminology consistent "
+            "with this direction; do not mix the two.\n\n"
+            "Report writing rules:\n"
+            "1. Do not extend beyond the provided data with general knowledge or other parts.\n"
+            "2. Write in English, in a professional working-report format. Make active use of headers, "
+            "subheadings, and tables.\n"
+            "3. Do not use strikethrough (~~text~~); use bold (**text**) only for emphasis.\n"
+            "4. Always include numeric evidence, and write each section in sufficient detail.\n"
+            "5. When Feature Importance analysis results are provided, actively use them to explain causal "
+            "relationships.\n"
+            "6. Round all numeric values to exactly 3 decimal places (e.g., 5.288, 0.062) consistently "
+            "throughout the report.\n"
+            "7. Use markdown tables (with '|') only for tabular data — do not mix bullet lists and tables "
+            "for the same content.\n"
+            "8. If any variable is flagged as being outside the training data range (extrapolation), you "
+            "must explicitly warn about it — do not judge extrapolation risk yourself; cite the "
+            "'Out-of-range (extrapolation) variables' list provided below exactly as given."
+        )
+    else:
+        system_instruction = (
+            "당신은 JOINT AI - Process Optimization Suite에 내장된 공정 엔지니어링 전문 AI 어시스턴트입니다. "
+            "VOLVO SPA1/2 CABJ(볼스터드 조인트) 스웨이징 조립 공정 데이터를 학습하여, "
+            "Tab1(역방향: 품질 타겟값을 만족하는 설계/공정 변수 조합을 역최적화로 도출)과 "
+            "Tab2(순방향: 설계/공정 변수 타겟 값 범위 내에서 품질 스펙을 만족하는 조합을 탐색)를 지원하는 시스템입니다. "
+            f"현재 분석 모드는 **{mode}**({direction_term})이며, 이 방향에 맞는 용어만 사용하고 두 방향을 혼용하지 마세요.\n\n"
+            "보고서 작성 규칙:\n"
+            "1. 제공된 데이터 외 일반 지식이나 다른 부품으로 확장하지 마세요.\n"
+            "2. 한국어, 전문 실무형 보고서 형식으로 작성하세요. 헤더·소제목·표를 적극 활용하세요.\n"
+            "3. 한자(漢字)는 절대 사용하지 마세요. 순수 한글과 영문 약어/숫자만 사용하세요.\n"
+            "4. 취소선(~~텍스트~~)은 사용하지 말고, 강조는 굵게(**텍스트**)만 사용하세요.\n"
+            "5. 수치 근거를 반드시 포함하고, 각 섹션을 충분히 상세하게 작성하세요.\n"
+            "6. Feature Importance 분석 결과가 제공되면 이를 적극 활용하여 인과 관계를 설명하세요.\n"
+            "7. 모든 수치는 소수점 셋째 자리까지 통일하여 표기하세요 (예: 5.288, 0.062).\n"
+            "8. 표는 반드시 '|' 기준 markdown 표만 사용하고, 같은 내용에 표와 불릿을 섞지 마세요.\n"
+            "9. 데이터 범위를 벗어나는(외삽) 변수가 있으면 반드시 명시적으로 경고하세요 — 임의로 판단하지 말고 "
+            "아래 제공된 '데이터 범위 초과(외삽) 변수' 목록을 그대로 인용하세요."
+        )
+
+    if is_en:
+        prompt = f"""## JOINT AI Integrated Process Analysis Report: CABJ Swaging Assembly Process
+Document No.: {doc_no}  Date: {today}  Analysis Mode: {mode}
+Prepared by: JOINT AI Process Engineering Assistant
+
+---
+
+[Analysis Mode] {mode} — {mode_desc}
+
+[Recommended Process Variable Specs (34 part dimension variables)]
+{specs_str}
+
+[Out-of-range (extrapolation) variables — cite this list exactly, do not judge yourself]
+{extrapolation_str}
+
+[Predicted Quality Target Values and Spec Conformance]
+{kpis_str}
+
+Passing targets: {', '.join(spec_ok_list) if spec_ok_list else 'None'}
+Out-of-spec/warning targets: {', '.join(spec_warn_list) if spec_warn_list else 'None'}
+Spec N/A (excluded from optimization): {', '.join(spec_na_list) if spec_na_list else 'None'}
+
+[Feature Importance Pre-Diagnosis Results (reference)]
+{fi_summary}
+
+---
+
+[Writing Request — include and elaborate all sections below]
+
+**[3-line summary]**
+Before section 1, write a concise 3-line summary containing only the core conclusions (overall achievement status, most critical variable, one key recommendation).
+
+1. **Result Summary** (3-5 sentences)
+   - Overall characteristics of the derived process specs, summary of predicted KPI achievement
+   - State the number of passing/failing KPIs out of the total
+
+2. **KPI Conformance Assessment** (table format)
+   Write as: KPI item | Predicted value | Normal spec range | Conformance | Notes (e.g., near lower/upper bound, extrapolation risk).
+   - Mention specific figures for KPIs near the lower/upper bound.
+   - Explicitly state if there is a model extrapolation risk, using the extrapolation list provided above.
+
+3. **Process Variables Requiring Attention** (top 3-5, based on Feature Importance)
+   - Explain the physical mechanism by which each variable affects quality.
+   - Example: COHB/COHA → swaging depth → joint clamping force → effect on BT/RT/ABAMS
+
+4. **Field Application Recommendations** (3 items, with specific figures)
+   - Priority for swaging process precision control
+   - Strengthened dimensional tolerance control for key parts (ball stud, seat, bearing)
+   - Real-time KPI monitoring and feedback plan
+
+5. **Risks and Limitations**
+   - Specific risk factors to check before trusting this result: data-sparse regions, extrapolated variables, targets with lower model accuracy, etc.
+   - Be concrete and reference the extrapolation list and any infeasible/out-of-spec targets from the FI diagnosis above.
+
+6. **Next-Step Action Plan**
+   - A concrete execution plan for physical validation: which variables to test first, in what order, and why.
+   - Tie this back to the "priority variables to review" identified in the Feature Importance diagnosis above."""
+    else:
+        prompt = f"""## JOINT AI 통합 공정 분석 보고서: CABJ 스웨이징 조립 공정
+문서 번호: {doc_no}  작성일: {today}  분석 모드: {mode}
+작성자: JOINT AI Process Engineering Assistant
+
+---
+
+[분석 모드] {mode} — {mode_desc}
+
+[추천 공정 변수 스펙 (34개 단품 치수 변수)]
+{specs_str}
+
+[데이터 범위 초과(외삽) 변수 — 아래 목록을 그대로 인용하고 임의 판단하지 마세요]
+{extrapolation_str}
+
+[예측 품질 타겟 값 및 스펙 적합성]
+{kpis_str}
+
+적합 타겟: {', '.join(spec_ok_list) if spec_ok_list else '없음'}
+이탈/주의 타겟: {', '.join(spec_warn_list) if spec_warn_list else '없음'}
+스펙 N/A (최적화 제외): {', '.join(spec_na_list) if spec_na_list else '없음'}
+
+[Feature Importance 기반 사전 진단 결과 (참고)]
+{fi_summary}
+
+---
+
+[작성 요청 — 아래 섹션을 모두 포함하여 상세히 작성하세요]
+
+**[3줄 요약]**
+1번 섹션 앞에, 핵심 결론만 담은 3줄 요약(전체 달성 현황, 가장 중요한 변수, 핵심 권장사항 1가지)을 작성하세요.
+
+1. **결과 요약** (3~5문장)
+   - 도출된 공정 스펙의 전반적 특성, 예측 KPI 달성 현황 종합 요약
+   - 전체 KPI 중 적합/이탈 개수 명시
+
+2. **KPI 적합성 평가** (표 형식)
+   KPI항목 | 예측값 | 정상스펙범위 | 적합성 | 비고(하한치근접·외삽위험 등) 형태로 작성하세요.
+   - 하한/상한치에 근접한 KPI는 구체적 수치를 언급하세요.
+   - 모델 외삽(Extrapolation) 위험이 있는 경우, 위에 제공된 외삽 변수 목록을 활용해 명시하세요.
+
+3. **주의가 필요한 공정 변수** (상위 3~5개, Feature Importance 기반)
+   - 각 변수가 품질에 미치는 물리적 영향 메커니즘을 설명하세요.
+   - 예: COHB/COHA → 스웨이징 깊이 → 조인트 체결력 → BT/RT/ABAMS 영향
+
+4. **현장 적용 권장사항** (3가지, 구체적 수치 포함)
+   - 스웨이징 공정 정밀도 관리 우선순위
+   - 핵심 단품(볼스터드·시트·베어링) 치수 공차 관리 강화
+   - KPI 실시간 모니터링 및 피드백 방안
+
+5. **리스크 및 한계**
+   - 이 결과를 신뢰하기 전에 확인해야 할 구체적 위험 요소: 데이터 부족 구간, 외삽 변수, 모델 정확도가 낮은 타겟 등
+   - 위의 외삽 변수 목록과 FI 진단의 달성 불가/스펙 이탈 타겟을 구체적으로 인용하세요.
+
+6. **다음 단계 액션 플랜**
+   - 실물 검증 시 어떤 변수를 어떤 순서로, 왜 우선 테스트할지 구체적 실행 계획을 제시하세요.
+   - 위 Feature Importance 진단의 '우선 조정 검토 변수'와 연결하여 작성하세요."""
+
+    try:
+        priority = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama-3.1-8b-instant']
+        target_model = priority[0]
+        try:
+            available_models = [m.id for m in client.models.list().data]
+            target_model = next((m for m in priority if m in available_models),
+                               available_models[0] if available_models else priority[0])
+        except Exception:
+            pass
+
+        response = client.chat.completions.create(
+            model=target_model,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user",   "content": prompt}
+            ],
+            temperature=0.25,
+            max_tokens=4096
+        )
+        llm_text = response.choices[0].message.content
+        llm_text = re.sub(r'~~(.*?)~~', r'\1', llm_text)
+        llm_text = re.sub(r'[\u4e00-\u9fff]+', '', llm_text)
+        llm_text = re.sub(r'[ \t]{2,}', ' ', llm_text)
+
+    except Exception as e:
+        err = str(e)
+        if "429" in err:
+            llm_text = ("⏳ API usage limit reached. Please try again shortly." if is_en
+                        else "⏳ API 사용량이 많습니다. 잠시 후 다시 시도해 주세요.")
+        else:
+            llm_text = f"❌ LLM Error: {err}" if is_en else f"❌ LLM 오류: {err}"
+
+    # ── 3단계: 두 결과 통합 ────────────────────────────────────────
+    fi_section_header = "## □ Feature Importance-based Process Diagnosis (Detailed)" if is_en else "## □ Feature Importance 기반 공정 진단 상세 분석"
+    combined = (
+        f"{llm_text}\n\n"
+        f"---\n\n"
+        f"{fi_section_header}\n\n"
+        f"{fi_guide}"
+    )
+    return combined
+
+
+spec_limits = {
+    'BT': (0.0, 8.0), 'RT': (0.0, 4.0), 'AGB': (0.0, 0.3),
+    'RGB': (0.0, 0.4), 'AGA': (0.0, 1.0), 'RGA': (0.0, 1.0),
+    'AGI': (0.0, 1.0), 'RGI': (0.0, 1.0),
+    'ABAMS': (25.0, 100.0), 'RBAMS': (25.0, 100.0)
+}
+# [추가] 파일에서 읽은 스펙이 있으면 spec_limits 동적 업데이트
+_spec_file = st.session_state.get('spec_from_file', {})
+if _spec_file:
+    spec_limits.update(_spec_file)
+SPEC_GUIDE = {k: f"{v[0]}~{v[1]}" for k, v in spec_limits.items()}
+
+class _LangGlossary:
+    """언어 설정(st.session_state['lang'])에 따라 KO/EN 설명을 자동으로 반환하는 딕셔너리 래퍼.
+    기존 .get(key, default) 호출부는 전혀 수정할 필요 없이 자동으로 언어가 바뀝니다."""
+    def __init__(self, ko_dict, en_dict):
+        self._ko = ko_dict
+        self._en = en_dict
+
+    def _active(self):
+        return self._en if st.session_state.get('lang', 'KO') == 'EN' else self._ko
+
+    def get(self, key, default=None):
+        return self._active().get(key, default)
+
+    def __getitem__(self, key):
+        return self._active()[key]
+
+    def __contains__(self, key):
+        return key in self._ko
+
+    def keys(self):
+        return self._active().keys()
+
+    def values(self):
+        return self._active().values()
+
+    def items(self):
+        return self._active().items()
+
+    def __iter__(self):
+        return iter(self._active())
+
+    def __len__(self):
+        return len(self._ko)
+
+VAR_GLOSSARY_KO = {
+    'CID': 'case_inner_diameter_mm (케이스 내경)',
+    'CIDP': 'case_inner_diameter_position_mm (케이스 내경 위치도)',
+    'CID1': 'case_inner_diameter1_mm (케이스 내측경1)',
+    'CID2': 'case_inner_diameter2_mm (케이스 내측경2)',
+    'CID3': 'case_inner_diameter3_mm (케이스 내측경3)',
+    'CID4': 'case_inner_diameter4_mm (케이스 내측경4)',
+    'COD1': 'case_outer_diameter1_mm (케이스 외측경1)',
+    'COD2': 'case_outer_diameter2_mm (케이스 외측경2)',
+    'CODC': 'case_outer_diameter_cylindricity (케이스 외측경 원통도)',
+    'CH1': 'case_height1_mm (케이스 높이1)',
+    'CH2': 'case_height2_mm (케이스 높이2)',
+    'CH3': 'case_height3_mm (케이스 높이3)',
+    'CH4': 'case_height4_mm (케이스 높이4)',
+    'CH5': 'case_height5_mm (케이스 높이5)',
+    'CH6': 'case_height6_mm (케이스 높이6)',
+    'BSD': 'ballstud_diameter_mm (볼스터드 구경)',
+    'BSR': 'ballstud_roundness (볼스터드 진구도)',
+    'BSRA': 'ballstud_roughness_ra (볼스터드 조도(Ra))',
+    'BSRT': 'ballstud_roughness_rz (볼스터드 조도(Rt))',
+    'BSH': 'ballstud_height_mm (볼스터드 높이)',
+    'BSRD': 'ballstud_round (볼스터드 R)',
+    'BROD1': 'bearing_outer_diameter1_mm (베어링 외경1)',
+    'BROD2': 'bearing_outer_diameter2_mm (베어링 외경2)',
+    'BROD3': 'bearing_outer_diameter3_mm (베어링 외경3)',
+    'BROD4': 'bearing_outer_diameter4_mm (베어링 외경4)',
+    'BROD5': 'bearing_outer_diameter5_mm (베어링 외경5)',
+    'BRFD': 'bearing_flange_diameter_mm (베어링 플랜지 경)',
+    'BRH1': 'bearing_height1_mm (베어링 높이1)',
+    'BRT': 'bearing_thickness_mm (베어링 두께)',
+    'BRH2': 'bearing_height2_mm (베어링 높이2)',
+    'BRH3': 'bearing_height3_mm (베어링 높이3)',
+    'BRH4': 'bearing_height4_mm (베어링 높이4)',
+    'BROR': 'bearing_outer_round_mm (베어링 외측 R)',
+    'BRFT': 'bearing_flange_thickness_mm (베어링 플랜지 두께)',
+    'SR': 'seat_round_mm (시트 R)',
+    'SCH': 'seat_center_height_mm (시트 구 중심 높이)',
+    'SIH': 'seat_inner_height_mm (시트 내측 높이)',
+    'SD1': 'seat_diameter1_mm (시트 경1)',
+    'SD2': 'seat_diameter2_mm (시트 경2)',
+    'SH1': 'seat_height1_mm (시트 높이1)',
+    'SP': 'seat_parallelism (시트 평행도)',
+    'SH2': 'seat_height2_mm (시트 높이2)',
+    'SF': 'seat_flatness (시트 평면도)',
+    'COHA': 'case_outer_height_after_mm (스웨징 높이)',
 }
 
-OLD_TO_NEW_MAP = {
-    'Y_Melt_Short': 'Short_Shot',
-    'Y_Flash': 'Flash',
-    'Y_Sink_Mark': 'Sink_Mark',
-    'Y_Weld': 'Weld',
-    'Y_Flow_Mark': 'Flow_Mark',
-    'Y_Silver_Streak': 'Silver_Streak',
-    'Y_Jetting': 'Jetting',
-    'Y_Burn_Mark': 'Burn_Mark',
-    'Y_Void': 'Void',
-    'Y_Warpage': 'Warpage'
+VAR_GLOSSARY_EN = {
+    'CID': 'case_inner_diameter_mm (Case inner diameter)',
+    'CIDP': 'case_inner_diameter_position_mm (Case inner diameter position)',
+    'CID1': 'case_inner_diameter1_mm (Case inner diameter 1)',
+    'CID2': 'case_inner_diameter2_mm (Case inner diameter 2)',
+    'CID3': 'case_inner_diameter3_mm (Case inner diameter 3)',
+    'CID4': 'case_inner_diameter4_mm (Case inner diameter 4)',
+    'COD1': 'case_outer_diameter1_mm (Case outer diameter 1)',
+    'COD2': 'case_outer_diameter2_mm (Case outer diameter 2)',
+    'CODC': 'case_outer_diameter_cylindricity (Case outer diameter cylindricity)',
+    'CH1': 'case_height1_mm (Case height 1)',
+    'CH2': 'case_height2_mm (Case height 2)',
+    'CH3': 'case_height3_mm (Case height 3)',
+    'CH4': 'case_height4_mm (Case height 4)',
+    'CH5': 'case_height5_mm (Case height 5)',
+    'CH6': 'case_height6_mm (Case height 6)',
+    'BSD': 'ballstud_diameter_mm (Ball stud diameter)',
+    'BSR': 'ballstud_roundness (Ball stud roundness)',
+    'BSRA': 'ballstud_roughness_ra (Ball stud roughness (Ra))',
+    'BSRT': 'ballstud_roughness_rz (Ball stud roughness (Rt))',
+    'BSH': 'ballstud_height_mm (Ball stud height)',
+    'BSRD': 'ballstud_round (Ball stud R (radius))',
+    'BROD1': 'bearing_outer_diameter1_mm (Bearing outer diameter 1)',
+    'BROD2': 'bearing_outer_diameter2_mm (Bearing outer diameter 2)',
+    'BROD3': 'bearing_outer_diameter3_mm (Bearing outer diameter 3)',
+    'BROD4': 'bearing_outer_diameter4_mm (Bearing outer diameter 4)',
+    'BROD5': 'bearing_outer_diameter5_mm (Bearing outer diameter 5)',
+    'BRFD': 'bearing_flange_diameter_mm (Bearing flange diameter)',
+    'BRH1': 'bearing_height1_mm (Bearing height 1)',
+    'BRT': 'bearing_thickness_mm (Bearing thickness)',
+    'BRH2': 'bearing_height2_mm (Bearing height 2)',
+    'BRH3': 'bearing_height3_mm (Bearing height 3)',
+    'BRH4': 'bearing_height4_mm (Bearing height 4)',
+    'BROR': 'bearing_outer_round_mm (Bearing outer R (radius))',
+    'BRFT': 'bearing_flange_thickness_mm (Bearing flange thickness)',
+    'SR': 'seat_round_mm (Seat R (radius))',
+    'SCH': 'seat_center_height_mm (Seat ball center height)',
+    'SIH': 'seat_inner_height_mm (Seat inner height)',
+    'SD1': 'seat_diameter1_mm (Seat diameter 1)',
+    'SD2': 'seat_diameter2_mm (Seat diameter 2)',
+    'SH1': 'seat_height1_mm (Seat height 1)',
+    'SP': 'seat_parallelism (Seat parallelism)',
+    'SH2': 'seat_height2_mm (Seat height 2)',
+    'SF': 'seat_flatness (Seat flatness)',
+    'COHA': 'case_outer_height_after_mm (Swaging height (case outer height after swaging))',
 }
 
-DEFECT_THRESHOLD = 0.5
+VAR_GLOSSARY = _LangGlossary(VAR_GLOSSARY_KO, VAR_GLOSSARY_EN)
 
-# 세션 상태 초기화
-if 'models' not in st.session_state:
-    st.session_state.update({
-        'models': {},
-        'scalers': {},
-        'model_reliability': {},
-        'model_algo_names': {},      # [추가] 타겟별 선택된 알고리즘 이름
-        'feature_importance': {},    # [추가] 타겟별 Feature Importance
-        'df_injection': pd.DataFrame(),
-        'ui_display_vars': [],
-        'global_process_vars': [],
-        'global_bounds': {},
-        'expert_constraints': {},
-        'current_inputs': {},
-        'defect_weights': {k: 1.0 for k in TARGET_VARS.keys()},
-        'defect_switches': {k: True for k in TARGET_VARS.keys()},
-        'ver': 0,
-        'expert_reliability': 0.0,
-        'last_res_val': None,
-        'last_defect_risks': {},
-        'last_opt_df': None,
-        'optimization_success': "N/A",
-        'selected_algorithm': "N/A",
-        'prepared_db_file': None,
-        'data_changed_since_save': False,
-        'show_feature_guide': False,
-        'algo_summary': {}   # [추가] 학습 완료 후 알고리즘 선택 결과 요약
-    })
+TARGET_GLOSSARY_KO = {
+    'BT': 'breakaway_torque_Nm (분리 토크 / 초기 회전 토크)',
+    'RT': 'running_torque_Nm (회전 토크)',
+    'AGB': 'axial_gap_before_mm (축방향 유격, 내구 시험 전)',
+    'RGB': 'radial_gap_before_mm (반경방향 유격, 내구 시험 전)',
+    'AGA': 'axial_gap_after_mm (축방향 유격, 내구 시험 후)',
+    'RGA': 'radial_gap_after_mm (반경방향 유격, 내구 시험 후)',
+    'AGI': 'axial_gap_increase_mm (축방향 유격 증가량, 시험 전후 차)',
+    'RGI': 'radial_gap_increase_mm (반경방향 유격 증가량, 시험 전후 차)',
+    'ABAMS': 'axial_before_after_min_stiffness_% (내구 전후 축 강성 비율)',
+    'RBAMS': 'radial_before_after_min_stiffness_% (내구 전후 축 직각 강성 비율)',
+    'ASBPI': 'axial_stiffness_before_press_in (압입 전 축방향 강성)',
+    'ASAPI': 'axial_stiffness_after_press_in (압입 후 축방향 강성)',
+    'AFG': 'axial_free_gap (축방향 자유 유격)',
+    'RSBPI': 'radial_stiffness_before_press_in (압입 전 반경방향 강성)',
+    'RSAPI': 'radial_stiffness_after_press_in (압입 후 반경방향 강성)',
+    'RFG': 'radial_free_gap (반경방향 자유 유격)',
+}
 
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Noto+Sans+KR:wght@300;400;700&display=swap');
-    .stApp {
-        background-color: #0b0c10 !important;
-        color: #e1e1e1 !important;
-        font-family: 'Inter', sans-serif;
-    }
-    /* ── 위젯 간격 전역 축소 ── */
-    /* 슬라이더/체크박스 등 위젯 컨테이너 상하 패딩 제거 */
-    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-        gap: 0rem !important;
-    }
-    div[class*="stSlider"] {
-        padding-top: 0px !important;
-        padding-bottom: 0px !important;
-        margin-top: 0px !important;
-        margin-bottom: 0px !important;
-    }
-    div[class*="stCheckbox"] {
-        padding-top: 2px !important;
-        padding-bottom: 0px !important;
-        margin-bottom: 0px !important;
-    }
-    /* 불량 가중치 슬라이더만 label='' 타겟: weight_ key를 가진 슬라이더 */
-    div[class*="stSlider"]:has(input[aria-label=""]) {
-        margin-top: -28px !important;
-    }
-    /* expander 사이 간격 */
-    div[data-testid="stExpander"] {
-        margin-top: 2px !important;
-        margin-bottom: 2px !important;
-    }
-    /* Streamlit 기본 block 간격 제거 */
-    .element-container {
-        margin-bottom: 0px !important;
-    }
-    /* hr 구분선 숨김 */
-    hr { display: none !important; }
-    [data-testid="stSidebar"] {
-        background-color: #12141d !important;
-        border-right: 1px solid #1f222e;
-    }
-    [data-testid="stSidebar"] label { color: #FFFFFF !important; font-weight: 400 !important; }
-    .stSlider label,
-    .stNumberInput label,
-    [data-testid="stWidgetLabel"] p {
-        color: #FFFFFF !important;
-        font-weight: 400 !important;
-        font-size: 1.05rem !important;
-    }
-    .metric-container {
-        background-color: #1a1c24;
-        border: 1px solid #2d3142;
-        border-radius: 10px;
-        padding: 15px;
-        text-align: center;
-    }
-    .metric-label { color: #cbd5e1; font-size: 0.85rem; margin-bottom: 5px; }
-    .metric-value { color: #ffffff; font-size: 1.2rem; font-weight: 700; }
-    .section-title {
-        display: flex;
-        align-items: center;
-        color: #00e5ff !important;
-        font-weight: 600 !important;
-        font-size: 1.3rem;
-        margin-bottom: 0.3rem;
-        margin-top: 0.8rem;
-        padding-top: 0.8rem;
-        border-top: 1px solid #2d3142;
-    }
-    .square-icon {
-        width: 18px;
-        height: 18px;
-        background-color: #00e5ff;
-        margin-right: 14px;
-        display: inline-block;
-        flex-shrink: 0;
-    }
-    .optimized-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 10px 0;
-        font-size: 0.9rem;
-        background-color: #1a1c24;
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    .optimized-table th {
-        background-color: #2d3142;
-        color: #FFFFFF !important;
-        font-weight: 700;
-        padding: 12px;
-        border: 1px solid #3f445e;
-    }
-    .optimized-table td {
-        color: #FFFFFF !important;
-        padding: 12px;
-        text-align: center;
-        border: 1px solid #3f445e;
-        font-weight: 500;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 6px;
-        background: linear-gradient(180deg, #10b981 0%, #059669 100%);
-        color: white !important;
-        font-weight: 700;
-        border: 1px solid #047857;
-        padding: 0.7rem;
-        transition: all 0.3s ease;
-    }
-    .stDownloadButton>button {
-        background: linear-gradient(180deg, #2e7d32 0%, #1b5e20 100%) !important;
-        border: 1px solid #2e7d32 !important;
-    }
-    h1 { color: #ffffff !important; font-weight: 800 !important; letter-spacing: -0.04em; }
-    /* 탭 opacity 전역 차단 — Streamlit 기본 테마가 비활성 탭을 흐리게 하는 것 방지 */
-    [data-baseweb="tab"] { opacity: 1 !important; }
-    [data-baseweb="tab-highlight"] { background-color: #00e5ff !important; }
-    .custom-progress-container {
-        width: 100%;
-        background-color: #1f222e;
-        border-radius: 20px;
-        margin: 10px 0;
-        height: 22px;
-        position: relative;
-        overflow: hidden;
-        border: 1px solid #2d3142;
-    }
-    .custom-progress-bar {
-        height: 100%;
-        border-radius: 20px;
-        transition: width 0.8s ease-in-out;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: 800;
-        font-size: 0.85rem;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
-        min-width: 2.5rem;
-    }
-    div[data-testid="stCheckbox"] label p {
-        color: #00e5ff !important;
-        font-weight: 600 !important;
-    }
-    /* Tab 버튼 시인성 개선 */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: transparent;
-        border-bottom: 2px solid #2d3142;
-        padding-bottom: 0;
-    }
-    /* 비활성 탭 — 가능한 모든 선택자 병기 */
-    .stTabs [data-baseweb="tab"],
-    .stTabs button[data-baseweb="tab"],
-    .stTabs [role="tab"],
-    .stTabs button[role="tab"] {
-        background-color: #252840 !important;
-        border: 1px solid #4a5070 !important;
-        border-bottom: none !important;
-        border-radius: 8px 8px 0 0 !important;
-        color: #f8fafc !important;
-        font-weight: 700 !important;
-        font-size: 0.95rem !important;
-        padding: 10px 24px !important;
-        opacity: 1 !important;
-        transition: all 0.2s ease;
-    }
-    /* 탭 내부 모든 텍스트 요소 강제 적용 */
-    .stTabs [data-baseweb="tab"] *,
-    .stTabs [role="tab"] * {
-        color: #f8fafc !important;
-        font-weight: 700 !important;
-        opacity: 1 !important;
-    }
-    /* 활성 탭 */
-    .stTabs [aria-selected="true"],
-    .stTabs button[aria-selected="true"] {
-        background-color: #00e5ff22 !important;
-        border-color: #00e5ff !important;
-        color: #00e5ff !important;
-        opacity: 1 !important;
-    }
-    .stTabs [aria-selected="true"] *,
-    .stTabs button[aria-selected="true"] * {
-        color: #00e5ff !important;
-        opacity: 1 !important;
-    }
-    /* hover */
-    .stTabs [data-baseweb="tab"]:hover,
-    .stTabs button[data-baseweb="tab"]:hover {
-        color: #ffffff !important;
-        background-color: #2e3455 !important;
-        opacity: 1 !important;
-    }
-    .stTabs [data-baseweb="tab"]:hover *,
-    .stTabs button[data-baseweb="tab"]:hover * {
-        color: #ffffff !important;
-        opacity: 1 !important;
-    }
-    /* ── Expander 전체 스타일 ── */
-    /* 컨테이너 */
-    [data-testid="stExpander"] {
-        border: 1px solid #2d3142 !important;
-        border-radius: 8px !important;
-        background-color: #1a1c24 !important;
-        margin-bottom: 2px !important;
-        margin-top: 2px !important;
-        overflow: hidden !important;
-    }
-    /* details 태그 자체 (접힘/펼침 공통) */
-    [data-testid="stExpander"] details {
-        background-color: #1a1c24 !important;
-        border: none !important;
-    }
-    /* 펼침 상태 details[open] */
-    [data-testid="stExpander"] details[open] {
-        background-color: #1a1c24 !important;
-    }
-    /* 헤더 summary (접힌 상태) */
-    .streamlit-expanderHeader,
-    [data-testid="stExpander"] details summary {
-        background-color: #1a1c24 !important;
-        border: none !important;
-        border-radius: 8px !important;
-        color: #e1e1e1 !important;
-        font-weight: 600 !important;
-        font-size: 0.95rem !important;
-        padding: 12px 16px !important;
-        transition: background 0.2s ease, color 0.2s ease !important;
-        list-style: none !important;
-    }
-    /* 펼침 상태 헤더 */
-    [data-testid="stExpander"] details[open] summary,
-    .streamlit-expanderHeader[aria-expanded="true"] {
-        background-color: #1e2235 !important;
-        color: #00e5ff !important;
-        border-radius: 8px 8px 0 0 !important;
-        border-bottom: 1px solid #2d3142 !important;
-    }
-    /* hover */
-    .streamlit-expanderHeader:hover,
-    [data-testid="stExpander"] details summary:hover {
-        background-color: #23263a !important;
-        color: #00e5ff !important;
-    }
-    /* 포커스 빨간 테두리 완전 제거 */
-    .streamlit-expanderHeader:focus,
-    .streamlit-expanderHeader:focus-visible,
-    [data-testid="stExpander"] *:focus,
-    [data-testid="stExpander"] *:focus-visible,
-    [data-testid="stExpander"] details:focus,
-    [data-testid="stExpander"] summary:focus,
-    [data-testid="stExpander"] summary:focus-visible {
-        outline: none !important;
-        box-shadow: none !important;
-        border-color: #2d3142 !important;
-    }
-    /* 컨텐츠 영역 */
-    .streamlit-expanderContent,
-    [data-testid="stExpander"] details > div {
-        border: none !important;
-        border-top: 1px solid #2d3142 !important;
-        border-radius: 0 0 8px 8px !important;
-        background-color: #12141d !important;
-        padding: 12px 4px !important;
-    }
-    /* 화살표(chevron) 색상 */
-    .streamlit-expanderHeader svg,
-    [data-testid="stExpander"] summary svg {
-        color: #00e5ff !important;
-        fill: #00e5ff !important;
-        stroke: #00e5ff !important;
-    }
-    /* 로딩 스텝 박스 */
-    .load-step {
-        background: #1a1c24;
-        border: 1px solid #2d3142;
-        border-left: 3px solid #00e5ff;
-        border-radius: 6px;
-        padding: 6px 12px;
-        margin: 4px 0;
-        font-size: 0.82rem;
-        color: #cbd5e1;
-    }
-    .load-step.done { border-left-color: #10b981; color: #10b981; }
-    .load-step.active { border-left-color: #00e5ff; color: #e1e1e1; }
-    </style>
-""", unsafe_allow_html=True)
+TARGET_GLOSSARY_EN = {
+    'BT': 'breakaway_torque_Nm (Breakaway torque / initial rotation torque)',
+    'RT': 'running_torque_Nm (Running torque)',
+    'AGB': 'axial_gap_before_mm (Axial clearance, before durability test)',
+    'RGB': 'radial_gap_before_mm (Radial clearance, before durability test)',
+    'AGA': 'axial_gap_after_mm (Axial clearance, after durability test)',
+    'RGA': 'radial_gap_after_mm (Radial clearance, after durability test)',
+    'AGI': 'axial_gap_increase_mm (Axial clearance increase, before/after difference)',
+    'RGI': 'radial_gap_increase_mm (Radial clearance increase, before/after difference)',
+    'ABAMS': 'axial_before_after_min_stiffness_% (Axial stiffness ratio, before/after durability test)',
+    'RBAMS': 'radial_before_after_min_stiffness_% (Radial stiffness ratio, before/after durability test)',
+    'ASBPI': 'axial_stiffness_before_press_in (Axial stiffness, before press-in)',
+    'ASAPI': 'axial_stiffness_after_press_in (Axial stiffness, after press-in)',
+    'AFG': 'axial_free_gap (Axial free gap)',
+    'RSBPI': 'radial_stiffness_before_press_in (Radial stiffness, before press-in)',
+    'RSAPI': 'radial_stiffness_after_press_in (Radial stiffness, after press-in)',
+    'RFG': 'radial_free_gap (Radial free gap)',
+}
 
+TARGET_GLOSSARY = _LangGlossary(TARGET_GLOSSARY_KO, TARGET_GLOSSARY_EN)
 
-# =================================================================
-# 1. 사이드바 (데이터 관리)
-# =================================================================
+def gray_out_slider(aria_label):
+    """특정 슬라이더를 회색으로 만드는 JS 주입.
+    Streamlit 컨테이너/CSS 클래스 방식은 버전에 따라 DOM 구조가 달라 신뢰할 수 없어서,
+    슬라이더의 aria-label(각 슬라이더에 부여한 고유 라벨 문자열)로 실제 렌더링된 DOM
+    요소를 직접 찾아 인라인으로 회색 필터를 적용하는 방식으로 완전히 대체.
+    label_visibility='collapsed'여도 Streamlit은 접근성을 위해 aria-label을 그대로 남겨둠.
+    주의: st.markdown(unsafe_allow_html=True)은 보안상 <script> 태그를 실행하지 않으므로
+    (렌더링은 되지만 스크립트가 동작 안 함), 실제로 스크립트가 실행되는
+    st.components.v1.html(iframe 기반)을 사용해야 함."""
+    _safe_label = aria_label.replace("\\", "\\\\").replace('"', '\\"')
+    components.html(
+        f"""<script>
+        (function() {{
+            function grayIt() {{
+                var el = window.parent.document.querySelector('[aria-label="{_safe_label}"]');
+                if (!el) return false;
+                var wrap = el.closest('[data-testid="stSlider"]') || el.closest('[data-testid="stNumberInput"]') || el;
+                wrap.style.filter = 'grayscale(100%)';
+                wrap.style.opacity = '0.85';
+                return true;
+            }}
+            if (!grayIt()) {{
+                var tries = 0;
+                var t = window.parent.setInterval(function() {{
+                    tries++;
+                    if (grayIt() || tries > 20) window.parent.clearInterval(t);
+                }}, 150);
+            }}
+        }})();
+        </script>""",
+        height=1
+    )
+
+def on_slider_change(prefix):
+    val_tuple = st.session_state[f'{prefix}_s_val']
+    if not isinstance(val_tuple, (list, tuple)):
+        val_tuple = (float(val_tuple), float(val_tuple))
+        st.session_state[f'{prefix}_s_val'] = val_tuple
+    st.session_state[f'{prefix}_n_min'] = val_tuple[0]
+    st.session_state[f'{prefix}_n_max'] = val_tuple[1]
+
+def on_min_change(prefix):
+    current_slider = st.session_state[f'{prefix}_s_val']
+    if not isinstance(current_slider, (list, tuple)):
+        current_slider = (float(current_slider), float(current_slider))
+    new_min = st.session_state[f'{prefix}_n_min']
+    if new_min > current_slider[1]:
+        new_min = current_slider[1]
+        st.session_state[f'{prefix}_n_min'] = new_min
+    st.session_state[f'{prefix}_s_val'] = (new_min, current_slider[1])
+
+def on_max_change(prefix):
+    current_slider = st.session_state[f'{prefix}_s_val']
+    if not isinstance(current_slider, (list, tuple)):
+        current_slider = (float(current_slider), float(current_slider))
+    new_max = st.session_state[f'{prefix}_n_max']
+    if new_max < current_slider[0]:
+        new_max = current_slider[0]
+        st.session_state[f'{prefix}_n_max'] = new_max
+    st.session_state[f'{prefix}_s_val'] = (current_slider[0], new_max)
+
+def on_sim_slider_change(prefix):
+    val_tuple = st.session_state[f'sim_tgt_{prefix}_s_val']
+    if not isinstance(val_tuple, (list, tuple)):
+        val_tuple = (float(val_tuple), float(val_tuple))
+        st.session_state[f'sim_tgt_{prefix}_s_val'] = val_tuple
+    st.session_state[f'sim_tgt_{prefix}_n_min'] = val_tuple[0]
+    st.session_state[f'sim_tgt_{prefix}_n_max'] = val_tuple[1]
+
+def on_sim_min_change(prefix):
+    # current_slider가 튜플 형태인지 확인하고, 아니면 기본값을 부여
+    current_slider = st.session_state.get(f'sim_tgt_{prefix}_s_val', (0.0, 1.0))
+    if not isinstance(current_slider, (list, tuple)):
+        current_slider = (0.0, 1.0)
+        
+    new_min = st.session_state[f'sim_tgt_{prefix}_n_min']
+    
+    # new_min이 slider[1]보다 크면 강제로 고정
+    if new_min > current_slider[1]:
+        new_min = current_slider[1]
+        st.session_state[f'sim_tgt_{prefix}_n_min'] = new_min
+        
+    st.session_state[f'sim_tgt_{prefix}_s_val'] = (float(new_min), float(current_slider[1]))
+
+def on_sim_max_change(prefix):
+    current_slider = st.session_state.get(f'sim_tgt_{prefix}_s_val', (0.0, 1.0))
+    new_max = st.session_state.get(f'sim_tgt_{prefix}_n_max', 1.0)
+    
+    if isinstance(current_slider, (list, tuple)):
+        min_val = current_slider[0]
+    else:
+        min_val = 0.0
+        
+    if new_max < min_val:
+        new_max = min_val
+        st.session_state[f'sim_tgt_{prefix}_n_max'] = new_max
+        
+    st.session_state[f'sim_tgt_{prefix}_s_val'] = (min_val, float(new_max))
+
+# [추가] Tab4 목표 Range 슬라이더 ↔ Min/Max 숫자 입력 양방향 동기화 콜백
+def on_t4_slider_change(prefix):
+    val_tuple = st.session_state[f't4_range_{prefix}_s_val']
+    if not isinstance(val_tuple, (list, tuple)):
+        val_tuple = (float(val_tuple), float(val_tuple))
+        st.session_state[f't4_range_{prefix}_s_val'] = val_tuple
+    st.session_state[f't4_range_{prefix}_n_min'] = val_tuple[0]
+    st.session_state[f't4_range_{prefix}_n_max'] = val_tuple[1]
+
+def on_t4_min_change(prefix):
+    current_slider = st.session_state.get(f't4_range_{prefix}_s_val', (0.0, 1.0))
+    if not isinstance(current_slider, (list, tuple)):
+        current_slider = (0.0, 1.0)
+    new_min = st.session_state[f't4_range_{prefix}_n_min']
+    if new_min > current_slider[1]:
+        new_min = current_slider[1]
+        st.session_state[f't4_range_{prefix}_n_min'] = new_min
+    st.session_state[f't4_range_{prefix}_s_val'] = (float(new_min), float(current_slider[1]))
+
+def on_t4_max_change(prefix):
+    current_slider = st.session_state.get(f't4_range_{prefix}_s_val', (0.0, 1.0))
+    new_max = st.session_state.get(f't4_range_{prefix}_n_max', 1.0)
+    if isinstance(current_slider, (list, tuple)):
+        min_val = current_slider[0]
+    else:
+        min_val = 0.0
+    if new_max < min_val:
+        new_max = min_val
+        st.session_state[f't4_range_{prefix}_n_max'] = new_max
+    st.session_state[f't4_range_{prefix}_s_val'] = (min_val, float(new_max))
+
+# [추가] Tab4 설계/공정 변수 모드(순방향 계열 기준일 때) 슬라이더 ↔ Min/Max 동기화 콜백 (키 접두어가 달라 별도 정의)
+def on_t4x_slider_change(prefix):
+    val_tuple = st.session_state[f't4x_range_{prefix}_s_val']
+    if not isinstance(val_tuple, (list, tuple)):
+        val_tuple = (float(val_tuple), float(val_tuple))
+        st.session_state[f't4x_range_{prefix}_s_val'] = val_tuple
+    st.session_state[f't4x_range_{prefix}_n_min'] = val_tuple[0]
+    st.session_state[f't4x_range_{prefix}_n_max'] = val_tuple[1]
+
+def on_t4x_min_change(prefix):
+    current_slider = st.session_state.get(f't4x_range_{prefix}_s_val', (0.0, 1.0))
+    if not isinstance(current_slider, (list, tuple)):
+        current_slider = (0.0, 1.0)
+    new_min = st.session_state[f't4x_range_{prefix}_n_min']
+    if new_min > current_slider[1]:
+        new_min = current_slider[1]
+        st.session_state[f't4x_range_{prefix}_n_min'] = new_min
+    st.session_state[f't4x_range_{prefix}_s_val'] = (float(new_min), float(current_slider[1]))
+
+def on_t4x_max_change(prefix):
+    current_slider = st.session_state.get(f't4x_range_{prefix}_s_val', (0.0, 1.0))
+    new_max = st.session_state.get(f't4x_range_{prefix}_n_max', 1.0)
+    if isinstance(current_slider, (list, tuple)):
+        min_val = current_slider[0]
+    else:
+        min_val = 0.0
+    if new_max < min_val:
+        new_max = min_val
+        st.session_state[f't4x_range_{prefix}_n_max'] = new_max
+    st.session_state[f't4x_range_{prefix}_s_val'] = (min_val, float(new_max))
+
+def _dyn_bounds(default_lo, default_hi, min_key, max_key):
+    """슬라이더의 min_value/max_value를 기본 범위로 시작하되, 사용자가 Min/Max 칸에
+    그 범위 밖의 값을 직접 입력하면 슬라이더 자체의 허용 범위도 그 값을 포함하도록 넓힘."""
+    lo, hi = float(default_lo), float(default_hi)
+    if min_key in st.session_state:
+        try:
+            lo = min(lo, float(st.session_state[min_key]))
+        except (TypeError, ValueError):
+            pass
+    if max_key in st.session_state:
+        try:
+            hi = max(hi, float(st.session_state[max_key]))
+        except (TypeError, ValueError):
+            pass
+    if hi <= lo:
+        hi = lo + 0.001
+    return lo, hi
+
+def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=False, show_spinner=True):
+    """긴 연산(계산/생성)을 화면 정중앙 모달 박스(Running → 완료 시 확인 버튼)로 표시하며 실행.
+
+    ※ 버튼 폭 맞추기 히스토리: "element-container"를 조상으로 추측해 스타일을 주려던
+    이전 시도들이 실제 배포 환경 구조와 안 맞아 계속 실패했음. 이번엔 Streamlit이
+    버튼을 감쌀 때 실제로 쓰는, 훨씬 더 안정적이고 잘 알려진 테스트ID인
+    `[data-testid="stButton"]`을 직접 지정하고, 혹시 몰라 감싸는 element-container와
+    버튼 태그 자체까지 3단계 모두에 동일한 규칙을 걸어서(하나라도 맞으면 적용되도록)
+    실패 가능성을 최대한 낮췄음.
+
+    ⚠️ run_fn 내부에서는 st.sidebar.xxx() 같은 다른 컨테이너 종속 요소를 그리면 안 됩니다.
+
+    반환값: run_fn()의 결과. 사용자가 "확인"을 누른 시점에만 값을 반환하고,
+    그 외에는 None을 반환하므로 호출부에서는 `if result is not None:`으로 사용하면 됩니다.
+    """
+    _is_en_task = st.session_state.get('lang', 'KO') == 'EN'
+    if done_msg is None:
+        done_msg = "Done! Click OK to view the result." if _is_en_task else "완료되었습니다! 확인을 누르면 결과가 보입니다."
+
+    _state_key = f"_modal_state_{task_key}"
+    _result_key = f"_modal_result_{task_key}"
+    st.session_state.setdefault(_state_key, "idle")
+
+    if trigger:
+        st.session_state[_state_key] = "running"
+
+    _state = st.session_state[_state_key]
+
+    if _state == "idle":
+        return None
+
+    if _state == "confirmed":
+        st.session_state[_state_key] = "idle"
+        return st.session_state.pop(_result_key, None)
+
+    _msg_cls = f"_blk_msg_{task_key}"
+    _btn_marker_cls = f"_blk_btnmark_{task_key}"
+    _BOX_W = 420  # 메시지 박스와 버튼이 공유하는 고정 폭(px)
+
+    _btn_rule_targets = [
+        f'[data-testid="element-container"]:has(.{_btn_marker_cls}) + [data-testid="element-container"]',
+        f'[data-testid="element-container"]:has(.{_btn_marker_cls}) + [data-testid="element-container"] [data-testid="stButton"]',
+        f'[data-testid="element-container"]:has(.{_btn_marker_cls}) ~ [data-testid="stButton"]',
+        f'.{_msg_cls} ~ [data-testid="stButton"]',
+    ]
+    _btn_rules_css = "".join(
+        f"{sel} {{position:fixed !important;top:38% !important;left:50% !important;"
+        f"transform:translate(-50%, 30px) !important;z-index:99999 !important;"
+        f"background:#1c1c1c !important;border-radius:0 0 14px 14px !important;"
+        f"box-shadow:0 20px 60px rgba(0,0,0,0.7) !important;"
+        f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
+        f"padding:0 30px 26px 30px !important;margin:0 !important;}}"
+        for sel in _btn_rule_targets
+    )
+
+    st.markdown(
+        f"<style>"
+        f".{_msg_cls}-backdrop {{position:fixed;top:0;left:0;width:100vw;height:100vh;"
+        f"background:rgba(8,8,8,0.82);z-index:99998;}}"
+        f".{_msg_cls} {{position:fixed !important;top:38% !important;left:50% !important;"
+        f"transform:translate(-50%, -50%) !important;z-index:99999 !important;"
+        f"background:#1c1c1c !important;border-radius:14px 14px 0 0 !important;"
+        f"box-shadow:0 20px 60px rgba(0,0,0,0.7) !important;"
+        f"width:{_BOX_W}px !important;max-width:92vw !important;box-sizing:border-box !important;"
+        f"padding:26px 30px 10px 30px !important;text-align:center;}}"
+        f"{_btn_rules_css}"
+        # 안전망: 위 선택자들이 전부 안 맞아도, 버튼 자체는 항상 배경보다 위에 남아
+        # 최소한 클릭 가능은 하도록 보장 (폭/위치는 못 맞춰도 진행은 막히지 않음)
+        f"button[kind=\"primary\"] {{position:relative !important;z-index:99999 !important;}}"
+        f"</style>"
+        f"<div class='{_msg_cls}-backdrop'></div>",
+        unsafe_allow_html=True
+    )
+
+    if _state == "waiting_confirm":
+        st.markdown(
+            f"<div class='{_msg_cls}'><span style='font-weight:700;color:#10b981;font-size:1.05rem;'>✅ {done_msg}</span>"
+            f"<span class='{_btn_marker_cls}' style='display:none;'></span></div>",
+            unsafe_allow_html=True
+        )
+        _ok_label = "OK" if _is_en_task else "확인"
+        _confirmed = st.button(_ok_label, type="primary", use_container_width=True, key=f"_modal_ok_{task_key}")
+        if _confirmed:
+            st.session_state[_state_key] = "confirmed"
+            st.rerun()
+        return None
+    else:
+        st.markdown(
+            f"<div class='{_msg_cls}'><span style='font-weight:700;color:#ff9f1c;font-size:1.05rem;'>⏳ {running_msg}</span>"
+            f"<span class='{_btn_marker_cls}' style='display:none;'></span></div>",
+            unsafe_allow_html=True
+        )
+        _spinner_slot = st.empty()
+        with _spinner_slot:
+            if show_spinner:
+                with st.spinner(" "):
+                    _result = run_fn()
+            else:
+                _result = run_fn()
+        st.session_state[_result_key] = _result
+        st.session_state[_state_key] = "waiting_confirm"
+        st.rerun()
+        return None
+
+# [추가] Manual Expert Tuning 변수 슬라이더 ↔ Min/Max 숫자 입력 양방향 동기화 콜백
+def on_manual_slider_change(v_clean):
+    """슬라이더 조작 → Min/Max 숫자 입력 필드 값 갱신"""
+    val = st.session_state.get(f'manual_slider_{v_clean}', (0.0, 100.0))
+    if isinstance(val, (list, tuple)) and len(val) == 2:
+        st.session_state[f'manual_min_{v_clean}'] = float(val[0])
+        st.session_state[f'manual_max_{v_clean}'] = float(val[1])
+        st.session_state[f'm_{v_clean}_min'] = float(val[0])
+        st.session_state[f'm_{v_clean}_max'] = float(val[1])
+
+def on_manual_min_change(v_clean):
+    """Min 숫자 키인 → 슬라이더 위치 갱신"""
+    new_min = float(st.session_state.get(f'manual_min_{v_clean}', 0.0))
+    cur = st.session_state.get(f'manual_slider_{v_clean}', (0.0, 100.0))
+    cur_max = float(cur[1]) if isinstance(cur, (list, tuple)) else 100.0
+    new_min = min(new_min, cur_max)
+    st.session_state[f'manual_slider_{v_clean}'] = (new_min, cur_max)
+    st.session_state[f'm_{v_clean}_min'] = new_min
+
+def on_manual_max_change(v_clean):
+    """Max 숫자 키인 → 슬라이더 위치 갱신"""
+    new_max = float(st.session_state.get(f'manual_max_{v_clean}', 100.0))
+    cur = st.session_state.get(f'manual_slider_{v_clean}', (0.0, 100.0))
+    cur_min = float(cur[0]) if isinstance(cur, (list, tuple)) else 0.0
+    new_max = max(new_max, cur_min)
+    st.session_state[f'manual_slider_{v_clean}'] = (cur_min, new_max)
+    st.session_state[f'm_{v_clean}_max'] = new_max
+
+def generate_ai_guidance(process_specs, predicted_kpis, mode="Optimization"):
+    api_key = None
+    try:
+        if "GROQ_API_KEY" in st.secrets:
+            api_key = st.secrets["GROQ_API_KEY"]
+    except Exception:
+        api_key = None
+    if not api_key:
+        api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        return "⚠️ API 키가 설정되지 않았습니다. .streamlit/secrets.toml 파일에 GROQ_API_KEY를 저장해 주세요."
+
+    client = Groq(api_key=api_key)
+
+    # 공정 변수 스펙 (전체)
+    specs_str = "\n".join([
+        f"  - {k} [{VAR_GLOSSARY.get(k, '정의되지 않은 변수')}]: {v:.3f}"
+        for k, v in process_specs.items()
+    ])
+
+    # 예측 KPI (스펙 범위 포함, 적합성 판단)
+    kpis_lines = []
+    spec_ok_list = []
+    spec_warn_list = []
+    spec_na_list = []
+    for k, v in predicted_kpis.items():
+        spec_range = SPEC_GUIDE.get(k, "N/A")
+        glossary = TARGET_GLOSSARY.get(k, '정의되지 않은 타겟 값')
+        if spec_range == "N/A" or "~" not in spec_range:
+            spec_na_list.append(k)
+            kpis_lines.append(f"  - {k} [{glossary}]: {v:.3f}  (스펙: N/A — 최적화 제외)")
+        else:
+            lo, hi = map(float, spec_range.split("~"))
+            in_spec = lo <= v <= hi
+            margin_lo = v - lo
+            margin_hi = hi - v
+            status = "적합" if in_spec else "이탈"
+            if in_spec:
+                spec_ok_list.append(k)
+            else:
+                spec_warn_list.append(k)
+            kpis_lines.append(
+                f"  - {k} [{glossary}]: {v:.3f}  "
+                f"(정상 스펙: {spec_range} / 판정: {status} / "
+                f"하한 여유: {margin_lo:+.3f}, 상한 여유: {margin_hi:+.3f})"
+            )
+    kpis_str = "\n".join(kpis_lines)
+
+    # 주요 공정 변수 분석 (Feature Importance 기반 — 저장된 경우 활용)
+    fi_context = ""
+    fi_all = st.session_state.get('feature_importance', {})
+    if fi_all:
+        top_vars_per_tgt = []
+        for tgt, fi_dict in fi_all.items():
+            if tgt in spec_na_list:
+                continue
+            top3 = sorted(fi_dict.items(), key=lambda x: x[1], reverse=True)[:3]
+            top3_str = ", ".join([f"{v}({s:.3f})" for v, s in top3])
+            top_vars_per_tgt.append(f"  - {tgt}: 주요 영향 변수 → {top3_str}")
+        if top_vars_per_tgt:
+            fi_context = "\n[Feature Importance — 타겟별 상위 영향 변수]\n" + "\n".join(top_vars_per_tgt)
+
+    mode_desc = {
+        "Optimization": "사용자가 설정한 목표 품질(타겟 값) 범위를 만족시키기 위해 역최적화 알고리즘으로 도출한 '추천 공정 스펙' 결과",
+        "Simulation": "사용자가 What-If 시뮬레이터에서 가상으로 설정한 목표 품질 범위에 대해 역최적화로 도출한 '가상 시뮬레이션' 결과"
+    }.get(mode, "공정 최적화 결과")
+
+    doc_no = f"JOINT-OPS-CABJ-{datetime.now().strftime('%Y%m%d')}-001"
+    today  = datetime.now().strftime("%Y년 %m월 %d일")
+
+    system_instruction = (
+        "당신은 'JOINT AI - Process Optimization Suite'에 내장된 공정 엔지니어링 전문 AI 어시스턴트입니다. "
+        "이 시스템은 VOLVO SPA1/2 CABJ(볼스터드 조인트, Ball Stud Joint) 부품의 스웨이징 조립 공정 검사 데이터를 학습하여, "
+        "목표 품질 타겟 값(분리 토크, 회전 토크, 축/반경방향 유격, ABAMS/RBAMS 등)를 만족하는 "
+        "단품 치수 변수 조합을 역최적화로 도출합니다.\n\n"
+        "보고서 작성 규칙:\n"
+        "1. 아래 제공된 데이터와 무관한 일반 지식, 다른 부품으로 범위를 확장하지 마세요.\n"
+        "2. 답변은 한국어로, 전문 실무형 보고서 형식으로 작성하세요. 헤더, 소제목, 표 형식을 적극 활용하세요.\n"
+        "3. 한자(漢字, 중국어 한자)는 단 한 글자도 사용하지 마세요. 모든 단어는 순수 한글(및 영문 약어/숫자)로만 표기하세요.\n"
+        "4. 마크다운 취소선(~~텍스트~~)은 사용하지 마세요. 강조는 굵게(**텍스트**)만 사용하세요.\n"
+        "5. 각 섹션을 충분히 상세하게 작성하고, 수치 근거를 반드시 포함하세요.\n"
+        "6. 분석 문서 헤더(번호, 날짜, 작성자 등)를 포함하여 정식 보고서 형태로 작성하세요."
+    )
+
+    prompt = f"""## JOINT AI - Process Optimization Suite: CABJ 스웨이징 조립 공정 가이드라인 ({mode} 결과 기반)
+문서 번호: {doc_no}  작성일: {today}  작성자: JOINT AI Process Engineering Assistant
+
+아래 데이터를 바탕으로 **상세한 공정 분석 보고서**를 작성해 주세요.
+
+[분석 모드]
+{mode} — {mode_desc}
+
+[도출된 추천 공정 변수 스펙 (34개 단품 치수 변수)]
+{specs_str}
+
+[예측 품질 타겟 값 (10개 KPI, 스펙 적합성 포함)]
+{kpis_str}
+{fi_context}
+
+[적합 타겟]: {', '.join(spec_ok_list) if spec_ok_list else '없음'}
+[이탈/주의 타겟]: {', '.join(spec_warn_list) if spec_warn_list else '없음'}
+[스펙 N/A (최적화 제외)]: {', '.join(spec_na_list) if spec_na_list else '없음'}
+
+[작성 요청 — 아래 섹션을 모두 포함하여 상세히 작성하세요]
+
+1. **결과 요약** (3~5문장)
+   - 도출된 공정 스펙의 전반적 특성과 예측 KPI 달성 현황을 종합 요약하세요.
+   - 특히 전체 KPI 중 몇 개가 적합/이탈인지 명시하세요.
+
+2. **KPI 적합성 평가** (표 형식 권장)
+   각 KPI에 대해: 예측값, 정상 스펙 범위, 적합성 판정, 비고(하한치 근접 여부, 외삽 위험 등)를 포함하세요.
+   - 스펙 하한/상한치에 근접한 KPI는 특별히 언급하세요.
+   - 모델 외삽(Extrapolation) 위험이 있는 경우 명시하세요.
+
+3. **주의가 필요한 공정 변수** (핵심 3~5개)
+   Feature Importance 또는 공정 지식에 근거하여 가장 중요한 변수를 선별하고,
+   각 변수가 품질에 미치는 물리적 영향 메커니즘을 설명하세요.
+   (예: COHB/COHA → 스웨이징 깊이 → 조인트 체결력 → BT/RT/ABAMS에 영향)
+
+4. **현장 적용 권장사항** (3가지 이내, 구체적 수치 포함)
+   도출된 최적화 결과를 실제 생산 라인에 적용할 때의 단계별 조치사항을 작성하세요.
+   - 스웨이징 공정 정밀도 관리 우선순위
+   - 핵심 단품(볼스터드, 시트, 베어링) 치수 공차 관리 강화 사항
+   - KPI 실시간 모니터링 및 피드백 방안"""
+
+    try:
+        priority = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
+        target_model = priority[0]
+        try:
+            available_models = [m.id for m in client.models.list().data]
+            target_model = next((m for m in priority if m in available_models), (available_models[0] if available_models else priority[0]))
+        except Exception:
+            pass
+
+        response = client.chat.completions.create(
+            model=target_model,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user",   "content": prompt}
+            ],
+            temperature=0.25,
+            max_tokens=4096
+        )
+        result_text = response.choices[0].message.content
+        result_text = re.sub(r'~~(.*?)~~', r'\1', result_text)
+        result_text = re.sub(r'[\u4e00-\u9fff]+', '', result_text)
+        result_text = re.sub(r'[ \t]{2,}', ' ', result_text)
+        return result_text
+
+    except Exception as e:
+        error_msg = str(e)
+        if "429" in error_msg: return "⏳ API 사용량이 많습니다. 잠시 후 다시 시도해 주세요."
+        return f"❌ AI 생성 오류: {error_msg}"
+
+# ────────────────────────────────────────────────────────────────────────────────
+# [추가] 공정 진단 가이드 생성 함수 (유효 타겟만 적용 및 정상 시에도 리포트 반환)
+# ────────────────────────────────────────────────────────────────────────────────
+def generate_diagnosis_guide(feasibility_info, predicted_kpis, opt_result_x, confidence_score, range_key_prefix=''):
+    is_en = st.session_state.get('lang', 'KO') == 'EN'
+    infeasible_targets = []
+    partial_targets   = []
+    ok_targets        = []
+    
+    # 데이터가 존재하는 타겟만 추출
+    valid_tgts = st.session_state.get('valid_target_vars', target_vars)
+    if not valid_tgts:
+        valid_tgts = target_vars
+
+    for tgt in valid_tgts:
+        pred_val = predicted_kpis.get(tgt, None)
+        if pred_val is None:
+            continue
+        t_range = st.session_state.get(f'{range_key_prefix}{tgt.lower()}_s_val', (0, 1))
+        feas    = feasibility_info.get(tgt, {})
+        overlap = feas.get('overlap_ratio', 1.0)
+        pred_min = feas.get('pred_min', 0)
+        pred_max = feas.get('pred_max', 0)
+
+        if overlap < 0.1:
+            infeasible_targets.append({
+                'tgt': tgt, 'pred_val': pred_val,
+                'spec': t_range, 'pred_min': pred_min, 'pred_max': pred_max
+            })
+        elif pred_val < t_range[0] or pred_val > t_range[1]:
+            partial_targets.append({
+                'tgt': tgt, 'pred_val': pred_val, 'spec': t_range
+            })
+        else:
+            ok_targets.append(tgt)
+
+    lines = []
+    if is_en:
+        lines.append("## □ Optimization Result Diagnosis Report\n")
+        lines.append(f"> Prediction Confidence: **{confidence_score}%** | Infeasible: **{len(infeasible_targets)}** | Out-of-Spec: **{len(partial_targets)}** | Achieved: **{len(ok_targets)}**\n")
+    else:
+        lines.append("## □ 최적화 결과 진단 리포트\n")
+        lines.append(f"> 예측 신뢰도: **{confidence_score}%** | 달성 불가: **{len(infeasible_targets)}개** | 스펙 이탈: **{len(partial_targets)}개** | 정상 달성: **{len(ok_targets)}개**\n")
+
+    # 모든 타겟이 정상일 경우에도 보고서를 반환하도록 수정
+    if not infeasible_targets and not partial_targets:
+        if is_en:
+            lines.append("\n---\n### ✅ All Targets Achieved\n")
+            lines.append("Based on the current input data, all valid quality targets are predicted to fully reach the specified goal range. The current recommended process specification can be applied on the shop floor as-is.\n")
+        else:
+            lines.append("\n---\n### ✅ 전체 타겟 정상 달성\n")
+            lines.append("현재 입력된 데이터를 바탕으로 분석한 결과, 모든 유효 품질 타겟(타겟 값)이 설정하신 목표 스펙 범위 내에 완벽하게 도달할 수 있는 것으로 예측되었습니다. 현재 도출된 공정 조건(추천 공정 스펙)을 현장에 바로 적용하셔도 좋습니다.\n")
+        return "\n".join(lines)
+
+    fi_by_target = {}
+    for tgt in (infeasible_targets + partial_targets):
+        t = tgt['tgt']
+        mk = f'model_{t.lower()}'
+        mdl = st.session_state.get(mk)
+        if mdl is not None and hasattr(mdl, 'feature_importances_'):
+            fi = pd.Series(mdl.feature_importances_, index=X_list).sort_values(ascending=False)
+            fi_by_target[t] = fi.head(6) 
+
+    if infeasible_targets:
+        if is_en:
+            lines.append("\n---\n### 🚫 Infeasible Target Analysis\n")
+            lines.append(
+                "The targets below have **no training samples within the spec range at all**, so the AI cannot predict this region.  \n"
+                "This is not a code error — it is a **physical fact that the process itself has never achieved this spec**.\n"
+            )
+        else:
+            lines.append("\n---\n### 🚫 달성 불가 타겟 분석\n")
+            lines.append(
+                "아래 타겟들은 **학습 데이터에 스펙 범위 내 샘플이 단 한 개도 없어** AI가 예측할 수 없는 영역입니다.  \n"
+                "이는 AI 코드 오류가 아니라 **공정 자체가 해당 스펙을 달성한 적이 없다는 물리적 사실**입니다.\n"
+            )
+        for item in infeasible_targets:
+            tgt      = item['tgt']
+            glossary = TARGET_GLOSSARY.get(tgt, tgt)
+            gap      = item['pred_min'] - item['spec'][1] 
+
+            if is_en:
+                lines.append(f"\n#### [{tgt}] {glossary}")
+                lines.append(f"- Predicted range from training data: **{item['pred_min']:.2f} ~ {item['pred_max']:.2f}**")
+                lines.append(f"- Target spec: {item['spec'][0]} ~ {item['spec'][1]}")
+                lines.append(f"- GAP between current process and spec: **{gap:.2f}** (experimental data is needed to close this gap)")
+            else:
+                lines.append(f"\n#### [{tgt}] {glossary}")
+                lines.append(f"- 학습 데이터 예측 범위: **{item['pred_min']:.2f} ~ {item['pred_max']:.2f}**")
+                lines.append(f"- 설정 스펙: {item['spec'][0]} ~ {item['spec'][1]}")
+                lines.append(f"- 현재 공정과 스펙의 GAP: **{gap:.2f}** (이 gap을 메울 실험 데이터가 필요)")
+
+            if tgt in fi_by_target:
+                if is_en:
+                    lines.append(f"\n** □ Top Influential Variables for {tgt} Prediction (Feature Importance based)**\n")
+                    lines.append("| Rank | Variable | Meaning | Importance | Recommended Direction |")
+                    lines.append("|------|------|------|--------|----------------|")
+                else:
+                    lines.append(f"\n** □ {tgt} 예측에 영향력 상위 변수 (Feature Importance 기반)**\n")
+                    lines.append("| 순위 | 변수 | 의미 | 중요도 | 조정 방향 권장 |")
+                    lines.append("|------|------|------|--------|----------------|")
+                for rank, (var, imp) in enumerate(fi_by_target[tgt].items(), 1):
+                    meaning = VAR_GLOSSARY.get(var, var)
+                    if is_en:
+                        direction = "Direction to be confirmed by experiment"
+                    else:
+                        direction = "실험으로 방향 확인 필요"
+                    lines.append(f"| {rank} | **{var}** | {meaning} | {imp:.4f} | {direction} |")
+
+    if partial_targets:
+        if is_en:
+            lines.append("\n---\n### ⚠️ Out-of-Spec Target Analysis\n")
+            lines.append("The targets below fall within the training data range but did not reach the target spec.  \nThere is potential for improvement via the recommended variable adjustments below, even without additional data.\n")
+        else:
+            lines.append("\n---\n### ⚠️ 스펙 이탈 타겟 분석\n")
+            lines.append("아래 타겟들은 학습 데이터 범위 안에 있으나 목표 스펙에 미달했습니다.  \n추가 데이터 없이도 아래 권장 변수 조정으로 개선 가능성이 있습니다.\n")
+        for item in partial_targets:
+            tgt = item['tgt']
+            if is_en:
+                lines.append(f"\n#### [{tgt}] {TARGET_GLOSSARY.get(tgt, tgt)}")
+                lines.append(f"- Predicted value: **{item['pred_val']:.3f}** / Spec: {item['spec'][0]} ~ {item['spec'][1]}")
+            else:
+                lines.append(f"\n#### [{tgt}] {TARGET_GLOSSARY.get(tgt, tgt)}")
+                lines.append(f"- 예측값: **{item['pred_val']:.3f}** / 스펙: {item['spec'][0]} ~ {item['spec'][1]}")
+            if tgt in fi_by_target:
+                top3 = list(fi_by_target[tgt].index[:3])
+                if is_en:
+                    lines.append(f"- Priority variables to review: **{', '.join(top3)}**")
+                else:
+                    lines.append(f"- 우선 조정 검토 변수: **{', '.join(top3)}**")
+
+    if is_en:
+        lines.append("\n---\n### 🗺️ Recommended Resolution Path\n")
+    else:
+        lines.append("\n---\n### 🗺️ 권장 해결 경로\n")
+
+    if infeasible_targets:
+        if is_en:
+            lines.append("#### Path A — Acquire New Experimental Data (Fundamental Solution)\n")
+            lines.append(
+                "Since the current process conditions have no history of achieving this spec, you should **deliberately design trials that push the process variables toward the spec direction** to acquire data.\n"
+            )
+        else:
+            lines.append("#### 경로 A — 신규 실험 데이터 확보 (근본 해결)\n")
+            lines.append(
+                "현재 공정 조건으로는 스펙 달성 이력이 없으므로, **의도적으로 공정 변수를 스펙 방향으로 밀어붙인 시험**을 설계해 데이터를 확보해야 합니다.\n"
+            )
+        all_priority_vars = []
+        for tgt_dict in infeasible_targets:
+            t = tgt_dict['tgt']
+            if t in fi_by_target:
+                all_priority_vars += list(fi_by_target[t].index[:3])
+        priority_vars_unique = list(dict.fromkeys(all_priority_vars)) 
+
+        if priority_vars_unique:
+            if is_en:
+                lines.append(f"\n**Priority experiment variables based on Feature Importance (combined):** {', '.join(priority_vars_unique[:5])}\n")
+            else:
+                lines.append(f"\n**Feature Importance 기반 실험 우선 변수 (통합):** {', '.join(priority_vars_unique[:5])}\n")
+
+        if is_en:
+            lines.append("**Recommended Design of Experiments (DOE) Sequence:**\n")
+            lines.append("1. **Screening trial** (variable reduction): Test the priority variables above with a Plackett-Burman design over 12-16 samples → narrow down to variables that actually affect RBAMS/ABAMS")
+            lines.append("2. **Focused trial on key variables** (range exploration): Deliberately extend 2-3 selected variables to ±3σ beyond the current range to explore the spec-achieving region (CCD or Box-Behnken design)")
+            lines.append("3. **Confirmation trial**: Repeat the spec-achieving condition at least 5 times to confirm reproducibility")
+            lines.append(f"\n> Minimum required samples: 12-16 for screening + 20-30 for focused exploration = **approximately 40-50 total**\n")
+
+            lines.append("#### Path B — Re-examine Spec Feasibility (Short-Term Alternative)\n")
+            lines.append(
+                "If the current production parts are used in the field without performance issues even at RBAMS 60-75, **the spec of 0-25 may be a design spec that does not match reality**.  \n"
+                "- Check the correlation between actual durability/noise/clearance test results and the RBAMS value.  \n"
+                "- If performance criteria are met, it is more realistic to revise the spec to the actual achievable production range (e.g., 50-80).  \n"
+                "- Once the spec is revised, this AI system will work normally immediately.\n"
+            )
+        else:
+            lines.append("**권장 실험 설계(DOE) 순서:**\n")
+            lines.append("1. **스크리닝 실험** (변수 압축): 위 우선 변수를 Plackett-Burman 설계로 12~16샘플 시험 → RBAMS/ABAMS에 실제로 영향 있는 변수 압축")
+            lines.append("2. **핵심 변수 집중 실험** (범위 탐색): 선별된 2~3개 변수로 현재 범위 ±3σ 밖까지 의도적으로 확장해 스펙 달성 구간 탐색 (CCD 또는 Box-Behnken 설계)")
+            lines.append("3. **확인 실험**: 스펙 달성 조건을 최소 5회 이상 반복해 재현성 확인")
+            lines.append(f"\n> 최소 필요 샘플 수: 스크리닝 12~16개 + 핵심 탐색 20~30개 = **총 약 40~50개**\n")
+
+            lines.append("#### 경로 B — 스펙 현실성 재검토 (단기 대안)\n")
+            lines.append(
+                "현재 생산 제품이 RBAMS 60~75임에도 현장에서 성능 문제 없이 사용 중이라면, **스펙 0~25가 현실과 맞지 않는 설계 스펙**일 수 있습니다.  \n"
+                "- 실제 내구/소음/유격 성능 시험 결과와 RBAMS 값의 상관관계를 확인하세요.  \n"
+                "- 성능 기준을 만족한다면 스펙을 실제 생산 가능 범위(예: 50~80)로 개정하는 것이 현실적입니다.  \n"
+                "- 스펙 개정 시 이 AI 시스템은 즉시 정상 동작합니다.\n"
+            )
+
+    if is_en:
+        lines.append("#### Path C — Model Retraining (After Acquiring Data)\n")
+        lines.append(
+            "After acquiring experimental data, retrain in the following order.\n"
+            "1. **Merge** new experimental data with the existing training data (CSV or DB upload)\n"
+            "2. Retrain the model using the sidebar **'Engine Init'** button\n"
+            "3. Re-run the inverse optimization with the retrained model → verify whether the spec is achievable\n"
+        )
+
+        lines.append("\n---\n### 📋 Summary\n")
+        lines.append("| Step | Content | Expected Duration |")
+        lines.append("|------|------|-----------|")
+        lines.append("| 1 | Review Feature Importance → select candidate experiment variables | Immediate (see this report) |")
+        lines.append("| 2 | Review spec feasibility (discuss with design team) | 1-2 days |")
+        lines.append("| 3 | DOE screening trial (12-16 samples) | 1-2 weeks |")
+        lines.append("| 4 | Focused trial on key variables (20-30 samples) | 2-4 weeks |")
+        lines.append("| 5 | Merge data, retrain and validate model | 1 day |")
+    else:
+        lines.append("#### 경로 C — 모델 재학습 (데이터 확보 후)\n")
+        lines.append(
+            "실험 데이터 확보 후 아래 순서로 재학습하세요.\n"
+            "1. 신규 실험 데이터를 기존 학습 데이터에 **병합** (CSV 또는 DB 업로드)\n"
+            "2. 사이드바 **'엔진 초기화'** 버튼으로 모델 재학습\n"
+            "3. 재학습된 모델로 역최적화 재실행 → 스펙 달성 가능 여부 확인\n"
+        )
+
+        lines.append("\n---\n### 📋 요약\n")
+        lines.append("| 단계 | 내용 | 예상 기간 |")
+        lines.append("|------|------|-----------|")
+        lines.append("| 1 | Feature Importance 확인 → 실험 변수 후보 선정 | 즉시 (이 리포트 참조) |")
+        lines.append("| 2 | 스펙 현실성 검토 (설계팀 협의) | 1~2일 |")
+        lines.append("| 3 | DOE 스크리닝 실험 (12~16샘플) | 1~2주 |")
+        lines.append("| 4 | 핵심 변수 집중 실험 (20~30샘플) | 2~4주 |")
+        lines.append("| 5 | 데이터 병합 후 모델 재학습 및 검증 | 1일 |")
+
+    return "\n".join(lines)
+
+    init_dict = {
+        'scaler': None, 'df_caulking': pd.DataFrame(),
+        'process_vars': X_list, 'target_vars': target_vars, 'active_x_list': X_list,
+        'optimizer_status': "STANDBY", 'opt_result_x': None, 'confidence_score': None, 'sim_confidence': None,
+        'best_algorithm_used': "SLSQP", 'sim_result_x': None,
+        'prepared_db_file': None, 'data_changed_since_save': False,
+        'ai_analysis_result': None,
+        'valid_target_vars': target_vars,
+        'diagnosis_guide_text': None,
+        'feasibility': {} 
+    }
+    for tgt in target_vars:
+        init_dict[f'model_{tgt.lower()}'] = None
+        init_dict[f'opt_pred_{tgt.lower()}'] = None
+        init_dict[f'sim_pred_{tgt.lower()}'] = None
+    for var in X_list:
+        init_dict[f'm_{var.lower()}_min'] = 0.0
+        init_dict[f'm_{var.lower()}_max'] = 100.0
+        init_dict[f'sim_{var.lower()}'] = 0.0
+        
+    for tgt in target_vars:
+        t_low = tgt.lower()
+        if tgt == 'BT': range_val = (0.0, 8.0)
+        elif tgt == 'RT': range_val = (0.0, 4.0)
+        elif tgt == 'AGB': range_val = (0.0, 0.3)
+        elif tgt == 'RGB': range_val = (0.0, 0.4)    
+        elif tgt in ['ABAMS', 'RBAMS']: range_val = (25.0, 100.0) 
+        else: range_val = (0.0, 1.0)
+        
+        init_dict[f'{t_low}_s_val'] = range_val
+        init_dict[f'{t_low}_n_min'] = range_val[0]
+        init_dict[f'{t_low}_n_max'] = range_val[1]
+        
+        init_dict[f'sim_tgt_{t_low}_s_val'] = range_val
+        init_dict[f'sim_tgt_{t_low}_n_min'] = range_val[0]
+        init_dict[f'sim_tgt_{t_low}_n_max'] = range_val[1]
+        
+    st.session_state.update(init_dict)
+
+# 6. 사이드바 제어반
 with st.sidebar:
-    st.markdown(f"<h2 style='color:#FFFFFF; font-size:1.5rem;'>{L['data_mgmt']}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='color: #ffffff; font-size:1.15rem; margin-bottom: 20px;'>{L_G['console']}</h2>", unsafe_allow_html=True)
 
     # ── 임시 비번 로그인 시 유효기간 표시 ────────────────────────
     if not st.session_state.get('is_owner', False):
-        _is_ko_exp = st.session_state.lang != 'en'
+        _LT_exp = LOGIN_TEXT[st.session_state["lang"]]
         _logged_pwd = st.session_state.get('logged_temp_pwd', '')
         _tp_info = st.session_state.temp_pwd_list.get(_logged_pwd, {})
         _exp_dt = _tp_info.get('expires')
         if _exp_dt is None:
-            _exp_msg   = "🟢 " + ("무기한 사용 가능" if _is_ko_exp else "No Expiry")
+            _exp_msg = "🟢 " + _LT_exp['no_expiry']
             _exp_color = "#10b981"
         else:
-            _remain  = _exp_dt - datetime.now()
+            _remain = _exp_dt - datetime.now()
             _total_h = int(_remain.total_seconds() // 3600)
-            _days_r  = _total_h // 24
-            _hrs_r   = _total_h % 24
+            _days_r = _total_h // 24
+            _hrs_r = _total_h % 24
             if _remain.total_seconds() > 0:
                 if _days_r > 0:
-                    _time_str = f"{_days_r}일 {_hrs_r}시간" if _is_ko_exp else f"{_days_r}d {_hrs_r}h"
+                    _time_str = f"{_days_r}일 {_hrs_r}시간" if st.session_state["lang"] == "KO" else f"{_days_r}d {_hrs_r}h"
                 else:
-                    _time_str = f"{_hrs_r}시간" if _is_ko_exp else f"{_hrs_r}h"
-                _icon      = "🟡" if _total_h < 24 else "🟢"
+                    _time_str = f"{_hrs_r}시간" if st.session_state["lang"] == "KO" else f"{_hrs_r}h"
+                _icon = "🟡" if _total_h < 24 else "🟢"
                 _exp_color = "#ffab00" if _total_h < 24 else "#10b981"
-                _exp_msg   = _icon + " " + ("잔여 사용기간: " if _is_ko_exp else "Expires in: ") + _time_str
+                _exp_msg = _icon + " " + _LT_exp['expires_in'] + _time_str
             else:
-                _exp_msg   = "🔴 " + ("사용 기간 만료" if _is_ko_exp else "Access Expired")
+                _exp_msg = "🔴 " + _LT_exp['access_expired']
                 _exp_color = "#ff5252"
         st.markdown(
-            f"<div style='background:#0d1525;border:1px solid #1e3a5f;border-radius:8px;"
+            f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;"
             f"padding:8px 12px;margin-bottom:10px;font-size:0.82rem;"
             f"color:{_exp_color};font-weight:600;'>{_exp_msg}</div>",
             unsafe_allow_html=True
         )
 
-    with st.sidebar.form(key='data_upload_form'):
-        u1 = st.file_uploader(L['upload_1'], type=['csv', 'xlsx'])
-        u2 = st.file_uploader(L['upload_2'], type=['csv', 'xlsx', 'db'])
-        u3 = st.file_uploader(L['upload_3'], type=['csv', 'xlsx'])
-        sub_btn = st.form_submit_button(L['run_ai'])
+    with st.expander(L_G['upload_title'], expanded=True):
+        u_input = st.file_uploader(L_G['upload_help'], type=['csv','xlsx','db'], key="new_data_file")
+        db_input = st.file_uploader(L_G['upload_hist_help'], type=['db'], key="history_db_file")
 
-    if sub_btn:
-        def load_data(f):
-            if not f:
-                return None
-            try:
-                if f.name.endswith('.db'):
-                    temp_db = "temp_uploaded.db"
-                    with open(temp_db, "wb") as t:
-                        t.write(f.getvalue())
-                    conn = sqlite3.connect(temp_db)
-                    df_temp = pd.read_sql_query("SELECT vars FROM production_log", conn)
+    _engine_init_btn = st.button(L_G['init_btn'], type="primary")
+    def _run_engine_init():
+        if u_input or db_input:
+            data_frames = []
+            spec_from_file = {}   # [추가] 파일에서 읽은 타겟 스펙 저장
+
+            if u_input:
+                try:
+                    if u_input.name.lower().endswith('.db'):
+                        temp_db = "temp_uploaded_joint.db"
+                        with open(temp_db, "wb") as t: t.write(u_input.getvalue())
+                        conn = sqlite3.connect(temp_db)
+                        df_temp = pd.read_sql_query("SELECT vars FROM production_log", conn)
+                        conn.close()
+                        if os.path.exists(temp_db): os.remove(temp_db)
+                        df_new = pd.json_normalize([json.loads(x) for x in df_temp['vars']])
+                    elif u_input.name.lower().endswith('csv'):
+                        # [수정] 1행=변수명, 2행=스펙값, 3행~=데이터
+                        df_spec_row = pd.read_csv(u_input, header=0, nrows=1,
+                                                   na_values=['N/A','n/a','NA','null','-',''])
+                        # 스펙 행에서 타겟 범위 파싱 ("0.0 ~ 8.0" 형식)
+                        for tgt in target_vars:
+                            if tgt in df_spec_row.columns:
+                                raw = str(df_spec_row[tgt].iloc[0]).strip()
+                                if '~' in raw:
+                                    try:
+                                        parts = raw.split('~')
+                                        lo = float(parts[0].strip())
+                                        hi = float(parts[1].strip())
+                                        spec_from_file[tgt] = (lo, hi)
+                                    except: pass
+                        u_input.seek(0)
+                        # 3행부터 실제 데이터로 읽기 (2행 스펙 행 건너뜀)
+                        df_new = pd.read_csv(u_input, header=0, skiprows=[1],
+                                             na_values=['N/A','n/a','NA','N/A ','-','null'])
+                    else:
+                        df_spec_row = pd.read_excel(u_input, header=0, nrows=1,
+                                                     na_values=['N/A','n/a','NA','null','-',''])
+                        for tgt in target_vars:
+                            if tgt in df_spec_row.columns:
+                                raw = str(df_spec_row[tgt].iloc[0]).strip()
+                                if '~' in raw:
+                                    try:
+                                        parts = raw.split('~')
+                                        lo = float(parts[0].strip())
+                                        hi = float(parts[1].strip())
+                                        spec_from_file[tgt] = (lo, hi)
+                                    except: pass
+                        u_input.seek(0)
+                        df_new = pd.read_excel(u_input, header=0, skiprows=[1],
+                                               na_values=['N/A','n/a','NA','N/A ','-','null'])
+                    data_frames.append(df_new)
+                    pass  # 스펙 적용/미적용 분류 표시 제거
+                except Exception as e:
+                    st.error(f"신규 파일 로드 오류: {e}")
+
+            if db_input:
+                try:
+                    temp_db_hist = "temp_uploaded_hist.db"
+                    with open(temp_db_hist, "wb") as t: t.write(db_input.getvalue())
+                    conn = sqlite3.connect(temp_db_hist)
+                    df_temp_hist = pd.read_sql_query("SELECT vars FROM production_log", conn)
                     conn.close()
-                    if os.path.exists(temp_db):
-                        os.remove(temp_db)
-                    df_res = pd.json_normalize([json.loads(x) for x in df_temp['vars']])
-                    if 'vars' in df_res.columns:
-                        df_res = df_res.drop(columns=['vars'], errors='ignore')
-                    return df_res
-                elif f.name.endswith('csv'):
-                    return pd.read_csv(f)
-                else:
-                    return pd.read_excel(f)
-            except Exception as e:
-                st.sidebar.error(f"{L['err_load']}{e}")
-                return None
+                    if os.path.exists(temp_db_hist): os.remove(temp_db_hist)
+                    df_hist = pd.json_normalize([json.loads(x) for x in df_temp_hist['vars']])
+                    data_frames.append(df_hist)
+                except Exception as e:
+                    st.error(f"기존 DB 파일 로드 오류: {e}")
 
-        # 데이터 로딩/학습 진행 상황 → 화면 중앙 모달로 표시
-        _train_modal_slot = st.empty()
+            df_comb = None
+            if data_frames:
+                df_comb = pd.concat(data_frames, ignore_index=True)
+                if 'vars' in df_comb.columns: df_comb = df_comb.drop(columns=['vars'], errors='ignore')
 
-        def _show_train_modal(pct, msg, detail=""):
-            _train_modal_slot.markdown(f"""
-            <style>
-            /* backdrop: body::before로 대체 */
-            #train_modal_box {{
-                position:fixed;top:50%;left:50%;
-                transform:translate(-50%,-50%);
-                z-index:99999;background:#0d1525;
-                border:1px solid #1e3a5f;border-radius:16px;
-                box-shadow:0 24px 80px rgba(0,0,0,0.9);
-                width:480px;max-width:92vw;
-                box-sizing:border-box;
-                padding:40px 40px 36px 40px;
-                text-align:center;pointer-events:all;
-            }}
-            .train_prog_track {{
-                width:100%;height:8px;background:#1e293b;
-                border-radius:20px;overflow:hidden;margin:16px 0 10px 0;
-            }}
-            .train_prog_fill {{
-                height:100%;border-radius:20px;
-                background:linear-gradient(90deg,#00e5ff,#10b981);
-                transition:width 0.4s ease;
-            }}
-            </style>
-            <div id="train_modal_box">
-                <div style="font-size:1.8rem;margin-bottom:12px;">🔄</div>
-                <div style="font-weight:700;color:#00e5ff;font-size:1.1rem;margin-bottom:6px;">
-                    {msg}
-                </div>
-                <div class="train_prog_track">
-                    <div class="train_prog_fill" style="width:{pct}%;"></div>
-                </div>
-                <div style="color:#94a3b8;font-size:0.8rem;margin-bottom:6px;">{pct}%</div>
-                <div style="color:#64748b;font-size:0.78rem;">{detail}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            if df_comb is not None:
+                df_comb.columns = [c.strip() for c in df_comb.columns]
+                
+                valid_targets = []
+                for tgt in target_vars:
+                    if tgt in df_comb.columns:
+                        converted = pd.to_numeric(df_comb[tgt], errors='coerce')
+                        if not converted.isna().all(): valid_targets.append(tgt)
+                
+                if not valid_targets: valid_targets = ['BT']
+                
+                for col in X_list + target_vars:
+                    if col in df_comb.columns:
+                        df_comb[col] = pd.to_numeric(df_comb[col], errors='coerce')
+                    else:
+                        df_comb[col] = np.nan
+                
+                df_imputed = df_comb.copy()
+                for var in X_list:
+                    df_imputed[var] = df_imputed[var].fillna(df_imputed[var].median()) if not df_imputed[var].isna().all() else 0.0
+                for tgt in target_vars:
+                    df_imputed[tgt] = df_imputed[tgt].fillna(df_imputed[tgt].median()) if not df_imputed[tgt].isna().all() else 0.0
+                
+                scaler = MinMaxScaler().fit(df_imputed[X_list])
+                
+                models = {}
+                model_metadata = {}
+                fi_dict = {}
+                train_prog = st.progress(0)
+                algo_status = st.empty()
+                total_targets_n = len(target_vars)
 
-        # 사이드바 진행바도 유지 (보조)
-        load_prog    = st.sidebar.progress(0)
-        load_status  = st.sidebar.empty()
-        load_detail  = st.sidebar.empty()
+                X_scaled_all = scaler.transform(df_imputed[X_list])
 
-        def _step(pct, msg, detail="", done_steps=None):
-            load_prog.progress(pct, text=f"{pct}%")
-            load_status.markdown(
-                f"<div style='background:#1a1c24;border:1px solid #2d3142;border-left:3px solid #00e5ff;"
-                f"border-radius:6px;padding:7px 12px;font-size:0.82rem;color:#e1e1e1;'>"
-                f"▸ <b>{msg}</b></div>", unsafe_allow_html=True
-            )
-            _show_train_modal(pct, msg, detail)
-            # run_blocking_task 모달과 연동
-            st.session_state["_modal_pct_ai_train"]   = pct
-            st.session_state["_modal_sub_ai_train"]   = msg
+                _is_train_en2 = st.session_state.get('lang','KO')=='EN'
+                for t_idx, target in enumerate(target_vars):
+                    pct = t_idx / total_targets_n
+                    _pct_txt = (f"⚙️ ({t_idx+1}/{total_targets_n}) Selecting algorithm for {target}..." if _is_train_en2
+                                else f"⚙️ ({t_idx+1}/{total_targets_n}) {target} 알고리즘 선택 중...")
+                    train_prog.progress(pct, text=_pct_txt)
+                    _search_txt = (f"▸ Searching optimal algorithm → <b style='color:#ff9f1c;'>{target}</b>" if _is_train_en2
+                                    else f"▸ 최적 알고리즘 탐색 중 → <b style='color:#ff9f1c;'>{target}</b>")
+                    algo_status.markdown(
+                        f"<div style='background:#131313;border-left:3px solid #ff9f1c;border-radius:5px;padding:5px 10px;font-size:0.75rem;color:#d4d4d4;'>{_search_txt}</div>",
+                        unsafe_allow_html=True
+                    )
+                    y_t = df_imputed[target]
 
-        done_steps = []
-        _step(5, "Initializing...", "Checking uploaded files")
+                    # 자동 알고리즘 선택
+                    best_model, best_name, cv_r2 = auto_select_best_model(X_scaled_all, y_t.values)
+                    best_model.fit(X_scaled_all, y_t)
+                    r2 = _r2_score(y_t.values, best_model.predict(X_scaled_all))
 
-        _step(10, "Reading File 1 — Input Data", "Parsing CSV/XLSX...")
-        df_i = load_data(u1)
-        if df_i is not None:
-            done_steps.append(f"File 1 loaded: {df_i.shape[0]} rows × {df_i.shape[1]} cols")
+                    models[f'model_{target.lower()}'] = best_model
+                    model_metadata[f'algo_{target.lower()}'] = f"{best_name} (R²={cv_r2:.3f}, fit={r2:.3f})"
 
-        _step(28, "Reading File 2 — Historical Data", "Parsing CSV/XLSX/DB...", done_steps)
-        df_v = load_data(u2)
-        if df_v is not None:
-            done_steps.append(f"File 2 loaded: {df_v.shape[0]} rows × {df_v.shape[1]} cols")
+                    # Feature Importance 추출
+                    if hasattr(best_model, 'feature_importances_'):
+                        fi_dict[target] = dict(zip(X_list, best_model.feature_importances_.tolist()))
+                    elif hasattr(best_model, 'coef_'):
+                        fi_dict[target] = dict(zip(X_list, np.abs(best_model.coef_).tolist()))
+                    else:
+                        fi_dict[target] = {v: 0.0 for v in X_list}
 
-        _step(46, "Reading File 3 — CAE Data", "Parsing CSV/XLSX...", done_steps)
-        df_r = load_data(u3)
-        if df_r is not None:
-            done_steps.append(f"File 3 loaded: {df_r.shape[0]} rows × {df_r.shape[1]} cols")
+                    _is_train_en = st.session_state.get('lang','KO')=='EN'
+                    _train_txt = (f"✓ {target} → <b>{best_name}</b> selected (CV R²={cv_r2:.3f})" if _is_train_en
+                                   else f"✓ {target} → <b>{best_name}</b> 선택 완료 (CV R²={cv_r2:.3f})")
+                    algo_status.markdown(
+                        f"<div style='background:#131313;border-left:3px solid #10b981;border-radius:5px;padding:5px 10px;font-size:0.75rem;color:#a3e635;'>{_train_txt}</div>",
+                        unsafe_allow_html=True
+                    )
 
-        _step(60, "Merging & deduplicating datasets", "", done_steps)
-
-        if df_i is not None and (df_v is not None or df_r is not None):
-            # 1. 데이터 정리
-            _step(65, "Cleaning & deduplicating...", "", done_steps)
-            for df in [df_i, df_v, df_r]:
-                if df is not None:
-                    df.rename(columns=OLD_TO_NEW_MAP, inplace=True)
-                    df.drop(columns=df.columns[df.columns.duplicated()], inplace=True)
-
-            df_comb = pd.concat(
-                [df for df in [df_i, df_v, df_r] if df is not None],
-                ignore_index=True
-            )
-            df_comb.drop_duplicates(ignore_index=True, inplace=True)
-
-            available_targets = [t for t in TARGET_VARS.keys() if t in df_comb.columns]
-
-            if not available_targets:
-                st.sidebar.error(L['err_vars'])
-            else:
-                df_comb.dropna(subset=available_targets, inplace=True)
-                vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
-
-                if not vars_list or df_comb.empty:
-                    st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다." if st.session_state.lang != "en" else "No analyzable variables found or data is empty.")
-                else:
-                    models_dict, scalers_dict = {}, {}
-                    reliability_dict = {}
-                    algo_names_dict  = {}   # [추가] 타겟별 선택 알고리즘 이름
-                    fi_dict          = {}   # [추가] 타겟별 Feature Importance
-                    
-                    # 학습 진행 상황 UI 추가
-                    st.sidebar.markdown("<br>", unsafe_allow_html=True)
-                    prog_text = st.sidebar.empty()
-                    prog_bar  = st.sidebar.progress(0)
-                    algo_text = st.sidebar.empty()   # [추가] 알고리즘 진행 표시용
-                    total_targets = len(available_targets)
-
-                    for idx, target in enumerate(available_targets):
-                        # 프로그레스 바 텍스트 업데이트
-                        pct = int(((idx + 1) / total_targets) * 100)
-                        prog_text.markdown(
-                            f"<span style='color:#e1e1e1; font-size:0.85rem;'>▸ <b>{L['learning_progress']} ({idx+1}/{total_targets}): {target} ({pct}%)</b></span>",
-                            unsafe_allow_html=True
-                        )
-                        prog_bar.progress((idx + 1) / total_targets)
-                        _step(70 + int(pct * 0.28), f"Training model {idx+1}/{total_targets}: {target}", "", done_steps)
-                        time.sleep(0.1) # 시각적 피드백을 위한 짧은 대기
-
-                        t_series = (
-                            df_comb[target].iloc[:, 0]
-                            if isinstance(df_comb[target], pd.DataFrame)
-                            else df_comb[target]
-                        )
-                        target_vals = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
-
-                        if vars_list and (len(np.unique(target_vals)) >= 2):
-                            n_pos = int(target_vals.sum())
-                            n_neg = int(len(target_vals) - n_pos)
-
-                            chosen_C = _choose_regularization(n_pos, n_neg)
-                            scaler   = MinMaxScaler().fit(df_comb[vars_list])
-                            X_scaled = scaler.transform(df_comb[vars_list])
-
-                            # [추가] 알고리즘별 진행 상황 콜백 정의
-                            def _show_algo(algo_name, a_idx, a_total, _t=target):
-                                if "Final fit" in str(algo_name):
-                                    algo_text.markdown(
-                                        f"<div style='background:#12141d;border:1px solid #2d3142;"
-                                        f"border-left:3px solid #10b981;border-radius:5px;"
-                                        f"padding:5px 10px;font-size:0.78rem;color:#a3e635;margin-top:3px;'>"
-                                        f"✓ <b>{_t}</b> → {algo_name}</div>",
-                                        unsafe_allow_html=True
-                                    )
-                                else:
-                                    algo_text.markdown(
-                                        f"<div style='background:#12141d;border:1px solid #2d3142;"
-                                        f"border-left:3px solid #00e5ff;border-radius:5px;"
-                                        f"padding:5px 10px;font-size:0.78rem;color:#cbd5e1;margin-top:3px;'>"
-                                        f"  Testing <b style='color:#00e5ff;'>{algo_name}</b>"
-                                        f" &nbsp;<span style='color:#cbd5e1;'>({a_idx}/{a_total})</span></div>",
-                                        unsafe_allow_html=True
-                                    )
-
-                            # LR/RF/XGB/LGBM 4종 자동선택 (알고리즘 진행 콜백 포함)
-                            best_model, best_algo, cv_score, fi = _auto_select_best_model(
-                                X_scaled, target_vals, n_pos, n_neg, chosen_C,
-                                algo_status_fn=_show_algo
-                            )
-
-                            models_dict[target]     = best_model
-                            scalers_dict[target]    = scaler
-                            algo_names_dict[target] = best_algo
-                            if fi is not None:
-                                fi_dict[target] = dict(zip(vars_list, fi.tolist() if hasattr(fi, 'tolist') else fi))
-
-                            # [추가] 신뢰성 보강 3: 표본 부족 경고 (소수 클래스 5개 미만이면 저신뢰 표시)
-                            low_sample = min(n_pos, n_neg) < 5
-
-                            reliability_dict[target] = {
-                                'cv_score': cv_score,
-                                'n_pos': n_pos,
-                                'n_neg': n_neg,
-                                'n_total': n_pos + n_neg,
-                                'C': chosen_C,
-                                'low_sample': low_sample,
-                                'algo': best_algo,   # [추가] 선택된 알고리즘 이름
-                            }
-
-                    bounds_dict = {
-                        v: (float(df_comb[v].min()), float(df_comb[v].max()))
-                        for v in vars_list
-                    }
-
-                    st.session_state.update({
-                        'models': models_dict,
-                        'scalers': scalers_dict,
-                        'model_reliability': reliability_dict,
-                        'model_algo_names': algo_names_dict,   # [추가]
-                        'feature_importance': fi_dict,         # [추가]
-                        'df_injection': df_comb,
-                        'global_process_vars': vars_list,
-                        'global_bounds': bounds_dict,
-                        'ui_display_vars': [
-                            c for c in df_comb.columns
-                            if c not in TARGET_VARS.keys() and c != 'vars'
-                        ],
-                        'prepared_db_file': None,
-                        'data_changed_since_save': True
-                    })
-
-                    init_row = df_i.iloc[0].to_dict()
-                    for v in vars_list:
-                        st.session_state['current_inputs'][v] = int(round(float(init_row.get(v, 0))))
-
-                    load_prog.progress(100, text="✅ All done! AI engine ready." if st.session_state.lang == "en" else "✅ 모든 학습 완료! AI 준비 완료.")
-                    load_status.markdown("✅ **AI Engine ready.**" if st.session_state.lang == "en" else "✅ **AI 엔진 준비 완료.**")
-                    _train_modal_slot.empty()  # 모달 제거
-                    algo_text.empty()
-
-                    # [추가] rerun 후에도 유지되도록 세션에 요약 저장
-                    st.session_state['algo_summary'] = {
-                        t: {
-                            'algo': algo_names_dict.get(t, 'N/A'),
-                            'cv': reliability_dict.get(t, {}).get('cv_score')
-                        }
-                        for t in algo_names_dict
-                    }
-                    st.rerun()
-        else:
-            st.sidebar.warning(L['warn_upload'])
-
-    # [추가] 학습 완료 후 알고리즘 선택 결과 — 항상 사이드바에 표시
-    algo_summary = st.session_state.get('algo_summary', {})
-    if algo_summary:
-        summary_rows = ""
-        for t_key, info in algo_summary.items():
-            a_name = info.get('algo', 'N/A')
-            cv     = info.get('cv')
-            cv_str = f"{cv*100:.0f}%" if cv is not None else "N/A"
-            summary_rows += (
-                f"<div style='display:flex;justify-content:space-between;align-items:center;"
-                f"padding:4px 2px;border-bottom:1px solid #23263a;'>"
-                f"<span style='font-size:0.73rem;color:#cbd5e1;width:38%;'>{t_key}</span>"
-                f"<span style='font-size:0.71rem;color:#a3e635;font-weight:600;width:40%;'>{a_name}</span>"
-                f"<span style='font-size:0.70rem;color:#cbd5e1;width:22%;text-align:right;'>{cv_str}</span>"
-                f"</div>"
-            )
-        st.sidebar.markdown(
-            f"<div style='background:#12141d;border:1px solid #2d3142;"
-            f"border-radius:8px;padding:10px 14px;margin-bottom:10px;'>"
-            f"<div style='display:flex;justify-content:space-between;align-items:center;"
-            f"margin-bottom:8px;'>"
-            f"<span style='font-size:0.78rem;color:#00e5ff;font-weight:600;'>Model Selection Result</span>"
-            f"<span style='font-size:0.68rem;color:#cbd5e1;'>CV Accuracy</span>"
-            f"</div>"
-            f"<div style='display:flex;justify-content:space-between;font-size:0.67rem;"
-            f"color:#64748b;padding-bottom:4px;border-bottom:1px solid #3f445e;margin-bottom:4px;'>"
-            f"<span style='width:38%;'>Defect</span>"
-            f"<span style='width:40%;'>Algorithm</span>"
-            f"<span style='width:22%;text-align:right;'>Acc.</span>"
-            f"</div>"
-            f"{summary_rows}"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-
-    # ── 소유자 전용: 임시 비번 관리 패널 ──────────────────────────
-    if st.session_state.get('is_owner', False):
-        st.sidebar.markdown("---")
-        _is_ko_sb = st.session_state.lang != 'en'
-        st.sidebar.markdown(
-            "<div style='color:#00e5ff;font-weight:700;font-size:0.9rem;margin-bottom:8px;'>🔐 " +
-            ("임시 비번 관리" if _is_ko_sb else "Temp Password Manager") + "</div>",
-            unsafe_allow_html=True
-        )
-        # 새 임시 비번 추가
-        _new_tp = st.sidebar.text_input(
-            "새 임시 비번" if _is_ko_sb else "New Temp Password",
-            key="sb_new_tp"
-        )
-        _exp_opt = st.sidebar.selectbox(
-            "유효기간" if _is_ko_sb else "Expires in",
-            ["1일" if _is_ko_sb else "1 Day",
-             "3일" if _is_ko_sb else "3 Days",
-             "7일" if _is_ko_sb else "7 Days",
-             "30일" if _is_ko_sb else "30 Days",
-             "무기한" if _is_ko_sb else "No Expiry"],
-            key="sb_exp_sel"
-        )
-        _day_map_sb = {
-            "1일": 1, "1 Day": 1,
-            "3일": 3, "3 Days": 3,
-            "7일": 7, "7 Days": 7,
-            "30일": 30, "30 Days": 30,
-            "무기한": None, "No Expiry": None
-        }
-        if st.sidebar.button("➕ " + ("추가" if _is_ko_sb else "Add"), key="sb_add_tp"):
-            if _new_tp and _new_tp != "nt1234":
-                _days_sb = _day_map_sb.get(_exp_opt)
-                from datetime import datetime as _dtnow2, timedelta as _tdelta2
-                _exp_dt_sb = (_dtnow2.now() + _tdelta2(days=_days_sb)) if _days_sb else None
-                st.session_state.temp_pwd_list[_new_tp] = {
-                    'expires': _exp_dt_sb,
-                    'created': _dtnow2.now()
+                train_prog.progress(1.0, text=("✅ All targets trained!" if st.session_state.get('lang','KO')=='EN' else "✅ 모든 타겟 학습 완료!"))
+                algo_status.empty()
+                st.session_state['model_metadata'] = model_metadata
+                st.session_state['feature_importance'] = fi_dict
+                st.session_state['df_imputed_ref'] = df_imputed.copy()
+                
+                data_bounds = {}
+                update_data = {
+                    'scaler': scaler, 'df_caulking': df_comb, 'optimizer_status': "ENGINE READY",
+                    'prepared_db_file': None, 'data_changed_since_save': True,
+                    'valid_target_vars': valid_targets
                 }
-                _save_temp_pwds(st.session_state.temp_pwd_list)
-                st.sidebar.success(("추가됨: " if _is_ko_sb else "Added: ") + _new_tp)
-                st.rerun()
-            elif _new_tp == "nt1234":
-                st.sidebar.error("소유자 비번은 사용 불가" if _is_ko_sb else "Cannot use owner password.")
-            else:
-                st.sidebar.warning("비번을 입력하세요." if _is_ko_sb else "Enter a password.")
+                for tgt in target_vars: update_data[f'model_{tgt.lower()}'] = models[f'model_{tgt.lower()}']
+                
+                for var in X_list:
+                    v_min = float(df_imputed[var].min())
+                    v_max = float(df_imputed[var].max())
+                    if v_min == v_max: v_max += 1.0
+                    data_bounds[var] = (v_min, v_max)
+                    update_data[f'm_{var.lower()}_min'] = v_min
+                    update_data[f'm_{var.lower()}_max'] = v_max
+                    update_data[f'sim_{var.lower()}'] = float(df_imputed[var].median()) 
+                    
+                update_data['data_bounds'] = data_bounds
+                
+                for tgt in target_vars:
+                    t_low = tgt.lower()
+                    # [수정] 파일에서 읽은 스펙 우선 적용, 없으면 기본값
+                    if tgt in spec_from_file:
+                        range_val = spec_from_file[tgt]
+                    elif tgt == 'BT': range_val = (0.0, 8.0)
+                    elif tgt == 'RT': range_val = (0.0, 4.0)
+                    elif tgt == 'AGB': range_val = (0.0, 0.3)
+                    elif tgt == 'RGB': range_val = (0.0, 0.4)
+                    elif tgt in ['ABAMS', 'RBAMS']: range_val = (25.0, 100.0)
+                    else: range_val = (0.0, 1.0)
 
-        # 등록된 임시 비번 목록
-        if st.session_state.temp_pwd_list:
-            st.sidebar.markdown(
-                "<div style='font-size:0.78rem;color:#94a3b8;margin:8px 0 4px;'>" +
-                ("등록된 임시 비번" if _is_ko_sb else "Registered Passwords") + "</div>",
-                unsafe_allow_html=True
-            )
-            for _tp_k, _tp_v in list(st.session_state.temp_pwd_list.items()):
-                _exp_v = _tp_v['expires']
-                if _exp_v is None:
-                    _st_icon, _st_txt = "🟢", ("무기한" if _is_ko_sb else "No Expiry")
-                elif datetime.now() < _exp_v:
-                    _hrs_v = int((_exp_v - datetime.now()).total_seconds() // 3600)
-                    _st_icon, _st_txt = "🟡", f"{'잔여' if _is_ko_sb else 'Left'}: {_hrs_v}h"
+                    # 자동 모드 + 수동 모드 모두 동일하게 적용
+                    update_data[f'{t_low}_s_val']          = range_val
+                    update_data[f'{t_low}_n_min']           = range_val[0]
+                    update_data[f'{t_low}_n_max']           = range_val[1]
+                    update_data[f'sim_tgt_{t_low}_s_val']  = range_val
+                    update_data[f'sim_tgt_{t_low}_n_min']  = range_val[0]
+                    update_data[f'sim_tgt_{t_low}_n_max']  = range_val[1]
+
+                # 파일 스펙을 세션에 저장 (나중에 spec_limits 업데이트)
+                if spec_from_file:
+                    update_data['spec_from_file'] = spec_from_file
+                    na_tgts = [t for t in target_vars if t not in spec_from_file]
+                    update_data['na_spec_targets'] = na_tgts
                 else:
-                    _st_icon, _st_txt = "🔴", ("만료됨" if _is_ko_sb else "Expired")
-                _rc1, _rc2 = st.sidebar.columns([3, 1])
-                _rc1.markdown(
-                    f"<span style='font-size:0.8rem;'>{_st_icon} <code>{_tp_k}</code><br>"
-                    f"<span style='color:#64748b;font-size:0.72rem;'>{_st_txt}</span></span>",
-                    unsafe_allow_html=True
-                )
-                if _rc2.button("🗑️", key=f"sb_del_{_tp_k}"):
-                    del st.session_state.temp_pwd_list[_tp_k]
-                    _save_temp_pwds(st.session_state.temp_pwd_list)
-                    st.rerun()
-        else:
-            st.sidebar.caption("등록된 임시 비번 없음" if _is_ko_sb else "No temp passwords.")
+                    na_tgts = []
+                    update_data['na_spec_targets'] = []
+                # N/A 타겟은 리셋 플래그 설정 → 첫 렌더 시 데이터 범위로 초기화
+                for _nt in na_tgts:
+                    update_data[f'_na_reset_{_nt.lower()}'] = True
+
+                # X_list 변수 스펙 파싱 (Auto Mode Range 참조용)
+                _xs_range_dict = {}
+                _na_x_list = []
+                try:
+                    _u = u_input
+                    if _u and not _u.name.lower().endswith('.db'):
+                        _u.seek(0)
+                        if _u.name.lower().endswith('csv'):
+                            _xspec_row = pd.read_csv(_u, header=0, nrows=1,
+                                                     na_values=['N/A','n/a','NA','null','-',''])
+                        else:
+                            _xspec_row = pd.read_excel(_u, header=0, nrows=1,
+                                                       na_values=['N/A','n/a','NA','null','-',''])
+                        for _xv in X_list:
+                            if _xv in _xspec_row.columns:
+                                _raw_x = str(_xspec_row[_xv].iloc[0]).strip()
+                                if '~' in _raw_x:
+                                    try:
+                                        _px = _raw_x.split('~')
+                                        _xlo, _xhi = float(_px[0].strip()), float(_px[1].strip())
+                                        _xs_range_dict[_xv] = (_xlo, _xhi)
+                                    except: _na_x_list.append(_xv)
+                                else:
+                                    _na_x_list.append(_xv)
+                except: pass
+                update_data['x_spec_parsed_dict'] = _xs_range_dict
+                update_data['na_x_vars'] = _na_x_list
+
+                return update_data
+        return None
+
+    _engine_init_result = run_blocking_task(
+        "engine_init", _run_engine_init,
+        running_msg=("Loading data and training models for all targets... this may take a while" if st.session_state.get('lang','KO')=='EN' else "데이터를 불러오고 전체 타겟 모델을 학습하는 중입니다... 다소 시간이 걸릴 수 있습니다"),
+        trigger=_engine_init_btn, show_spinner=False
+    )
+    if _engine_init_result is not None:
+        st.session_state.update(_engine_init_result)
+        st.rerun()
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown(
-        f"<h3 style='color:#00e5ff; font-size:1.1rem;'>{L['db_export_title']}</h3>",
-        unsafe_allow_html=True
-    )
-
-    if not st.session_state['df_injection'].empty:
-        if st.sidebar.button(L['db_prepare_btn'], key="btn_create_db_snapshot"):
+    st.sidebar.markdown(f"<h3 style='color:#ffb300; font-size:1.1rem;'>{L_G['db_export_title']}</h3>", unsafe_allow_html=True)
+    
+    if not st.session_state.get('df_caulking', pd.DataFrame()).empty:
+        if st.sidebar.button(L_G['db_prepare_btn'], key="btn_create_db_snapshot"):
             today_str = datetime.now().strftime("%Y%m%d")
-
             if st.session_state.get('data_changed_since_save', True) or st.session_state['prepared_db_file'] is None:
                 idx = 1
                 while True:
-                    candidate = f"{today_str}-{idx}.db"
+                    candidate = f"joint-{today_str}-{idx}.db"
                     if not os.path.exists(candidate):
                         final_filename = candidate
                         break
                     idx += 1
                 st.session_state['prepared_db_file'] = final_filename
-            else:
-                final_filename = st.session_state['prepared_db_file']
-
+            else: final_filename = st.session_state['prepared_db_file']
+            
             try:
                 existing_df = pd.DataFrame()
                 if os.path.exists(final_filename):
@@ -1537,1635 +2147,3013 @@ with st.sidebar:
                         df_old_raw = pd.read_sql_query("SELECT vars FROM production_log", conn_old)
                         conn_old.close()
                         existing_df = pd.json_normalize([json.loads(x) for x in df_old_raw['vars']])
-                    except Exception:
-                        existing_df = pd.DataFrame()
+                    except Exception: pass
 
-                df_to_save = st.session_state['df_injection'].copy()
-                if 'vars' in df_to_save.columns:
-                    df_to_save = df_to_save.drop(columns=['vars'], errors='ignore')
-
-                if not existing_df.empty:
-                    df_to_save = pd.concat(
-                        [existing_df, df_to_save], ignore_index=True
-                    ).drop_duplicates(ignore_index=True)
-                else:
-                    df_to_save = df_to_save.drop_duplicates(ignore_index=True)
+                df_to_save = st.session_state['df_caulking'].copy()
+                if 'vars' in df_to_save.columns: df_to_save = df_to_save.drop(columns=['vars'], errors='ignore')
+                if not existing_df.empty: df_to_save = pd.concat([existing_df, df_to_save], ignore_index=True)
 
                 conn = sqlite3.connect(final_filename)
-                df_to_save['vars'] = df_to_save.apply(
-                    lambda row: json.dumps(row.to_dict()), axis=1
-                )
+                df_to_save['vars'] = df_to_save.apply(lambda row: json.dumps(row.to_dict()), axis=1)
                 df_to_save[['vars']].to_sql("production_log", conn, if_exists="replace", index=False)
                 conn.close()
-
                 st.session_state['data_changed_since_save'] = False
-            except Exception as e:
-                st.sidebar.error(f"Error: {e}")
-
+            except Exception as e: st.sidebar.error(f"Error: {e}")
+        
         if st.session_state.get('prepared_db_file'):
             target_file = st.session_state['prepared_db_file']
             if os.path.exists(target_file):
                 try:
-                    with open(target_file, "rb") as f:
-                        db_bytes = f.read()
-
+                    with open(target_file, "rb") as f: db_bytes = f.read()
                     if not st.session_state.get('data_changed_since_save', True):
-                        st.sidebar.markdown(
-                            f"<span style='color:#a3e635; font-size:0.85rem;'>{L['db_current_latest']}</span>",
+                        st.sidebar.markdown(f"<span style='color:#a3e635; font-size:0.85rem;'>{L_G['db_current_latest']}</span>", unsafe_allow_html=True)
+                    st.sidebar.markdown(f"✅ {L_G['db_prepared_msg']} `{target_file}`")
+                    st.sidebar.download_button(label=L_G['db_pc_download'], data=db_bytes, file_name=target_file, mime="application/x-sqlite3", key="db_final_download_action")
+                except Exception as e: st.sidebar.error(f"File Load Error: {e}")
+    else:
+        st.sidebar.warning(L_G['db_save_empty'])
+
+    # ── 소유자 전용: 임시 비번 관리 패널 ──────────────────────────
+    if st.session_state.get('is_owner', False):
+        st.sidebar.markdown("---")
+        _LT_sb = LOGIN_TEXT[st.session_state["lang"]]
+        st.sidebar.markdown(
+            "<div style='color:#ffb300;font-weight:700;font-size:0.9rem;margin-bottom:8px;'>🔐 " +
+            _LT_sb['temp_mgr_title'] + "</div>",
+            unsafe_allow_html=True
+        )
+        _new_tp = st.sidebar.text_input(_LT_sb['new_temp_pwd'], key="sb_new_tp")
+        _exp_opt = st.sidebar.selectbox(
+            _LT_sb['expiry_period'],
+            [_LT_sb['exp_1d'], _LT_sb['exp_3d'], _LT_sb['exp_7d'], _LT_sb['exp_30d'], _LT_sb['exp_none']],
+            key="sb_exp_sel"
+        )
+        _day_map_sb = {
+            _LT_sb['exp_1d']: 1, _LT_sb['exp_3d']: 3, _LT_sb['exp_7d']: 7,
+            _LT_sb['exp_30d']: 30, _LT_sb['exp_none']: None
+        }
+        if st.sidebar.button("➕ " + _LT_sb['add_btn'], key="sb_add_tp"):
+            if _new_tp and _new_tp != OWNER_PWD:
+                _days_sb = _day_map_sb.get(_exp_opt)
+                from datetime import timedelta as _tdelta2
+                _exp_dt_sb = (datetime.now() + _tdelta2(days=_days_sb)) if _days_sb else None
+                st.session_state.temp_pwd_list[_new_tp] = {
+                    'expires': _exp_dt_sb,
+                    'created': datetime.now()
+                }
+                _save_temp_pwds(st.session_state.temp_pwd_list)
+                st.sidebar.success(_LT_sb['added_msg'] + _new_tp)
+                st.rerun()
+            elif _new_tp == OWNER_PWD:
+                st.sidebar.error(_LT_sb['owner_only'])
+            else:
+                st.sidebar.warning(_LT_sb['enter_pwd_warn'])
+
+        if st.session_state.temp_pwd_list:
+            st.sidebar.markdown(
+                "<div style='font-size:0.78rem;color:#9c9c9c;margin:8px 0 4px;'>" +
+                _LT_sb['registered_pwds'] + "</div>",
+                unsafe_allow_html=True
+            )
+            for _tp_k, _tp_v in list(st.session_state.temp_pwd_list.items()):
+                _exp_v = _tp_v['expires']
+                if _exp_v is None:
+                    _st_icon, _st_txt = "🟢", _LT_sb['unlimited_label']
+                elif datetime.now() < _exp_v:
+                    _hrs_v = int((_exp_v - datetime.now()).total_seconds() // 3600)
+                    _st_icon, _st_txt = "🟡", f"{_LT_sb['left_label']}: {_hrs_v}h"
+                else:
+                    _st_icon, _st_txt = "🔴", _LT_sb['expired_label']
+                _rc1, _rc2 = st.sidebar.columns([3, 1])
+                _rc1.markdown(
+                    f"<span style='font-size:0.8rem;'>{_st_icon} <code>{_tp_k}</code><br>"
+                    f"<span style='color:#8a8a8a;font-size:0.72rem;'>{_st_txt}</span></span>",
+                    unsafe_allow_html=True
+                )
+                if _rc2.button("🗑️", key=f"sb_del_{_tp_k}"):
+                    del st.session_state.temp_pwd_list[_tp_k]
+                    _save_temp_pwds(st.session_state.temp_pwd_list)
+                    st.rerun()
+        else:
+            st.sidebar.caption(_LT_sb['no_registered'])
+
+# 7. 메인 뷰포트
+if st.session_state.get('scaler') is not None:
+    db = st.session_state['data_bounds']
+    valid_tgts = st.session_state['valid_target_vars']
+    
+    st.markdown(f"<h1 style='margin-bottom:20px; font-size:1.8rem;'>{L_G['title']}</h1>", unsafe_allow_html=True)
+    tab1, tab2, tab3, tab4 = st.tabs([L_G['tab1'], L_G['tab2'], L_G['tab3'], L_G['tab4']])
+
+    with tab1:
+        layout_l, layout_r = st.columns([1.3, 1.2], gap="large")
+        with layout_l:
+            st.markdown(f"<div class='glass-card'><div class='glass-card-title'>{L_G['bound_title']}</div>", unsafe_allow_html=True)
+            st.markdown("<style>.stRadio label span { color: #ececec !important; font-weight: 600 !important; font-size: 0.92rem !important; } .stRadio [data-testid='stMarkdownContainer'] p { color: #ececec !important; } .stRadio div[role='radiogroup'] label { color: #ececec !important; }</style>", unsafe_allow_html=True)
+            # Auto Mode only (Manual Expert Tuning 삭제)
+            bound_mode = "Auto Mode"
+            
+            chosen_bounds = {}
+            if "Auto Mode" in bound_mode:
+                _sf = st.session_state.get('spec_from_file', {})
+                _x_spec = st.session_state.get('x_spec_parsed_dict', {})
+                # CSV 2행 스펙 → 없으면 데이터 실측 Range
+                for v in X_list:
+                    if v in _x_spec:
+                        chosen_bounds[v] = _x_spec[v]
+                    else:
+                        chosen_bounds[v] = db[v]
+                # 표시 텍스트
+                applied_v  = [v for v in X_list if v in _x_spec]
+                fallback_v = [v for v in X_list if v not in _x_spec]
+                _is1 = st.session_state.get('lang', 'KO') == 'EN'
+                bound_text = ""
+                for v in X_list:
+                    rng = chosen_bounds[v]
+                    if _is1:
+                        src_lbl = "Spec" if v in _x_spec else "Data"
+                    else:
+                        src_lbl = "스펙" if v in _x_spec else "데이터"
+                    bound_text += f"• {v}: {rng[0]:.3f}~{rng[1]:.3f} <span style='color:#8a8a8a;font-size:0.75rem;'>({src_lbl})</span><br>"
+                if _is1:
+                    _bound_hdr = "[Design/Process Variable Range — CSV Row-2 Spec Applied]"
+                    _bound_sub = " Falls back to data min~max if no spec"
+                else:
+                    _bound_hdr = "[설계/공정 변수 Range — CSV 2행 스펙 적용]"
+                    _bound_sub = " 스펙없으면 데이터 min~max"
+                st.markdown(
+                    f"<div style='background:#181818;padding:12px 15px;border-radius:6px;border:1px solid #262626;"
+                    f"font-size:0.85rem;line-height:1.6;max-height:200px;overflow-y:auto;'>"
+                    f"<span style='color:#ff9f1c;font-weight:600;'>{_bound_hdr}</span>"
+                    f"<span style='color:#8a8a8a;font-size:0.75rem;'>{_bound_sub}</span><br>"
+                    f"{bound_text}</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                _na_x_manual = st.session_state.get('na_x_vars', [])
+                _xs_dict_manual = st.session_state.get('x_spec_parsed_dict', {})
+                st.markdown("<div style='max-height:400px; overflow-y:auto; padding-right:10px;'>", unsafe_allow_html=True)
+                for v in X_list:
+                    v_clean = v.lower()
+                    meaning = VAR_GLOSSARY.get(v, v)
+                    db_min  = float(db[v][0] * 0.5)
+                    db_max  = float(db[v][1] * 1.5)
+                    step_v  = round(float((db[v][1] - db[v][0]) * 0.005), 5)
+                    step_v  = max(step_v, 0.001)
+                    _is_na_x = v in _na_x_manual
+
+                    # 슬라이더 키 초기값 세팅 (첫 렌더링 시에만)
+                    if f'manual_slider_{v_clean}' not in st.session_state:
+                        st.session_state[f'manual_slider_{v_clean}'] = (
+                            float(st.session_state[f'm_{v_clean}_min']),
+                            float(st.session_state[f'm_{v_clean}_max'])
+                        )
+                    if f'manual_min_{v_clean}' not in st.session_state:
+                        st.session_state[f'manual_min_{v_clean}'] = float(st.session_state[f'm_{v_clean}_min'])
+                    if f'manual_max_{v_clean}' not in st.session_state:
+                        st.session_state[f'manual_max_{v_clean}'] = float(st.session_state[f'm_{v_clean}_max'])
+
+                    if _is_na_x:
+                        st.markdown(
+                            f"<div style='background:#262626;border:1px solid #3d3d3d;border-radius:5px;"
+                            f"padding:5px 10px;margin:4px 0 2px 0;display:flex;align-items:center;gap:8px;'>"
+                            f"<span style='font-size:0.8rem;font-weight:600;color:#8a8a8a;'>{v}</span>"
+                            f"<span style='background:#3d3d3d;color:#9c9c9c;font-size:0.65rem;padding:1px 6px;border-radius:3px;'>N/A</span>"
+                            f"<span style='font-size:0.72rem;color:#4d4d4d;'>({meaning})</span></div>",
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.markdown(
+                            f"<p style='font-size:0.8rem;font-weight:600;color:#ff9f1c;margin:6px 0 2px 0;'>"
+                            f"{v} <span style='color:#8a8a8a;font-weight:400;'>({meaning})</span></p>",
                             unsafe_allow_html=True
                         )
 
-                    st.sidebar.markdown(f"✓ {L['db_prepared_msg']} `{target_file}`")
-                    st.sidebar.download_button(
-                        label=L['db_pc_download'],
-                        data=db_bytes,
-                        file_name=target_file,
-                        mime="application/x-sqlite3",
-                        key="db_final_download_action"
-                    )
-                except Exception as e:
-                    st.sidebar.error(f"File Load Error: {e}")
-    else:
-        st.sidebar.warning(L['db_save_empty'])
+                    sl_col, min_col, max_col = st.columns([2.0, 1.0, 1.0])
 
-
-# =================================================================
-# 2. 메인 화면
-# =================================================================
-_LOGO_HTML = "<img src='data:image/png;base64,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' style='max-width:240px;width:100%;object-fit:contain;'>"
-col_logo, col_title, col_lang_switch = st.columns([1.6, 7.5, 0.9])
-with col_logo:
-    st.markdown(
-        "<div style='display:flex;align-items:center;height:100%;padding-top:0px;'>"
-        + _LOGO_HTML + "</div>",
-        unsafe_allow_html=True
-    )
-with col_title:
-    st.markdown(
-        f"<h1 style='text-align: center; margin-bottom: 0; margin-top: 0; line-height: 1.1; padding-top: 0;'>"
-        f"{L['main_title_1']}<span style='color:#00e5ff;'>{L['main_title_2']}</span></h1>",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        f"<p style='color:#b0bec5; margin-bottom: 1rem; text-align:center;'>{L['main_desc']}</p>",
-        unsafe_allow_html=True
-    )
-with col_lang_switch:
-    if st.button("KO / EN", key="lang_btn_main"):
-        st.session_state.lang = "ko" if st.session_state.lang == "en" else "en"
-        st.rerun()
-
-is_active = len(st.session_state.get('models', {})) > 0
-status_text = L['status_active'] if is_active else L['status_standby']
-dot_color = "#00e5ff" if is_active else "#b0bec5"
-var_count = len(st.session_state.get('ui_display_vars', []))
-exp_weight = int(st.session_state.get('expert_reliability', 0.0) * 100)
-
-opt_status = st.session_state.get('optimization_success', "N/A")
-algo_info = st.session_state.get('selected_algorithm', "N/A")
-
-if opt_status == "Converged":
-    opt_display = f"{L['opt_converged']} ({algo_info})"
-elif opt_status == "Failed":
-    opt_display = f"{L['opt_failed']}"
-else:
-    opt_display = "N/A"
-
-m1, m2, m3, m4 = st.columns(4)
-m1.markdown(
-    f'''<div class="metric-container">
-        <div class="metric-label">{L['m_status']}</div>
-        <div class="metric-value">
-            <span style="color:{dot_color}; margin-right:5px;">●</span>
-            <span style="color:#FFFFFF;">{status_text}</span>
-        </div>
-    </div>''',
-    unsafe_allow_html=True
-)
-m2.markdown(
-    f'''<div class="metric-container">
-        <div class="metric-label">{L['m_vars']}</div>
-        <div class="metric-value">{var_count} EA</div>
-    </div>''',
-    unsafe_allow_html=True
-)
-m3.markdown(
-    f'''<div class="metric-container">
-        <div class="metric-label">{L['m_reliability']}</div>
-        <div class="metric-value">{exp_weight}%</div>
-    </div>''',
-    unsafe_allow_html=True
-)
-m4.markdown(
-    f'''<div class="metric-container">
-        <div class="metric-label">{L['m_opt']}</div>
-        <div class="metric-value" style="font-size: 1.05rem;">{opt_display}</div>
-    </div>''',
-    unsafe_allow_html=True
-)
-st.markdown("<br>", unsafe_allow_html=True)
-
-if not is_active:
-    st.info(L['info_standby'])
-
-if is_active:
-    _tab_live_ko = "▶  실시간 최적화 결과 예측"
-    _tab_live_en = "▶  Real-Time Optimization Prediction"
-    _tab_live_lbl = _tab_live_en if st.session_state.lang == 'en' else _tab_live_ko
-    t1, t_live, t2 = st.tabs([L['tab_diag'], _tab_live_lbl, L['tab_master']])
-
-    with t1:
-        # A. 현재 사출 조건 파라미터 입력 (최적화 후 결과값이 여기에 연동됨)
-        st.markdown(
-            f'<div class="section-title"><span class="square-icon"></span>{L["sec_a"]}</div>',
-            unsafe_allow_html=True
-        )
-        _seca_lbl = ("▶  " + L["sec_a"] + "  (Click to expand/collapse)"
-                     if st.session_state.lang == 'en'
-                     else "▶  " + L["sec_a"] + "  (클릭하여 펼치기 / 닫기)")
-        with st.expander(_seca_lbl, expanded=False):
-            # [추가] 섹션 A 슬라이더 ↔ Min/Max 숫자입력 콜백 함수
-            def _on_sl_a_change(var, ver):
-                val = st.session_state.get(f"sl_{var}_{ver}")
-                if val is not None:
-                    st.session_state['current_inputs'][var] = val
-                    st.session_state[f"ni_a_{var}"] = float(val)
-
-            def _on_ni_a_change(var, sl_min, sl_max, ver):
-                raw = st.session_state.get(f"ni_a_{var}", sl_min)
-                clamped = float(max(sl_min, min(raw, sl_max)))
-                st.session_state['current_inputs'][var] = clamped
-                st.session_state[f"sl_{var}_{ver}"] = clamped
-
-            cols = st.columns(3)
-            for i, var in enumerate(st.session_state['ui_display_vars']):
-                with cols[i % 3]:
-                    curr_val = st.session_state['current_inputs'].get(var, 0)
-                    bounds   = st.session_state['global_bounds'].get(var, (0.0, 100.0))
-                    sl_min   = float(bounds[0])
-                    sl_max   = float(bounds[1])
-                    if sl_min == sl_max:
-                        sl_max = sl_min + 1.0
-                    curr_clamped = float(max(sl_min, min(float(curr_val), sl_max)))
-                    step_v = max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1)
-
-                    if f"ni_a_{var}" not in st.session_state:
-                        st.session_state[f"ni_a_{var}"] = curr_clamped
-
-                    sl_col, ni_col = st.columns([3, 1])
                     with sl_col:
-                        st.session_state['current_inputs'][var] = st.slider(
-                            f"{var}",
-                            sl_min, sl_max, curr_clamped,
+                        st.slider(
+                            f"{v} Range", db_min, db_max,
                             step=step_v,
-                            key=f"sl_{var}_{st.session_state['ver']}",
-                            on_change=_on_sl_a_change,
-                            args=(var, st.session_state['ver'])
+                            label_visibility="collapsed",
+                            key=f"manual_slider_{v_clean}",
+                            on_change=on_manual_slider_change,
+                            args=(v_clean,)
                         )
-                    with ni_col:
-                        ni_val = st.number_input(
-                            "Value",
-                            min_value=sl_min, max_value=sl_max,
-                            value=float(st.session_state['current_inputs'].get(var, curr_clamped)),
-                            step=step_v,
-                            format="%.2f",
-                            key=f"ni_a_{var}",
-                            on_change=_on_ni_a_change,
-                            args=(var, sl_min, sl_max, st.session_state['ver']),
+
+                    with min_col:
+                        st.number_input(
+                            "Min",
+                            min_value=db_min, max_value=db_max,
+                            step=step_v, format="%.3f",
+                            key=f"manual_min_{v_clean}",
+                            on_change=on_manual_min_change,
+                            args=(v_clean,),
                             label_visibility="visible"
                         )
-                        st.session_state['current_inputs'][var] = ni_val
 
-        # B. 전문가 추천 조건 설정
-        st.markdown(
-            f'<div class="section-title"><span class="square-icon"></span>{L["sec_b_expert"]}</div>',
-            unsafe_allow_html=True
-        )
-        _ms_col, _, _ = st.columns([1, 1, 1])
-        with _ms_col:
-            selected_expert_vars = st.multiselect(
-                L['lbl_constant'],
-                options=st.session_state['ui_display_vars'],
-                default=list(st.session_state['expert_constraints'].keys())
-            )
-        if selected_expert_vars:
-            cols_b = st.columns(3)
-            for i, v_name in enumerate(selected_expert_vars):
-                with cols_b[i % 3]:
-                    st.session_state['expert_constraints'].setdefault(
-                        v_name, {'limit': st.session_state['current_inputs'].get(v_name, 0)}
-                    )
-                    st.session_state['expert_constraints'][v_name]['limit'] = st.number_input(
-                        f"{v_name}{L['lbl_target']}",
-                        value=int(st.session_state['expert_constraints'][v_name]['limit']),
-                        step=1
-                    )
-        st.session_state['expert_reliability'] = (
-            st.slider(L['lbl_expert_rel'], 0, 100, int(st.session_state['expert_reliability'] * 100)) / 100.0
-        )
-
-        # D. 최적화 및 지능형 진단
-        def calculate_total_risk(input_vals_list):
-            all_v = st.session_state['global_process_vars']
-            df_input = pd.DataFrame([input_vals_list], columns=all_v)
-            total_weighted_risk = 0.0
-            weight_sum = 0.0
-            for target_key, model in st.session_state['models'].items():
-                if st.session_state['defect_switches'].get(target_key, True):
-                    scaler = st.session_state['scalers'][target_key]
-                    prob = model.predict_proba(scaler.transform(df_input))[0, 1]
-                    weight = st.session_state['defect_weights'][target_key]
-                    total_weighted_risk += prob * weight
-                    weight_sum += weight
-            weight_sum = weight_sum if weight_sum > 0 else 1e-9
-            avg_defect_risk = total_weighted_risk / weight_sum
-            penalty = sum(
-                abs(input_vals_list[list(all_v).index(v)] - c['limit']) / (c['limit'] + 1e-9)
-                for v, c in st.session_state['expert_constraints'].items()
-                if v in all_v
-            )
-            return min(1.0, avg_defect_risk + (penalty * st.session_state['expert_reliability']))
-
-        def get_individual_risks(input_vals_list):
-            all_v = st.session_state['global_process_vars']
-            df_input = pd.DataFrame([input_vals_list], columns=all_v)
-            risks = {}
-            for target_key, model in st.session_state['models'].items():
-                scaler = st.session_state['scalers'][target_key]
-                risks[target_key] = model.predict_proba(scaler.transform(df_input))[0, 1]
-            return risks
-
-        st.markdown(
-            f'<div class="section-title"><span class="square-icon"></span>{L["sec_d_diag"]}</div>',
-            unsafe_allow_html=True
-        )
-        c_btn1, c_btn2 = st.columns(2)
-
-        with c_btn1:
-            _diag_btn = st.button(L['btn_diagnose'], type="primary")
-            def _run_diagnose():
-                all_v = st.session_state['global_process_vars']
-                input_vals = [float(st.session_state['current_inputs'].get(v, 0.0)) for v in all_v]
-                risk = calculate_total_risk(input_vals)
-                ind_risks = get_individual_risks(input_vals)
-                new_row = {v: st.session_state['current_inputs'].get(v, 0.0) for v in all_v}
-                for tk, rv in ind_risks.items():
-                    new_row[tk] = rv
-                return {'risk': risk, 'ind_risks': ind_risks, 'new_row': new_row}
-            _diag_result = run_blocking_task(
-                "diagnose", _run_diagnose,
-                running_msg=("⏳ Diagnosing current risk..." if st.session_state.lang == 'en' else "⏳ 현재 공정 리스크 진단 중..."),
-                done_msg=("✅ Diagnosis complete! Click OK to view results." if st.session_state.lang == 'en' else "✅ 진단 완료! 확인을 누르면 결과가 표시됩니다."),
-                trigger=_diag_btn, show_spinner=False
-            )
-            if _diag_result is not None:
-                st.session_state['last_res_val'] = _diag_result['risk']
-                st.session_state['last_defect_risks'] = _diag_result['ind_risks']
-                st.session_state['last_opt_df'] = None
-                st.session_state['optimization_success'] = "N/A"
-                st.session_state['selected_algorithm'] = "N/A"
-                st.session_state['show_feature_guide'] = False
-                all_v = st.session_state['global_process_vars']
-                new_df = pd.DataFrame([_diag_result['new_row']])
-                st.session_state['df_injection'] = pd.concat(
-                    [st.session_state['df_injection'], new_df], ignore_index=True
-                )
-                st.session_state['data_changed_since_save'] = True
-                st.rerun()
-
-        with c_btn2:
-            if st.button(L['btn_optimize']):
-                all_v = st.session_state['global_process_vars']
-                x0 = [float(st.session_state['current_inputs'].get(v, 0.0)) for v in all_v]
-                bnds = [st.session_state['global_bounds'].get(v, (0, 100)) for v in all_v]
-
-                algorithms = ['L-BFGS-B', 'SLSQP', 'Powell', 'Nelder-Mead']
-                best_fun = float('inf')
-                best_res = None
-                chosen_algo = "None"
-                
-                # 역추론 최적화 탐색 — 모달 박스로 진행 표시
-                _opt_modal_slot = st.empty()
-                opt_prog_detail = st.empty()
-
-                def _show_opt_modal(pct, algo_msg, detail_msg=""):
-                    _opt_modal_slot.markdown(f"""
-                    <style>
-                    /* backdrop: body::before 방식 사용 */
-                    #optmbox {{position:fixed;top:50%;left:50%;
-                        transform:translate(-50%,-50%);z-index:99995;
-                        background:#0d1525;border:1px solid #1e3a5f;border-radius:18px;
-                        box-shadow:0 28px 90px rgba(0,0,0,0.95);
-                        width:480px;max-width:92vw;padding:44px 44px 40px;text-align:center;}}
-                    .optprog {{width:100%;height:8px;background:#1e293b;border-radius:20px;
-                        overflow:hidden;margin:20px 0 8px 0;}}
-                    .optfill {{height:100%;border-radius:20px;
-                        background:linear-gradient(90deg,#00e5ff,#10b981);
-                        width:{pct}%;transition:width 0.4s ease;}}
-                    </style>
-                    <div id="optmbox">
-                        <div style="font-size:2.4rem;margin-bottom:16px;">🔄</div>
-                        <div style="font-weight:700;color:#38bdf8;font-size:1.15rem;margin-bottom:4px;">
-                            {algo_msg}
-                        </div>
-                        <div class="optprog"><div class="optfill"></div></div>
-                        <div style="color:#94a3b8;font-size:0.8rem;margin-bottom:6px;">{pct}%</div>
-                        <div style="color:#64748b;font-size:0.78rem;">{detail_msg}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                for i, algo in enumerate(algorithms):
-                    pct = int(((i + 1) / len(algorithms)) * 100)
-                    _show_opt_modal(pct,
-                        f"{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo}",
-                        f"({i+1}/4) {algo} 탐색 중..." if st.session_state.lang != "en" else f"({i+1}/4) Searching {algo}...")
-                    time.sleep(0.2)
-
-                    state = {'iter': 0}
-
-                    # ---------------------------------------------------------
-                    # [추가] 실시간 상세 진행 콜백 — 매 스텝마다 현재 위험도를 보여줍니다.
-                    # ---------------------------------------------------------
-                    def callback_min(xk, *args):
-                        state['iter'] += 1
-                        val = calculate_total_risk(xk)
-                        _pct_cb = int(((i + 1) / len(algorithms)) * 100)
-                        _show_opt_modal(_pct_cb,
-                            f"{L['opt_progress']} ({i+1}/{len(algorithms)}): {algo}",
-                            f"{L['opt_step_local']} ({L['opt_step_label']}: {state['iter']}) | {L['opt_current_risk']}: {val*100:.2f}%"
+                    with max_col:
+                        st.number_input(
+                            "Max",
+                            min_value=db_min, max_value=db_max,
+                            step=step_v, format="%.3f",
+                            key=f"manual_max_{v_clean}",
+                            on_change=on_manual_max_change,
+                            args=(v_clean,),
+                            label_visibility="visible"
                         )
 
-                    try:
-                        res_temp = minimize(
-                            calculate_total_risk, x0,
-                            method=algo, bounds=bnds,
-                            callback=callback_min,
-                            options={'maxiter': 500}
-                        )
-                        if res_temp.success and res_temp.fun < best_fun:
-                            best_fun = res_temp.fun
-                            best_res = res_temp
-                            chosen_algo = algo
-                    except Exception:
+                    if _is_na_x:
+                        gray_out_slider(f"{v} Range")
+
+                    chosen_bounds[v] = st.session_state[f'manual_slider_{v_clean}']
+                st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown(f"</div><div class='glass-card'><div class='glass-card-title'>{L_G['kpi_title']}</div>", unsafe_allow_html=True)
+            
+            with st.expander((f"▸ Expand to Adjust Target Range  |  {len(valid_tgts)} targets total" if st.session_state.get('lang','KO')=='EN' else f"▸ 목표 범위 펼쳐서 조정  |  전체 {len(valid_tgts)}개 타겟"), expanded=False):
+                st.markdown("<div style='max-height:430px; overflow-y:auto; padding-right:10px;'>", unsafe_allow_html=True)
+                for idx, tgt in enumerate(valid_tgts):
+                    t_low = tgt.lower()
+                    _na_tgts_ui = st.session_state.get('na_spec_targets', [])
+                    _df_ui = st.session_state.get('df_caulking', pd.DataFrame())
+
+                    if tgt in _na_tgts_ui:
+                        # 데이터 min/max 계산
+                        _d_min, _d_max = 0.0, 1.0
+                        if not _df_ui.empty and tgt in _df_ui.columns:
+                            _td_ui = pd.to_numeric(_df_ui[tgt], errors='coerce').dropna()
+                            if not _td_ui.empty:
+                                _d_min = float(_td_ui.min())
+                                _d_max = float(_td_ui.max())
+                                if _d_min == _d_max: _d_max = _d_min + 1.0
+                        _step_na = max(round((_d_max - _d_min) / 100, 4), 0.001)
+
+                        # N/A 헤더 박스 - 절반 너비
+                        _hdr_col, _ = st.columns(2)
+                        with _hdr_col:
+                            st.markdown(
+                                f"<div style='background:#262626;border:1px solid #3d3d3d;border-radius:6px;"
+                                f"padding:8px 12px;margin-bottom:4px;'>"
+                                f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:nowrap;white-space:nowrap;overflow:hidden;'>"
+                                f"<span style='font-size:0.85rem;font-weight:600;color:#9c9c9c;flex-shrink:0;'>{idx+1}. Target {tgt}</span>"
+                                f"<span style='background:#3d3d3d;color:#9c9c9c;font-size:0.7rem;font-weight:700;"
+                                f"padding:2px 8px;border-radius:4px;flex-shrink:0;'>N/A</span>"
+                                f"<span style='font-size:0.72rem;color:#8a8a8a;overflow:hidden;text-overflow:ellipsis;'>스펙 미설정 · {_d_min:.3f}~{_d_max:.3f}</span>"
+                                f"</div></div>",
+                                unsafe_allow_html=True
+                            )
+                        # 리셋 플래그를 컬럼 진입 전에 처리 (pop은 1번만)
+                        _do_reset = st.session_state.pop(f"_na_reset_{t_low}", False)
+                        if _do_reset or f"{t_low}_n_min" not in st.session_state:
+                            st.session_state[f"{t_low}_n_min"] = _d_min
+                        if _do_reset or f"{t_low}_n_max" not in st.session_state:
+                            st.session_state[f"{t_low}_n_max"] = _d_max
+
+                        # 슬라이더와 Min/Max 단일 행 수평 배치
+                        col_c1, col_c2, col_c3 = st.columns([1.8, 0.6, 0.6])
+                        with col_c1:
+                            if f"{t_low}_s_val" not in st.session_state:
+                                st.session_state[f"{t_low}_s_val"] = (_d_min, _d_max)
+                            _slider_lo_na, _slider_hi_na = _dyn_bounds(_d_min, _d_max, f"{t_low}_n_min", f"{t_low}_n_max")
+                            st.slider(f"{tgt} Slider UI", _slider_lo_na, _slider_hi_na, step=_step_na,
+                                      format="%.3f",
+                                      label_visibility="collapsed", key=f"{t_low}_s_val",
+                                      on_change=on_slider_change, args=(t_low,))
+                        with col_c2:
+                            st.number_input("Min", step=_step_na, format="%.3f",
+                                            key=f"{t_low}_n_min",
+                                            on_change=on_min_change, args=(t_low,))
+                        with col_c3:
+                            st.number_input("Max", step=_step_na, format="%.3f",
+                                            key=f"{t_low}_n_max",
+                                            on_change=on_max_change, args=(t_low,))
+                        gray_out_slider(f"{tgt} Slider UI")
+                        st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
                         continue
 
-                # 하이브리드 멀티스타트(무작위 시작점) 단계도 동일하게 상세 진행 표시
-                _show_opt_modal(95, f"{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)", "전역 탐색 중..." if st.session_state.lang != "en" else "Global multi-start search...")
-                state = {'iter': 0}
+                    # spec_from_file 우선, 없으면 SPEC_GUIDE 폴백
+                    _sf2 = st.session_state.get('spec_from_file', {})
+                    if tgt in _sf2:
+                        spec_min, spec_max = _sf2[tgt]
+                    else:
+                        spec_txt = SPEC_GUIDE.get(tgt, "0.0 ~ 1.0")
+                        try:
+                            spec_min, spec_max = map(float, spec_txt.split(" ~ "))
+                        except:
+                            spec_min, spec_max = 0.0, 1.0
+                    # 슬라이더 범위: spec 범위의 1.5배 (통일성)
+                    _span = max(spec_max - spec_min, 0.01)
+                    max_slider_val = round(spec_max + _span * 0.5, 4)
+                    # step: 범위에 따라 자동 (0.001~0.1)
+                    step_size = max(round(_span / 200, 4), 0.001)
+                    if _span >= 50:    step_size = 1.0
+                    elif _span >= 5:   step_size = 0.1
+                    elif _span >= 0.5: step_size = 0.01
+                    elif _span >= 0.1: step_size = 0.005
+                    else:              step_size = 0.001
+                    
+                    st.markdown(f"<p style='font-size:0.85rem; font-weight:600; color:#ff9f1c; margin-bottom:5px;'>{idx+1}. Target {tgt} Range (Spec: {spec_min:.1f} ~ {spec_max:.1f})</p>", unsafe_allow_html=True)
+                    
+                    col_c1, col_c2, col_c3 = st.columns([1.8, 0.6, 0.6])
+                    with col_c1:
+                        st.session_state.setdefault(f"{t_low}_s_val", (0.0, float(max_slider_val)))
+                        _slider_lo_1, _slider_hi_1 = _dyn_bounds(0.0, float(max_slider_val), f"{t_low}_n_min", f"{t_low}_n_max")
+                        st.slider(f"{tgt} Slider UI", _slider_lo_1, _slider_hi_1, step=step_size, label_visibility="collapsed", key=f"{t_low}_s_val", on_change=on_slider_change, args=(t_low,))
+                    with col_c2:
+                        st.number_input("Min", step=step_size, key=f"{t_low}_n_min", on_change=on_min_change, args=(t_low,))
+                    with col_c3:
+                        st.number_input("Max", step=step_size, key=f"{t_low}_n_max", on_change=on_max_change, args=(t_low,))
+                    st.markdown("<div style='margin-bottom:15px;'></div>", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
-                def callback_global(xk, *args):
-                    state['iter'] += 1
-                    val = calculate_total_risk(xk)
-                    _show_opt_modal(95,
-                        f"{L['opt_progress']}: Hybrid Multi-Start (L-BFGS-B)",
-                        f"{L['opt_step_global']} ({L['opt_step_label']}: {state['iter']}) | {L['opt_current_risk']}: {val*100:.2f}%"
-                    )
+            undefined_tgts = [t for t in target_vars if t not in valid_tgts]
+            if undefined_tgts:
+                with st.expander(f"Undefined Quality Targets (미정 항목 {len(undefined_tgts)}종 제어단)"):
+                    for tgt in undefined_tgts:
+                        t_low = tgt.lower()
+                        st.markdown(f"<p style='font-size:0.8rem; margin:2px 0; color:#9c9c9c;'>• {tgt} Range</p>", unsafe_allow_html=True)
+                        cx1, cx2, cx3 = st.columns([1.8, 0.6, 0.6])
+                        st.session_state.setdefault(f"{t_low}_s_val", (-0.5, 100.0))
+                        with cx1: st.slider(f"{tgt} S", -0.5, 100.0, step=0.01, label_visibility="collapsed", key=f"{t_low}_s_val", on_change=on_slider_change, args=(t_low,))
+                        with cx2:
+                            st.number_input("Min", step=0.01, key=f"{t_low}_n_min", on_change=on_min_change, args=(t_low,))
+                        with cx3:
+                            st.number_input("Max", step=0.01, key=f"{t_low}_n_max", on_change=on_max_change, args=(t_low,))
+            st.markdown("</div>", unsafe_allow_html=True)
 
-                try:
-                    random_x0 = [np.random.uniform(b[0], b[1]) for b in bnds]
-                    res_global = minimize(
-                        calculate_total_risk, random_x0,
-                        method='L-BFGS-B', bounds=bnds,
-                        callback=callback_global
-                    )
-                    if res_global.success and res_global.fun < best_fun:
-                        best_fun = res_global.fun
-                        best_res = res_global
-                        chosen_algo = "Hybrid Multi-Start (L-BFGS-B)"
-                except Exception:
-                    pass
-                
-                _opt_modal_slot.empty()
-                opt_prog_detail.empty()
+            # N/A 공정 변수 처리 방식 옵션
+            _is1b = st.session_state.get('lang', 'KO') == 'EN'
+            _na_x_opt_list = st.session_state.get('na_x_vars', [])
+            if _na_x_opt_list:
+                _na_hdr_txt = "N/A Process Variable Handling" if _is1b else "N/A 공정 변수 처리 방식"
+                st.markdown(
+                    f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:6px;"
+                    f"padding:8px 14px;margin-bottom:8px;'>"
+                    f"<span style='font-size:0.78rem;color:#ff9f1c;font-weight:600;'>{_na_hdr_txt}</span>"
+                    f"<span style='font-size:0.70rem;color:#8a8a8a;margin-left:8px;'>"
+                    f"({', '.join(_na_x_opt_list[:5])}{'...' if len(_na_x_opt_list)>5 else ''})</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+                _na_x_mode = st.radio(
+                    "N/A Variable Handling" if _is1b else "N/A 변수 처리",
+                    options=(["Range Search (current)", "Fix at Mean"] if _is1b else ["범위 탐색 (현재)", "평균값 고정"]),
+                    index=0,
+                    horizontal=True,
+                    key="na_x_opt_mode",
+                    label_visibility="collapsed",
+                    help=("Range Search: auto-select the best value within data min~max | Fix at Mean: fix to the data average and exclude from search"
+                          if _is1b else "범위 탐색: 데이터 min~max 안에서 최적값 자동 선택 | 평균값 고정: 데이터 평균값으로 고정 후 제외")
+                )
+            else:
+                _na_x_mode = "Range Search (current)" if _is1b else "범위 탐색 (현재)"
 
-                if best_res is not None:
-                    final_x = [
-                        np.clip(val, bnds[i][0], bnds[i][1])
-                        for i, val in enumerate(best_res.x)
-                    ]
-                    opt_dict = {v: int(round(val)) for v, val in zip(all_v, final_x)}
+            _tab1_opt_btn = st.button(L_G['run_opt'], type="primary", key="main_run_opt")
+            def _run_tab1_opt_search():
+                base_x = [st.session_state[f'sim_{v.lower()}'] for v in X_list]
+                q_base = st.session_state['scaler'].transform(pd.DataFrame([base_x], columns=X_list))[0]
 
-                    st.session_state['last_res_val'] = calculate_total_risk(final_x)
-                    st.session_state['last_defect_risks'] = get_individual_risks(final_x)
-                    st.session_state['last_opt_df'] = pd.DataFrame([
-                        {v: opt_dict.get(v, 0) for v in st.session_state['ui_display_vars']}
-                    ])
-                    st.session_state['optimization_success'] = "Converged"
-                    st.session_state['selected_algorithm'] = chosen_algo
-                    st.session_state['show_feature_guide'] = False
+                # N/A X변수 처리 방식 적용
+                _na_x_vars_opt = st.session_state.get('na_x_vars', [])
+                _na_x_means = {}
+                if any(k in st.session_state.get('na_x_opt_mode', '') for k in ("평균값 고정", "Fix at Mean")) and _na_x_vars_opt:
+                    _df_ref = st.session_state.get('df_imputed_ref')
+                    if _df_ref is not None:
+                        for _nxv in _na_x_vars_opt:
+                            if _nxv in _df_ref.columns:
+                                _na_x_means[_nxv] = float(pd.to_numeric(_df_ref[_nxv], errors='coerce').mean())
+                    st.info(f"N/A 변수 {len(_na_x_means)}개 평균값 고정 적용")
 
-                    # 최적화된 파라미터 값을 현재 입력 상태에 덮어씌우고 버전을 올려 슬라이더 연동 처리
-                    st.session_state['current_inputs'].update(opt_dict)
-                    st.session_state['ver'] += 1
-
-                    new_row = {v: opt_dict.get(v, 0) for v in all_v}
-                    for target_key, r_val in st.session_state['last_defect_risks'].items():
-                        new_row[target_key] = r_val
-
-                    new_df = pd.DataFrame([new_row])
-                    st.session_state['df_injection'] = pd.concat(
-                        [st.session_state['df_injection'], new_df], ignore_index=True
-                    )
-                    st.session_state['data_changed_since_save'] = True
-                    st.rerun()
+                df_train = st.session_state.get('df_imputed_ref')
+                _na_tgts_opt = st.session_state.get('na_spec_targets', [])
+                feasibility = {}
+                if df_train is not None:
+                    q_train = st.session_state['scaler'].transform(df_train[X_list])
+                    for tgt in target_vars:
+                        if tgt in _na_tgts_opt:          # N/A 타겟 — feasibility 계산 제외
+                            continue
+                        mk = f'model_{tgt.lower()}'
+                        if st.session_state[mk] is not None:
+                            preds = st.session_state[mk].predict(q_train)
+                            pred_min, pred_max = float(np.min(preds)), float(np.max(preds))
+                            t_lo, t_hi = st.session_state[f'{tgt.lower()}_s_val']
+                            overlap = max(0.0, min(pred_max, t_hi) - max(pred_min, t_lo))
+                            spec_span = max(t_hi - t_lo, 1e-9)
+                            pred_span = max(pred_max - pred_min, 1e-9)
+                            overlap_ratio = overlap / min(spec_span, pred_span)
+                            feasibility[tgt] = {
+                                'pred_min': pred_min, 'pred_max': pred_max,
+                                'overlap_ratio': overlap_ratio,
+                                'weight': max(0.05, min(1.0, overlap_ratio))
+                            }
+                        else:
+                            feasibility[tgt] = {'pred_min': 0, 'pred_max': 0, 'overlap_ratio': 1.0, 'weight': 1.0}
                 else:
-                    st.session_state['optimization_success'] = "Failed"
-                    st.session_state['selected_algorithm'] = "N/A"
+                    for tgt in target_vars:
+                        if tgt in _na_tgts_opt:
+                            continue
+                        feasibility[tgt] = {'pred_min': 0, 'pred_max': 0, 'overlap_ratio': 1.0, 'weight': 1.0}
 
-        if st.session_state['last_res_val'] is not None:
-            val = st.session_state['last_res_val']
-            total_risk_percent = int(round(val * 100))
-            total_color = (
-                "#00e5ff" if total_risk_percent < 30
-                else "#ffab00" if total_risk_percent < 70
-                else "#ff5252"
+                st.session_state['feasibility'] = feasibility
+
+                infeasible_count = sum(1 for v in feasibility.values() if v['overlap_ratio'] < 0.1)
+                lambda_reg = 0.5 + (infeasible_count * 0.3)
+
+                def target_loss(x):
+                    df_x = pd.DataFrame([x], columns=X_list)
+                    q = st.session_state['scaler'].transform(df_x)
+                    total_loss = 0.0
+                    for tgt in target_vars:
+                        if tgt in _na_tgts_opt:          # N/A 타겟 — 손실 계산 제외
+                            continue
+                        model_key = f'model_{tgt.lower()}'
+                        if st.session_state[model_key] is None:
+                            continue
+                        pred = st.session_state[model_key].predict(q)[0]
+                        t_range = st.session_state[f'{tgt.lower()}_s_val']
+                        w = feasibility.get(tgt, {}).get('weight', 1.0)
+                        if w >= 0.99:
+                            boundary_loss = (max(0, t_range[0] - pred) + max(0, pred - t_range[1]))**2
+                        else:
+                            nearest_spec = t_range[0] if pred < t_range[0] else (t_range[1] if pred > t_range[1] else pred)
+                            boundary_loss = w * (pred - nearest_spec)**2
+                        total_loss += boundary_loss
+                    dist_penalty = np.sum((q[0] - q_base)**2)
+                    return total_loss + (lambda_reg * dist_penalty)
+
+                init_x = base_x.copy()
+                # 평균값 고정 모드: N/A X변수를 평균값으로 초기화
+                if _na_x_means:
+                    for _i, _v in enumerate(X_list):
+                        if _v in _na_x_means:
+                            init_x[_i] = _na_x_means[_v]
+
+                bands = []
+                for _v in X_list:
+                    if _na_x_means and _v in _na_x_means:
+                        _mv = _na_x_means[_v]
+                        bands.append((_mv, _mv + 1e-9))   # 고정: 범위를 평균값으로 좁힘
+                    else:
+                        bands.append(db[_v])
+
+                algorithms = ['L-BFGS-B', 'SLSQP', 'Powell', 'Nelder-Mead']
+                best_loss = float('inf')
+                best_res = None
+                selected_algo = 'SLSQP'
+                algo_loss_dict = {}   # 각 알고리즘별 손실값 저장
+
+                _is1d = st.session_state.get('lang', 'KO') == 'EN'
+                opt_progress_bar = st.progress(0, text=("Preparing inverse optimization search... (0%)" if _is1d else "역추론 최적화 탐색 준비 중... (0%)"))
+                total_algos_n = len(algorithms)
+                
+                for a_idx, algo in enumerate(algorithms):
+                    opt_progress_pct = int((a_idx / total_algos_n) * 100)
+                    _prog_txt = (f" Searching algorithm ({a_idx+1}/{total_algos_n}): {algo} ({opt_progress_pct}%)" if _is1d
+                                 else f" 알고리즘 탐색 중 ({a_idx+1}/{total_algos_n}): {algo} ({opt_progress_pct}%)")
+                    opt_progress_bar.progress(a_idx / total_algos_n, text=_prog_txt)
+                    try:
+                        if algo in ['L-BFGS-B', 'SLSQP']: res_temp = minimize(target_loss, init_x, method=algo, bounds=bands)
+                        else: res_temp = minimize(target_loss, init_x, method=algo)
+                        final_x = np.clip(res_temp.x, [b[0] for b in bands], [b[1] for b in bands])
+                        current_score_loss = target_loss(final_x)
+                        algo_loss_dict[algo] = round(float(current_score_loss), 6)   # 저장
+                        
+                        if current_score_loss < best_loss:
+                            best_loss = current_score_loss
+                            best_res = res_temp
+                            best_res.x = final_x
+                            selected_algo = algo
+                    except Exception as e:
+                        algo_loss_dict[algo] = None
+                        continue
+                
+                opt_progress_bar.progress(1.0, text=(f"✅ Optimization complete (100%) - Selected algorithm: {selected_algo}" if _is1d
+                                                       else f"✅ 최적화 완료 (100%) - 선택된 알고리즘: {selected_algo}"))
+                q_opt = st.session_state['scaler'].transform(pd.DataFrame([best_res.x], columns=X_list))
+                
+                update_opt_dict = {
+                    'opt_result_x': best_res.x, 
+                    'confidence_score': round(max(0.0, 100.0 - (best_loss * 5)), 1),
+                    'best_algorithm_used': selected_algo,
+                    'algo_loss_dict': algo_loss_dict,
+                    'na_x_mode_used': "평균값 고정" if _na_x_means else "범위 탐색",
+                    'na_x_means_used': _na_x_means,
+                    'ai_analysis_result': None
+                }
+                for tgt in target_vars:
+                    model_key = f'model_{tgt.lower()}'
+                    if st.session_state[model_key] is not None: update_opt_dict[f'opt_pred_{tgt.lower()}'] = float(st.session_state[model_key].predict(q_opt)[0])
+                    else: update_opt_dict[f'opt_pred_{tgt.lower()}'] = 0.0
+                        
+                return update_opt_dict
+
+            _tab1_opt_update = run_blocking_task(
+                "tab1_opt_search", _run_tab1_opt_search,
+                running_msg=("Running inverse optimization search across 4 algorithms..." if st.session_state.get('lang','KO')=='EN' else "4개 알고리즘으로 역추론 최적화 탐색 중..."),
+                trigger=_tab1_opt_btn, show_spinner=False
             )
+            if _tab1_opt_update is not None:
+                st.session_state.update(_tab1_opt_update)
+                st.rerun()
+
+        with layout_r:
+                    _is1d = st.session_state.get('lang', 'KO') == 'EN'
+                    if st.session_state.get('opt_result_x') is not None:
+                        st.markdown(f"<div class='glass-card'><div class='glass-card-title' style='color:#ffb84d;'>{L_G['pred_title']}</div>", unsafe_allow_html=True)
+                        with st.expander((f"▸ Backward Optimization Algorithm Competition  |  Selected: {st.session_state['best_algorithm_used']}" if _is1d
+                                           else f"▸ 역방향 최적화 알고리즘 경쟁 결과  |  채택: {st.session_state['best_algorithm_used']}"), expanded=False):
+                            _algo_info = ({
+                                'L-BFGS-B':    'Gradient-based, bound-constrained',
+                                'SLSQP':       'Gradient-based, bound-constrained',
+                                'Powell':      'Directional search, clipped',
+                                'Nelder-Mead': 'Simplex-based, clipped',
+                            } if _is1d else {
+                                'L-BFGS-B':    '기울기 기반, 경계 준수',
+                                'SLSQP':       '기울기 기반, 경계 준수',
+                                'Powell':      '방향 탐색, clip 처리',
+                                'Nelder-Mead': '도형 변형, clip 처리',
+                            })
+                            _sel = st.session_state['best_algorithm_used']
+                            _loss_d = st.session_state.get('algo_loss_dict', {})
+                            _rows_algo = ""
+                            for _a, _m in _algo_info.items():
+                                _is_sel = _a == _sel
+                                _bg = "#0f2410" if _is_sel else "#2a1f0f"
+                                _nc = "#10b981" if _is_sel else "#9c9c9c"
+                                _star = "★ " if _is_sel else ""
+                                _lv = _loss_d.get(_a)
+                                if _lv is None:
+                                    _loss_str = f"<span style='color:#4d4d4d;'>{'Failed' if _is1d else '실행 실패'}</span>"
+                                    _conf_str = "<span style='color:#4d4d4d;'>—</span>"
+                                    _bar_w = 0
+                                else:
+                                    _conf_v = round(max(0.0, 100.0 - (_lv * 5)), 1)
+                                    _lc = "#10b981" if _lv < 0.01 else "#f59e0b" if _lv < 1.0 else "#f87171"
+                                    _loss_str = f"<span style='color:{_lc};font-weight:700;font-family:monospace;'>{_lv:.4f}</span>"
+                                    _conf_str = f"<span style='color:{_lc};font-weight:700;'>{_conf_v}%</span>"
+                                    _bar_w = min(int(_conf_v), 100)
+                                _badge = (f"<span style='background:#0f2410;color:#10b981;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>✅ {'Selected' if _is1d else '채택'}</span>" if _is_sel else "")
+                                _bar = f"<div style='background:#262626;border-radius:2px;height:6px;margin-top:2px;'><div style='width:{_bar_w}%;background:{'#10b981' if _bar_w>80 else '#f59e0b' if _bar_w>50 else '#f87171'};height:6px;border-radius:2px;'></div></div>"
+                                _rows_algo += (
+                                    f"<tr style='background:{_bg};'>"
+                                    f"<td style='padding:6px 8px;color:{_nc};font-weight:700;font-family:monospace;white-space:nowrap;'>{_star}{_a}</td>"
+                                    f"<td style='padding:6px 8px;color:#8a8a8a;font-size:0.72rem;'>{_m}</td>"
+                                    f"<td style='padding:6px 8px;text-align:center;'>{_loss_str}</td>"
+                                    f"<td style='padding:6px 8px;min-width:80px;'>{_conf_str}{_bar}</td>"
+                                    f"<td style='padding:6px 8px;text-align:center;'>{_badge}</td>"
+                                    f"</tr>"
+                                )
+                            _th_algo1, _th_algo2, _th_algo3, _th_algo4, _th_algo5 = (
+                                ("Algorithm", "Method", "Loss ↓lower is better", "Confidence", "Selected") if _is1d
+                                else ("알고리즘", "방식", "손실값 ↓낮을수록 좋음", "신뢰도", "채택")
+                            )
+                            _algo_footer = ("The algorithm with the lowest loss is auto-selected. &nbsp;Confidence = max(0, 100 − loss×5)" if _is1d
+                                             else "손실값이 가장 낮은 알고리즘이 자동 채택됩니다. &nbsp;신뢰도 = max(0, 100 − 손실값×5)")
+                            st.markdown(
+                                f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                                f"<table style='width:100%;border-collapse:collapse;'>"
+                                f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_algo1}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;'>{_th_algo2}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th_algo3}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;'>{_th_algo4}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th_algo5}</th>"
+                                f"</tr></thead>"
+                                f"<tbody>{_rows_algo}</tbody>"
+                                f"</table>"
+                                f"<div style='margin-top:8px;font-size:0.72rem;color:#4d4d4d;'>{_algo_footer}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+                
+                        st.markdown("<div style='margin: -10px 0 10px 0;'></div>", unsafe_allow_html=True)
+                        # Auto-selected Algorithms → expander
+                        _mm_disp = st.session_state.get('model_metadata', {})
+                        def _ac(n):
+                            if 'XGBoost' in n:          return '#f59e0b'
+                            if 'RandomForest' in n:     return '#10b981'
+                            if 'GradientBoosting' in n: return '#a78bfa'
+                            if 'ExtraTrees' in n:       return '#ff9f1c'
+                            return '#9c9c9c'
+                        def _pm(s):
+                            a = s.split('(')[0].strip() if '(' in s else s
+                            r = s.split('R²=')[-1].split(',')[0].rstrip(')') if 'R²=' in s else '-'
+                            f = s.split('fit=')[-1].rstrip(')') if 'fit=' in s else '-'
+                            return a, r, f
+                        with st.expander(("▸ Prediction Model Selection Results (Auto-selected Algorithms)" if _is1d
+                                           else "▸ 예측 모델 선택 결과 (Auto-selected Algorithms)"), expanded=False):
+                            _msr_rows = ""
+                            for _t in valid_tgts:
+                                _mk = f'algo_{_t.lower()}'
+                                if _mk not in _mm_disp: continue
+                                _al, _r2v, _fitv = _pm(_mm_disp[_mk])
+                                _clr = _ac(_al)
+                                _bdg = '★ ' if _al in ('XGBoost','RandomForest','GradientBoosting','ExtraTrees') else ''
+                                try:    _r2f = float(_r2v)
+                                except: _r2f = 0.0
+                                try:    _fitf = float(_fitv)
+                                except: _fitf = None
+                                # R²는 음수까지 나올 수 있음(교차검증에서 "평균 예측보다 못함"을 뜻함) →
+                                # 막대 폭은 0~100% 범위로 반드시 clamp (안 그러면 음수 폭으로 막대가 깨져 보임)
+                                _bar_r2 = max(0, min(int(_r2f*100), 100))
+                                if _r2f >= 0.9: _r2_color = '#10b981'
+                                elif _r2f >= 0.7: _r2_color = '#f59e0b'
+                                else: _r2_color = '#f87171'
+                                _neg_warn = (" (음수 = 평균값 예측보다도 못함, 데이터 부족)" if (not _is1d and _r2f < 0)
+                                             else " (negative = worse than predicting the mean; not enough data)" if _r2f < 0 else "")
+                                _gap_html = ""
+                                if _fitf is not None:
+                                    _gap = _fitf - _r2f
+                                    _gap_lbl = ("fit" if _is1d else "학습적합도")
+                                    _gap_warn = " ⚠️" if _gap > 0.3 else ""
+                                    _gap_html = (
+                                        f"<div style='font-size:0.68rem;color:#8a8a8a;margin-top:2px;'>"
+                                        f"{_gap_lbl}={_fitf:.3f}{_gap_warn}</div>"
+                                    )
+                                _msr_rows += (
+                                    f"<tr>"
+                                    f"<td style='padding:5px 8px;color:#ececec;font-weight:700;'>{_t}</td>"
+                                    f"<td style='padding:5px 8px;color:{_clr};font-weight:700;font-size:0.82rem;'>{_bdg}{_al}</td>"
+                                    f"<td style='padding:5px 8px;min-width:90px;'>"
+                                    f"<span style='color:{_r2_color};font-weight:700;font-family:monospace;'>{_r2v}</span>"
+                                    f"<span style='color:#8a8a8a;font-size:0.68rem;'>{_neg_warn}</span>"
+                                    f"<div style='background:#262626;border-radius:2px;height:4px;margin-top:2px;'>"
+                                    f"<div style='width:{_bar_r2}%;background:{_r2_color};height:4px;border-radius:2px;'></div></div>"
+                                    f"{_gap_html}"
+                                    f"</td>"
+                                    f"</tr>"
+                                )
+                            _th_ms1, _th_ms2, _th_ms3 = (("Target", "Selected Algorithm", "R² (Cross-Validated)") if _is1d
+                                                          else ("타겟", "선택 알고리즘", "R² (교차검증)"))
+                            _ms_footer = ("★ Tree ensemble &nbsp;|&nbsp;"
+                                          "<span style='color:#f59e0b;'>■</span> XGBoost &nbsp;"
+                                          "<span style='color:#10b981;'>■</span> RandomForest &nbsp;"
+                                          "<span style='color:#a78bfa;'>■</span> GradBoost &nbsp;"
+                                          "<span style='color:#ff9f1c;'>■</span> ExtraTrees &nbsp;"
+                                          "<span style='color:#9c9c9c;'>■</span> Linear<br>"
+                                          "R² is cross-validated accuracy (tested on data the model did NOT train on) — the honest measure of real-world reliability. "
+                                          "A negative R² means the model performs worse than simply predicting the average — usually a sign of too little data. "
+                                          "The small 'fit' value below each bar is training-data accuracy for reference; a large gap between fit and R² (⚠️) suggests overfitting."
+                                          if _is1d else
+                                          "★ 트리 앙상블 &nbsp;|&nbsp;"
+                                          "<span style='color:#f59e0b;'>■</span> XGBoost &nbsp;"
+                                          "<span style='color:#10b981;'>■</span> RandomForest &nbsp;"
+                                          "<span style='color:#a78bfa;'>■</span> GradBoost &nbsp;"
+                                          "<span style='color:#ff9f1c;'>■</span> ExtraTrees &nbsp;"
+                                          "<span style='color:#9c9c9c;'>■</span> Linear<br>"
+                                          "R²는 교차검증 정확도(모델이 학습에 쓰지 않은 데이터로 시험한 값)로, 실제 신뢰도를 정직하게 보여줍니다. "
+                                          "R²가 음수면 그냥 평균값으로 찍는 것보다도 예측이 못하다는 뜻이며, 대개 데이터가 너무 적을 때 나타납니다. "
+                                          "막대 아래 작은 'fit' 값은 참고용 학습 데이터 자체 적합도이며, fit과 R² 차이가 크면(⚠️) 과적합 가능성이 있습니다.")
+                            st.markdown(
+                                f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                                f"<table style='width:100%;border-collapse:collapse;'>"
+                                f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_ms1}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;'>{_th_ms2}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;'>{_th_ms3}</th>"
+                                f"</tr></thead>"
+                                f"<tbody>{_msr_rows}</tbody>"
+                                f"</table>"
+                                f"<div style='margin-top:8px;font-size:0.68rem;color:#4d4d4d;'>{_ms_footer}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+                
+                        # 타겟별 손실 현황 상세 표시
+                        _feas_info = st.session_state.get('feasibility', {})
+                        _na_tgts_d = st.session_state.get('na_spec_targets', [])
+                        _loss_rows = ""
+                        _total_loss = 0.0
+                        _low_rel_tgts = []   # CV R²가 낮아 신뢰도 경고가 붙은 타겟 목록
+                        for _tgt in valid_tgts:
+                            _pv = st.session_state.get(f'opt_pred_{_tgt.lower()}')
+                            if _pv is None:
+                                continue
+                            # 이 타겟 모델의 CV R²를 가져와서 신뢰도 낮으면 "달성" 배지에 경고를 덧붙임
+                            _tgt_r2f = None
+                            _tgt_meta = _mm_disp.get(f'algo_{_tgt.lower()}', '')
+                            if _tgt_meta:
+                                try: _tgt_r2f = float(_pm(_tgt_meta)[1])
+                                except Exception: _tgt_r2f = None
+                            if _tgt in _na_tgts_d:
+                                _excl_txt = "Excluded" if _is1d else "제외"
+                                _loss_rows += (
+                                    f"<tr>"
+                                    f"<td style='padding:4px 8px;color:#8a8a8a;font-weight:600;'>{_tgt}</td>"
+                                    f"<td style='padding:4px 8px;color:#8a8a8a;text-align:center;'>{_pv:.3f}</td>"
+                                    f"<td style='padding:4px 8px;color:#4d4d4d;text-align:center;font-size:0.72rem;'>N/A</td>"
+                                    f"<td style='padding:4px 8px;color:#4d4d4d;text-align:center;'>—</td>"
+                                    f"<td style='padding:4px 8px;text-align:center;'><span style='background:#262626;color:#4d4d4d;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>{_excl_txt}</span></td>"
+                                    f"</tr>"
+                                )
+                                continue
+                            _t_range = st.session_state.get(f'{_tgt.lower()}_s_val', (None, None))
+                            if _t_range[0] is None:
+                                continue
+                            _lo, _hi = _t_range
+                            _over = max(0, _lo - _pv) + max(0, _pv - _hi)
+                            _loss_v = _over ** 2
+                            _total_loss += _loss_v
+                            _spec_str = f"{_lo}~{_hi}"
+                            _in_spec = _lo <= _pv <= _hi
+                            _loss_color = "#10b981" if _loss_v == 0 else "#f87171"
+                            if _is1d:
+                                _status_badge = (
+                                    f"<span style='background:#0f2410;color:#10b981;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>✅ Achieved</span>"
+                                    if _in_spec else
+                                    f"<span style='background:#2d0f0f;color:#f87171;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>⚠️ Deviated</span>"
+                                )
+                            else:
+                                _status_badge = (
+                                    f"<span style='background:#0f2410;color:#10b981;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>✅ 달성</span>"
+                                    if _in_spec else
+                                    f"<span style='background:#2d0f0f;color:#f87171;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>⚠️ 이탈</span>"
+                                )
+                            # 달성으로 나왔어도, 그 모델의 CV R²가 낮으면(<0.5, 특히 음수) 그 결과를 곧이곧대로
+                            # 믿기 어렵다는 경고를 badge 옆에 덧붙임 — "완벽 달성"만 보고 안심하지 않도록
+                            _rel_badge = ""
+                            if _in_spec and _tgt_r2f is not None and _tgt_r2f < 0.5:
+                                _low_rel_tgts.append(_tgt)
+                                _rel_txt = (f"Low reliability (CV R²={_tgt_r2f:.2f})" if _is1d
+                                            else f"신뢰도 낮음 (CV R²={_tgt_r2f:.2f})")
+                                _rel_badge = (
+                                    f"<br><span style='background:#2d1a0a;color:#f59e0b;font-size:0.62rem;"
+                                    f"padding:1px 5px;border-radius:3px;margin-top:2px;display:inline-block;'>⚠️ {_rel_txt}</span>"
+                                )
+                            _loss_rows += (
+                                f"<tr>"
+                                f"<td style='padding:4px 8px;color:#ececec;font-weight:700;'>{_tgt}</td>"
+                                f"<td style='padding:4px 8px;color:#ffffff;text-align:center;font-weight:600;'>{_pv:.3f}</td>"
+                                f"<td style='padding:4px 8px;color:#9c9c9c;text-align:center;font-size:0.8rem;'>{_spec_str}</td>"
+                                f"<td style='padding:4px 8px;color:{_loss_color};text-align:center;font-weight:600;'>{_loss_v:.4f}</td>"
+                                f"<td style='padding:4px 8px;text-align:center;'>{_status_badge}{_rel_badge}</td>"
+                                f"</tr>"
+                            )
+                        if _loss_rows:
+                            _loss_exp_title = (f"▸ Loss Status by Target  |  Total Loss: {_total_loss:.4f} {'✅' if _total_loss < 0.01 else '⚠️'}" if _is1d
+                                                else f"▸ 타겟별 손실 현황  |  전체 손실: {_total_loss:.4f} {'✅' if _total_loss < 0.01 else '⚠️'}")
+                            with st.expander(_loss_exp_title, expanded=False):
+                                _lh1, _lh2, _lh3, _lh4, _lh5 = (("Target", "Predicted", "Spec", "Loss", "Judgement") if _is1d
+                                                                  else ("타겟", "예측값", "스펙", "손실", "판정"))
+                                _total_loss_lbl = "Total Loss" if _is1d else "전체 손실 합계"
+                                _perfect_lbl = "← Perfect ✅" if _is1d else "← 완벽 ✅"
+                                st.markdown(
+                                    f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                                    f"<table style='width:100%;border-collapse:collapse;'>"
+                                    f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_lh1}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh2}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh3}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh4}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh5}</th>"
+                                    f"</tr></thead>"
+                                    f"<tbody>{_loss_rows}</tbody>"
+                                    f"</table>"
+                                    f"<div style='border-top:1px solid #3a3a3a;margin-top:6px;padding-top:6px;"
+                                    f"display:flex;justify-content:space-between;align-items:center;'>"
+                                    f"<span style='font-size:0.75rem;color:#9c9c9c;'>{_total_loss_lbl}</span>"
+                                    f"<span style='font-size:0.9rem;font-weight:700;color:{'#10b981' if _total_loss < 0.01 else '#f87171'};'>"
+                                    f"{_total_loss:.4f} {_perfect_lbl if _total_loss < 0.01 else ''}</span>"
+                                    f"</div></div>",
+                                    unsafe_allow_html=True
+                                )
+                                if _low_rel_tgts:
+                                    _low_rel_msg = (
+                                        f"⚠️ {', '.join(_low_rel_tgts)}: achieved spec on paper, but the underlying model's CV R² is low "
+                                        f"(< 0.5) — this reflects too little training data, not a truly reliable result. Treat with caution."
+                                        if _is1d else
+                                        f"⚠️ {', '.join(_low_rel_tgts)}: 스펙상 '달성'으로 나왔지만, 해당 모델의 교차검증 R²가 낮습니다(0.5 미만) — "
+                                        f"학습 데이터가 부족해서 나온 결과일 수 있어, 실제로는 신뢰하기 어렵습니다. 참고용으로만 활용하세요."
+                                    )
+                                    st.markdown(
+                                        f"<div style='background:#2d1a0a;border:1px solid #f59e0b;border-radius:8px;"
+                                        f"padding:10px 14px;margin-top:8px;font-size:0.78rem;color:#fbbf24;'>{_low_rel_msg}</div>",
+                                        unsafe_allow_html=True
+                                    )
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                        cols_p_card = st.columns(3)
+                        _na_tgts = st.session_state.get('na_spec_targets', [])
+                        for idx, tgt in enumerate(valid_tgts):
+                            p_val = st.session_state[f'opt_pred_{tgt.lower()}']
+                            val_display = f"{p_val:.3f}" if isinstance(p_val, float) else "0.000"
+                            if tgt in _na_tgts:
+                                cols_p_card[idx % 3].markdown(
+                                    f"<div style='padding:8px;background:#1e1e1e;border:1px dashed #4d4d4d;"
+                                    f"border-radius:4px;margin-bottom:6px;opacity:0.8;'>"
+                                    f"<span style='color:#8a8a8a;font-size:0.72rem;'>Predicted {tgt}</span>"
+                                    f"<span style='float:right;background:#3d3d3d;color:#9c9c9c;font-size:0.65rem;"
+                                    f"padding:1px 5px;border-radius:3px;'>N/A</span><br>"
+                                    f"<strong style='font-size:1.05rem;color:#9c9c9c;'>{val_display}</strong></div>",
+                                    unsafe_allow_html=True
+                                )
+                            else:
+                                _sp_lo, _sp_hi = spec_limits.get(tgt, (None, None))
+                                if _sp_lo is not None and isinstance(p_val, float) and (p_val < _sp_lo or p_val > _sp_hi):
+                                    cols_p_card[idx % 3].markdown(
+                                        f"<div style='padding:8px;background:#2d0f0f;border:1px solid #ef4444;"
+                                        f"border-radius:4px;margin-bottom:6px;'>"
+                                        f"<span style='color:#f87171;font-size:0.72rem;'>⚠️ {tgt} [이탈]</span><br>"
+                                        f"<strong style='font-size:1.05rem;color:#ef4444;'>{val_display}</strong>"
+                                        f"<span style='color:#f87171;font-size:0.68rem;'> ({_sp_lo}~{_sp_hi})</span></div>",
+                                        unsafe_allow_html=True
+                                    )
+                                else:
+                                    cols_p_card[idx % 3].markdown(
+                                        f"<div style='padding:8px;background:#262626;border-radius:4px;margin-bottom:6px;'>"
+                                        f"<span style='color:#9c9c9c;font-size:0.72rem;'>Predicted {tgt}</span><br>"
+                                        f"<strong style='font-size:1.05rem;color:#ffffff;'>{val_display}</strong></div>",
+                                        unsafe_allow_html=True
+                                    )
+                
+                        st.metric(L_G['opt_conf'], f"{st.session_state['confidence_score']}%")
+
+                        # 예측 데이터 다운로드 (예측카드 아래)
+                        pred_dict = {tgt: [st.session_state[f'opt_pred_{tgt.lower()}']] for tgt in valid_tgts}
+                        df_pred_export = pd.DataFrame(pred_dict)
+                        col_pred_sel, col_pred_trigger = st.columns([1, 1])
+                        with col_pred_sel:
+                            file_format_pred = st.selectbox(L_G['dl_format'], ["Excel (.xlsx)", "Database (.db)"],
+                                                            key="fmt_pred", label_visibility="collapsed")
+                        with col_pred_trigger:
+                            if "Excel" in file_format_pred:
+                                buffer_p = io.BytesIO()
+                                with pd.ExcelWriter(buffer_p) as writer: df_pred_export.to_excel(writer, index=False, sheet_name='Predicted_Performance')
+                                st.download_button(label=L_G['dl_btn_pred'], data=buffer_p.getvalue(), file_name="predicted_performance.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_btn_pred_trigger")
+                            else:
+                                conn_p = sqlite3.connect(":memory:")
+                                df_pred_export.to_sql("predicted_performance", conn_p, index=False, if_exists="replace")
+                                backup_conn_p = sqlite3.connect("temp_pred.db")
+                                conn_p.backup(backup_conn_p); backup_conn_p.close(); conn_p.close()
+                                with open("temp_pred.db", "rb") as f: db_bytes_p = f.read()
+                                st.download_button(label=L_G['dl_btn_pred'], data=db_bytes_p, file_name="predicted_performance.db", mime="application/x-sqlite3", key="dl_btn_pred_db_trigger")
+                        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+
+                
+                        st.markdown(f"<div class='glass-card'><div class='glass-card-title' style='color:#10b981;'>{L_G['rec_title']}</div>", unsafe_allow_html=True)
+                        ox = st.session_state['opt_result_x']
+                        df_export = pd.DataFrame([ox], columns=X_list)
+                        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+                        _na_x_res = st.session_state.get('na_x_vars', [])
+                        _na_mode_used = st.session_state.get('na_x_mode_used', '범위 탐색')
+                        _na_means_used = st.session_state.get('na_x_means_used', {})
+                        _is1c = st.session_state.get('lang', 'KO') == 'EN'
+                        if _na_x_res:
+                            _mc = "#f59e0b" if "평균값" in _na_mode_used else "#ff9f1c"
+                            _na_mode_disp = ("Fix at Mean" if "평균값" in _na_mode_used else "Range Search") if _is1c else _na_mode_used
+                            _na_hdr2 = "N/A Variable Handling:" if _is1c else "N/A 변수 처리 방식:"
+                            st.markdown(
+                                f"<div style='background:#1c1c1c;border:1px solid {_mc};"
+                                f"border-radius:5px;padding:5px 12px;margin-bottom:10px;"
+                                f"font-size:0.75rem;color:{_mc};'>"
+                                f"{_na_hdr2} <b>{_na_mode_disp}</b>"
+                                f"<span style='color:#8a8a8a;margin-left:8px;'>"
+                                f"({', '.join(_na_x_res[:6])}{'...' if len(_na_x_res)>6 else ''})</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+                        cols = st.columns(3)
+                        for idx, v_name in enumerate(X_list):
+                            _xv = ox[idx] if ox[idx] is not None else 0.0
+                            val_display = f"{_xv:.3f}"
+                            _is_fixed = v_name in _na_x_res and "평균값" in _na_mode_used
+                            if v_name in _na_x_res:
+                                if _is1c:
+                                    _sub_lbl = "Fixed Mean" if _is_fixed else "Range Search"
+                                    _badge_txt = "Fixed" if _is_fixed else "Spec N/A"
+                                else:
+                                    _sub_lbl = "평균 고정" if _is_fixed else "범위 탐색"
+                                    _badge_txt = "고정값" if _is_fixed else "스펙N/A"
+                                _sub_color = "#f59e0b" if _is_fixed else "#8a8a8a"
+                                cols[idx % 3].markdown(
+                                    f"<div style='padding:8px;background:#262626;"
+                                    f"border:1px dashed #3d3d3d;border-radius:4px;margin-bottom:6px;opacity:0.8;'>"
+                                    f"<span style='color:#8a8a8a;font-size:0.72rem;'>{v_name}</span>"
+                                    f"<span style='float:right;background:#3d3d3d;color:{_sub_color};font-size:0.6rem;"
+                                    f"padding:1px 4px;border-radius:3px;line-height:1.4;'>{_badge_txt}</span><br>"
+                                    f"<strong style='font-size:1.05rem;color:#9c9c9c;'>{val_display}</strong></div>",
+                                    unsafe_allow_html=True
+                                )
+                            else:
+                                cols[idx % 3].markdown(
+                                    f"<div style='padding:8px;background:#262626;"
+                                    f"border-radius:4px;margin-bottom:6px;'>"
+                                    f"<span style='color:#9c9c9c;font-size:0.72rem;'>{v_name}</span><br>"
+                                    f"<strong style='font-size:1.05rem;color:#ffffff;'>{val_display}</strong></div>",
+                                    unsafe_allow_html=True
+                                )
+                        # 추천 스펙 다운로드 (스펙 카드 아래)
+                        col_dl_sel, col_dl_trigger = st.columns([1, 1])
+                        with col_dl_sel:
+                            file_format = st.selectbox(L_G['dl_format'], ["Excel (.xlsx)", "Database (.db)"],
+                                                       key="fmt_spec", label_visibility="collapsed")
+                        with col_dl_trigger:
+                            if "Excel" in file_format:
+                                buffer = io.BytesIO()
+                                with pd.ExcelWriter(buffer) as writer: df_export.to_excel(writer, index=False, sheet_name='Optimized_Specs')
+                                st.download_button(label=L_G['dl_btn_spec'], data=buffer.getvalue(), file_name="recommended_process_spec.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_btn_spec_trigger")
+                            else:
+                                conn = sqlite3.connect(":memory:")
+                                df_export.to_sql("recommended_spec", conn, index=False, if_exists="replace")
+                                backup_conn = sqlite3.connect("temp_spec.db")
+                                conn.backup(backup_conn); backup_conn.close(); conn.close()
+                                with open("temp_spec.db", "rb") as f: db_bytes = f.read()
+                                st.download_button(label=L_G['dl_btn_spec'], data=db_bytes, file_name="recommended_process_spec.db", mime="application/x-sqlite3", key="dl_btn_spec_db_trigger")
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+        if st.session_state.get('opt_result_x') is not None:
+            _is1e = st.session_state.get('lang', 'KO') == 'EN'
+            st.markdown(f"### □ {'Result Analysis & Diagnosis' if _is1e else '결과 분석 및 진단'}")
+            has_warning = False
+            feasibility_info = st.session_state.get('feasibility', {})
+
+            result_cards = []
+            _na_tgts_res = st.session_state.get('na_spec_targets', [])
+            for tgt in valid_tgts:
+                pred_val = st.session_state.get(f'opt_pred_{tgt.lower()}')
+                if pred_val is None: continue
+
+                if tgt in _na_tgts_res:
+                    if _is1e:
+                        result_cards.append(('na',
+                            f"⬜ **{tgt}** — Spec N/A\n\n"
+                            f"Predicted: **{pred_val:.3f}**\n\n"
+                            f"Excluded from optimization (no spec set)"
+                        ))
+                    else:
+                        result_cards.append(('na',
+                            f"⬜ **{tgt}** — 스펙 N/A\n\n"
+                            f"예측값: **{pred_val:.3f}**\n\n"
+                            f"스펙 미설정으로 최적화 계산에서 제외"
+                        ))
+                    continue
+
+                t_range = st.session_state[f'{tgt.lower()}_s_val']
+                feas = feasibility_info.get(tgt, {})
+                overlap = feas.get('overlap_ratio', 1.0)
+                pred_min = feas.get('pred_min', None)
+                pred_max = feas.get('pred_max', None)
+
+                if overlap < 0.1 and pred_min is not None:
+                    if _is1e:
+                        result_cards.append(('error',
+                            f"🚫 **{tgt}** Infeasible\n\n"
+                            f"Predicted range: **{pred_min:.2f}~{pred_max:.2f}**\n\n"
+                            f"Target spec: {t_range[0]}~{t_range[1]}\n\n"
+                            f"Prediction: **{pred_val:.3f}**"
+                        ))
+                    else:
+                        result_cards.append(('error',
+                            f"🚫 **{tgt}** 달성 불가\n\n"
+                            f"예측 범위: **{pred_min:.2f}~{pred_max:.2f}**\n\n"
+                            f"설정 스펙: {t_range[0]}~{t_range[1]}\n\n"
+                            f"예측 결과: **{pred_val:.3f}**"
+                        ))
+                    has_warning = True
+                elif t_range[0] is not None and t_range[1] is not None and (pred_val > t_range[1] or pred_val < t_range[0]):
+                    if _is1e:
+                        result_cards.append(('warning', f"⚠️ **{tgt}** Out of Spec\n\nPredicted **{pred_val:.3f}**\n\nTarget spec {t_range[0]}~{t_range[1]}"))
+                    else:
+                        result_cards.append(('warning', f"⚠️ **{tgt}** 스펙 이탈\n\n예측값 **{pred_val:.3f}**\n\n설정 스펙 {t_range[0]}~{t_range[1]}"))
+                    has_warning = True
+                else:
+                    if _is1e:
+                        result_cards.append(('success', f"✅ **{tgt}** Achieved\n\nPredicted **{pred_val:.3f}**\n\nTarget spec {t_range[0]}~{t_range[1]}"))
+                    else:
+                        result_cards.append(('success', f"✅ **{tgt}** 정상 도달\n\n예측값 **{pred_val:.3f}**\n\n설정 스펙 {t_range[0]}~{t_range[1]}"))
+
+            RESULT_COLS_PER_ROW = 5
+            for i in range(0, len(result_cards), RESULT_COLS_PER_ROW):
+                row_cards = result_cards[i:i + RESULT_COLS_PER_ROW]
+                grid_cols = st.columns(RESULT_COLS_PER_ROW)
+                for gc, (rtype, msg) in zip(grid_cols, row_cards):
+                    with gc:
+                        if rtype == 'na':
+                            # N/A 카드 — 다른 카드와 동일 크기
+                            _p = msg.replace('**','').split('\n\n')
+                            _t = _p[0] if _p else ''
+                            gc.markdown(
+                                f"<div style='background:#262626;border:1px dashed #4d4d4d;"
+                                f"border-radius:6px;padding:8px 12px;font-size:0.82rem;margin-bottom:6px;'>"
+                                f"<span style='color:#9c9c9c;font-weight:700;font-size:0.80rem;'>{_t}</span><br>"
+                                f"<span style='color:#8a8a8a;font-size:0.78rem;'>&nbsp;</span>"
+                                f"<span style='color:#4d4d4d;font-size:0.72rem;display:block;'>&nbsp;</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+                        else:
+                            # 정상/이탈/불가 카드 — 컴팩트 HTML (세로 2/3)
+                            _parts = msg.split('\n\n')
+                            _title = _parts[0].replace('**','') if _parts else ''
+                            _pred  = _parts[1].replace('**','') if len(_parts) > 1 else ''
+                            _spec  = _parts[2].replace('**','') if len(_parts) > 2 else ''
+                            if rtype == 'success':
+                                _bg, _bd, _tc, _vc = '#0f2410', '#10b981', '#6ee7b7', '#ffffff'
+                            elif rtype == 'warning':
+                                _bg, _bd, _tc, _vc = '#1a1200', '#f59e0b', '#fcd34d', '#ffffff'
+                            else:
+                                _bg, _bd, _tc, _vc = '#2d0f0f', '#ef4444', '#f87171', '#ffffff'
+                            gc.markdown(
+                                f"<div style='background:{_bg};border:1px solid {_bd};"
+                                f"border-radius:6px;padding:8px 12px;font-size:0.82rem;margin-bottom:6px;'>"
+                                f"<span style='color:{_tc};font-weight:700;font-size:0.80rem;'>{_title}</span><br>"
+                                f"<span style='color:{_vc};font-size:0.78rem;'>{_pred}</span>"
+                                f"<span style='color:#8a8a8a;font-size:0.72rem;display:block;'>{_spec}</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+
+            if has_warning:
+                if _is1e:
+                    st.info(
+                        "**Reliability-Guaranteed Optimization Applied**\n\n"
+                        "Infeasible targets are converted to soft weights in the loss function, so the "
+                        "optimizer is automatically adjusted to avoid drifting to extreme values "
+                        "(Feasibility-Aware Adaptive Optimization). The current result is the most realistic "
+                        "best process condition derivable within the data's limits."
+                    )
+                else:
+                    st.info(
+                        "**신뢰성 보장 최적화 적용됨**\n\n"
+                        "달성 불가 타겟은 손실 함수에서 소프트 가중치(Soft Weight)로 전환되어, "
+                        "옵티마이저가 극단적인 값으로 이탈하지 않도록 자동 조정되었습니다(Feasibility-Aware Adaptive Optimization). "
+                        "현재 결과는 데이터 한계 내에서 가장 현실적으로 도출된 최선의 공정 조건입니다."
+                    )
+            else:
+                if _is1e:
+                    st.info("□  **All Valid Targets Achieved**\n\nBased on the current input data, all targets are predicted to fully reach the specified spec range.")
+                else:
+                    st.info("□  **전체 유효 타겟 정상 도달**\n\n현재 입력된 데이터를 기준으로 모든 타겟이 설정하신 스펙 범위 내에 완벽히 도달할 수 있는 것으로 분석되었습니다.")
+
+        if st.session_state.get('opt_result_x') is not None:
+            st.markdown("---")
+            st.markdown(f"### □ {'Process Improvement Guide (Result Diagnosis Report)' if _is1e else '공정 개선 가이드 (결과 진단 리포트)'}")
+            _fi_col, _ = st.columns([1.3, 1.2], gap="large")
+            with _fi_col:
+                _fi_btn1 = st.button(("□ Generate FI Diagnosis + LLM Integrated Process Guide" if _is1e else "□ FI 진단 + LLM 통합 공정 가이드 생성"), key="btn_combined_tab1", type="primary")
+
+            def _run_fi_report_tab1():
+                pred_kpis_now = {tgt: st.session_state[f'opt_pred_{tgt.lower()}'] for tgt in valid_tgts if st.session_state.get(f'opt_pred_{tgt.lower()}') is not None}
+                current_p_specs = {X_list[i]: st.session_state['opt_result_x'][i] for i in range(len(X_list))}
+                return generate_combined_report(
+                    process_specs=current_p_specs,
+                    predicted_kpis=pred_kpis_now,
+                    feasibility_info=st.session_state.get('feasibility', {}),
+                    confidence_score=st.session_state.get('confidence_score', 0),
+                    mode="Optimization"
+                )
+
+            _fi_result1 = run_blocking_task(
+                "fi_report_tab1", _run_fi_report_tab1,
+                running_msg=("Generating Feature Importance analysis + LLM guideline integration... (10-20 sec)" if _is1e else "Feature Importance 분석 + LLM 가이드라인 통합 생성 중... (10~20초 소요)"),
+                trigger=_fi_btn1
+            )
+            if _fi_result1 is not None:
+                st.session_state['combined_report_text'] = _fi_result1
+
+            if st.session_state.get('combined_report_text'):
+                with st.expander(("□ Integrated Process Analysis Report (FI Diagnosis + LLM)" if _is1e else "□ 통합 공정 분석 보고서 (FI 진단 + LLM)"), expanded=True):
+                    st.markdown(
+                        f"<div class='scrollable-box' style='height:600px;'>"
+                        f"{st.session_state['combined_report_text'].replace(chr(10), '<br>')}"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                    st.download_button(
+                        label=("□ Download Integrated Report" if _is1e else "□ 통합 보고서 다운로드"),
+                        data=st.session_state['combined_report_text'],
+                        file_name=f"JOINT_AI_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                        mime="text/plain",
+                        key="dl_combined_tab1"
+                    )
+
+    with tab2:
+        sim_l, sim_r = st.columns([1.3, 1.2], gap="large")
+        with sim_l:
+            _is2a = st.session_state.get('lang', 'KO') == 'EN'
+            st.markdown(f"<div class='glass-card'><div class='glass-card-title'>{L_G['bound_title']}</div>", unsafe_allow_html=True)
+            st.markdown("<style>.stRadio label span { color: #ececec !important; font-weight: 600 !important; font-size: 0.92rem !important; } .stRadio [data-testid='stMarkdownContainer'] p { color: #ececec !important; } .stRadio div[role='radiogroup'] label { color: #ececec !important; }</style>", unsafe_allow_html=True)
+
+            _sf_dx = st.session_state.get('spec_from_file', {})
+            _x_spec_dx = st.session_state.get('x_spec_parsed_dict', {})
+            chosen_bounds_dx = {}
+            for v in X_list:
+                if v in _x_spec_dx:
+                    chosen_bounds_dx[v] = _x_spec_dx[v]
+                else:
+                    chosen_bounds_dx[v] = db[v]
+            # 정보 박스 내용: 타겟(품질) 스펙 값 표시
+            _spec_lbl_dx = "Spec" if _is2a else "스펙"
+            bound_text_dx = ""
+            for tgt in valid_tgts:
+                _lo_t, _hi_t = spec_limits.get(tgt, (None, None))
+                if _lo_t is None:
+                    continue
+                bound_text_dx += f"• {tgt}: {_lo_t:.3f}~{_hi_t:.3f} <span style='color:#8a8a8a;font-size:0.75rem;'>({_spec_lbl_dx})</span><br>"
+            _bound_hdr_dx = "[Target Value Range — Based on Quality Spec]" if _is2a else "[타겟 값 Range — 품질 스펙 기준]"
+            _bound_sub_dx = " Falls back to default guide value if no CSV row-2 spec" if _is2a else " CSV 2행 스펙 없으면 기본 가이드값"
             st.markdown(
-                f"""<div style='background-color:#12141d; padding:25px; border-radius:10px;
-                    border:1px solid {total_color}44;'>
-                    <h4 style='margin-top:0; color:#cbd5e1;'>{L['dash_title']}</h4>
-                    <h2 style='color:{total_color}; font-size:3rem; margin:0;'>
-                        {total_risk_percent}<span style='font-size:1.2rem;'>%</span>
-                    </h2>
-                </div>""",
+                f"<div style='background:#181818;padding:12px 15px;border-radius:6px;border:1px solid #262626;"
+                f"font-size:0.85rem;line-height:1.6;max-height:200px;overflow-y:auto;'>"
+                f"<span style='color:#ff9f1c;font-weight:600;'>{_bound_hdr_dx}</span>"
+                f"<span style='color:#8a8a8a;font-size:0.75rem;'>{_bound_sub_dx}</span><br>"
+                f"{bound_text_dx}</div>",
                 unsafe_allow_html=True
             )
 
-            for target_key, full_name in TARGET_VARS.items():
-                if target_key in st.session_state['last_defect_risks']:
-                    r_val = st.session_state['last_defect_risks'][target_key]
-                    r_perc = int(round(r_val * 100))
-                    is_active_target = st.session_state['defect_switches'].get(target_key, True)
-                    bar_color = (
-                        "#00e5ff" if r_perc < 30
-                        else "#ffab00" if r_perc < 70
-                        else "#ff5252"
-                    )
-                    opacity_style = "opacity: 1.0;" if is_active_target else "opacity: 0.25;"
+            _card2_title_top_dx = "Design/Process Variable Target Value Range Setting" if _is2a else "설계/공정 변수 타겟 값 범위 설정"
+            st.markdown(f"</div><div class='glass-card'><div class='glass-card-title'>{_card2_title_top_dx}</div>", unsafe_allow_html=True)
 
-                    # [추가] 신뢰성 보강: 이 타겟 모델의 교차검증 신뢰도 · 표본 수를 함께 표시
-                    rel = st.session_state.get('model_reliability', {}).get(target_key)
-                    reliability_caption = ""
-                    if rel is not None:
-                        n_total = rel['n_total']
-                        algo_name = rel.get('algo', 'LR')   # [추가] 알고리즘 이름
-                        if rel['cv_score'] is not None:
-                            rel_pct = int(round(rel['cv_score'] * 100))
-                            rel_color = "#00e5ff" if rel_pct >= 80 else "#ffab00" if rel_pct >= 60 else "#ff5252"
-                            reliability_caption = (
-                                f"<span style='color:{rel_color};'>{L['reliability_label']}: {rel_pct}%</span>"
-                                f" · {n_total}{L['reliability_samples']}"
-                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
+            _na_x_dx = st.session_state.get('na_x_vars', [])
+            with st.expander((f"▸ Expand to Adjust Target Range  |  {len(X_list)} variables total" if st.session_state.get('lang','KO')=='EN' else f"▸ 목표 범위 펼쳐서 조정  |  전체 {len(X_list)}개 변수"), expanded=False):
+                st.markdown("<div style='max-height:430px; overflow-y:auto; padding-right:10px;'>", unsafe_allow_html=True)
+                for idx, v in enumerate(X_list):
+                    v_low = v.lower()
+                    spec_min, spec_max = chosen_bounds_dx[v]
+                    _span_dx = max(spec_max - spec_min, 0.01)
+                    slider_min_dx = round(spec_min - _span_dx * 0.25, 4)
+                    slider_max_dx = round(spec_max + _span_dx * 0.25, 4)
+                    step_size_dx = max(round(_span_dx / 200, 5), 0.001)
+                    _is_na_x_dx = v in _na_x_dx
+
+                    # Min/Max 입력 박스 초기값을 Range 값으로 미리 세팅
+                    st.session_state.setdefault(f"sim_tgt_{v_low}_s_val", (float(spec_min), float(spec_max)))
+                    st.session_state.setdefault(f"sim_tgt_{v_low}_n_min", float(spec_min))
+                    st.session_state.setdefault(f"sim_tgt_{v_low}_n_max", float(spec_max))
+
+                    if _is_na_x_dx:
+                        st.markdown(
+                            f"<div style='display:flex;align-items:center;gap:6px;margin:4px 0 2px 0;'>"
+                            f"<span style='font-size:0.78rem;font-weight:600;color:#9c9c9c;'>{idx+1}. {v}</span>"
+                            f"<span style='background:#3d3d3d;color:#9c9c9c;font-size:0.65rem;font-weight:700;"
+                            f"padding:1px 6px;border-radius:3px;'>N/A</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.markdown(f"<p style='font-size:0.78rem; font-weight:600; color:#ff9f1c; margin:6px 0 2px 0;'>{idx+1}. {v} <span style='color:#8a8a8a;font-weight:400;font-size:0.7rem;'>(Spec: {spec_min:.2f} ~ {spec_max:.2f})</span></p>", unsafe_allow_html=True)
+
+                    col_c1, col_c2, col_c3 = st.columns([1.8, 0.6, 0.6])
+                    with col_c1:
+                        _slider_lo_dx, _slider_hi_dx = _dyn_bounds(float(slider_min_dx), float(slider_max_dx), f"sim_tgt_{v_low}_n_min", f"sim_tgt_{v_low}_n_max")
+                        st.slider(f"{v} Slider UI", _slider_lo_dx, _slider_hi_dx, step=step_size_dx,
+                                  format="%.3f", label_visibility="collapsed", key=f"sim_tgt_{v_low}_s_val",
+                                  on_change=on_sim_slider_change, args=(v_low,))
+                    with col_c2:
+                        st.number_input("Min", step=step_size_dx, format="%.3f", key=f"sim_tgt_{v_low}_n_min",
+                                         on_change=on_sim_min_change, args=(v_low,))
+                    with col_c3:
+                        st.number_input("Max", step=step_size_dx, format="%.3f", key=f"sim_tgt_{v_low}_n_max",
+                                         on_change=on_sim_max_change, args=(v_low,))
+
+                    if _is_na_x_dx:
+                        gray_out_slider(f"{v} Slider UI")
+                        st.markdown("<div style='margin-bottom:6px;'></div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # N/A 공정 변수 처리 방식 옵션 (Tab1과 동일)
+            _na_x_opt_list_dx = st.session_state.get('na_x_vars', [])
+            if _na_x_opt_list_dx:
+                _na_hdr_dx = "N/A Process Variable Handling" if _is2a else "N/A 공정 변수 처리 방식"
+                st.markdown(
+                    f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:6px;"
+                    f"padding:8px 14px;margin-bottom:8px;'>"
+                    f"<span style='font-size:0.78rem;color:#ff9f1c;font-weight:600;'>{_na_hdr_dx}</span>"
+                    f"<span style='font-size:0.70rem;color:#8a8a8a;margin-left:8px;'>"
+                    f"({', '.join(_na_x_opt_list_dx[:5])}{'...' if len(_na_x_opt_list_dx)>5 else ''})</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+                _na_x_mode_dx = st.radio(
+                    "N/A Variable Handling" if _is2a else "N/A 변수 처리",
+                    options=(["Range Search (current)", "Fix at Mean"] if _is2a else ["범위 탐색 (현재)", "평균값 고정"]),
+                    index=0,
+                    horizontal=True,
+                    key="sim_dx_na_opt_mode",
+                    label_visibility="collapsed",
+                    help=("Range Search: auto-select the best value within the set target range | Fix at Mean: fix to the data average and exclude from search"
+                          if _is2a else "범위 탐색: 설정한 목표 범위 안에서 최적값 자동 선택 | 평균값 고정: 데이터 평균값으로 고정 후 제외")
+                )
+            else:
+                _na_x_mode_dx = "Range Search (current)" if _is2a else "범위 탐색 (현재)"
+
+            _tab2_opt_btn = st.button(("Run Forward Optimization Search" if _is2a else "순방향 최적화 탐색 실행"), type="primary", key="main_run_dx2")
+            def _run_tab2_opt_search():
+                base_x_dx = []
+                for v in X_list:
+                    v_low = v.lower()
+                    _lo_b, _hi_b = st.session_state[f'sim_tgt_{v_low}_s_val']
+                    base_x_dx.append(float((_lo_b + _hi_b) / 2))
+                q_base_dx = st.session_state['scaler'].transform(pd.DataFrame([base_x_dx], columns=X_list))[0]
+
+                _na_x_vars_opt_dx = st.session_state.get('na_x_vars', [])
+                _na_x_means_dx = {}
+                if any(k in st.session_state.get('sim_dx_na_opt_mode', '') for k in ("평균값 고정", "Fix at Mean")) and _na_x_vars_opt_dx:
+                    _df_ref_dx = st.session_state.get('df_imputed_ref')
+                    if _df_ref_dx is not None:
+                        for _nxv in _na_x_vars_opt_dx:
+                            if _nxv in _df_ref_dx.columns:
+                                _na_x_means_dx[_nxv] = float(pd.to_numeric(_df_ref_dx[_nxv], errors='coerce').mean())
+                    st.info(f"N/A 변수 {len(_na_x_means_dx)}개 평균값 고정 적용 (설계/공정 변수 타겟팅)")
+
+                df_train_dx = st.session_state.get('df_imputed_ref')
+                _na_tgts_dx_opt = st.session_state.get('na_spec_targets', [])
+                dx_feasibility = {}
+                if df_train_dx is not None:
+                    q_train_dx = st.session_state['scaler'].transform(df_train_dx[X_list])
+                    for tgt in target_vars:
+                        if tgt in _na_tgts_dx_opt:
+                            continue
+                        mk = f'model_{tgt.lower()}'
+                        if st.session_state[mk] is not None:
+                            preds_dx = st.session_state[mk].predict(q_train_dx)
+                            pred_min_dx, pred_max_dx = float(np.min(preds_dx)), float(np.max(preds_dx))
+                            t_lo_dx, t_hi_dx = spec_limits.get(tgt, (0, 1))
+                            overlap_dx = max(0.0, min(pred_max_dx, t_hi_dx) - max(pred_min_dx, t_lo_dx))
+                            spec_span_dx = max(t_hi_dx - t_lo_dx, 1e-9)
+                            pred_span_dx = max(pred_max_dx - pred_min_dx, 1e-9)
+                            overlap_ratio_dx = overlap_dx / min(spec_span_dx, pred_span_dx)
+                            dx_feasibility[tgt] = {
+                                'pred_min': pred_min_dx, 'pred_max': pred_max_dx,
+                                'overlap_ratio': overlap_ratio_dx,
+                                'weight': max(0.05, min(1.0, overlap_ratio_dx))
+                            }
+                        else:
+                            dx_feasibility[tgt] = {'pred_min': 0, 'pred_max': 0, 'overlap_ratio': 1.0, 'weight': 1.0}
+                else:
+                    for tgt in target_vars:
+                        if tgt in _na_tgts_dx_opt:
+                            continue
+                        dx_feasibility[tgt] = {'pred_min': 0, 'pred_max': 0, 'overlap_ratio': 1.0, 'weight': 1.0}
+                st.session_state['sim_dx_feasibility'] = dx_feasibility
+
+                infeasible_count_dx = sum(1 for v in dx_feasibility.values() if v['overlap_ratio'] < 0.1)
+                lambda_reg_dx = 0.5 + (infeasible_count_dx * 0.3)
+
+                def dx_target_loss(x):
+                    df_x = pd.DataFrame([x], columns=X_list)
+                    q = st.session_state['scaler'].transform(df_x)
+                    total_loss = 0.0
+                    for tgt in target_vars:
+                        if tgt in _na_tgts_dx_opt:
+                            continue
+                        model_key = f'model_{tgt.lower()}'
+                        if st.session_state[model_key] is None:
+                            continue
+                        pred = st.session_state[model_key].predict(q)[0]
+                        t_range = spec_limits.get(tgt, (None, None))
+                        if t_range[0] is None:
+                            continue
+                        w = dx_feasibility.get(tgt, {}).get('weight', 1.0)
+                        if w >= 0.99:
+                            boundary_loss = (max(0, t_range[0] - pred) + max(0, pred - t_range[1]))**2
+                        else:
+                            nearest_spec = t_range[0] if pred < t_range[0] else (t_range[1] if pred > t_range[1] else pred)
+                            boundary_loss = w * (pred - nearest_spec)**2
+                        total_loss += boundary_loss
+                    dist_penalty = np.sum((q[0] - q_base_dx)**2)
+                    return total_loss + (lambda_reg_dx * dist_penalty)
+
+                init_x_dx = list(base_x_dx)
+                if _na_x_means_dx:
+                    for _i, _v in enumerate(X_list):
+                        if _v in _na_x_means_dx:
+                            init_x_dx[_i] = _na_x_means_dx[_v]
+
+                bands_dx = []
+                for _v in X_list:
+                    if _na_x_means_dx and _v in _na_x_means_dx:
+                        _mv = _na_x_means_dx[_v]
+                        bands_dx.append((_mv, _mv + 1e-9))
+                    else:
+                        _lo_b2, _hi_b2 = st.session_state[f'sim_tgt_{_v.lower()}_s_val']
+                        bands_dx.append((float(_lo_b2), float(_hi_b2)))
+
+                algorithms_dx = ['L-BFGS-B', 'SLSQP', 'Powell', 'Nelder-Mead']
+                best_loss_dx = float('inf')
+                best_res_dx = None
+                selected_algo_dx = 'SLSQP'
+                algo_loss_dict_dx = {}
+
+                _is2 = st.session_state.get('lang', 'KO') == 'EN'
+                dx_progress_bar = st.progress(0, text=("Preparing forward optimization search... (0%)" if _is2 else "순방향 최적화 탐색 준비 중... (0%)"))
+                total_algos_dx = len(algorithms_dx)
+                for a_idx, algo in enumerate(algorithms_dx):
+                    dx_progress_pct = int((a_idx / total_algos_dx) * 100)
+                    _prog_txt_dx = (f" Searching algorithm ({a_idx+1}/{total_algos_dx}): {algo} ({dx_progress_pct}%)" if _is2
+                                    else f" 알고리즘 탐색 중 ({a_idx+1}/{total_algos_dx}): {algo} ({dx_progress_pct}%)")
+                    dx_progress_bar.progress(a_idx / total_algos_dx, text=_prog_txt_dx)
+                    try:
+                        if algo in ['L-BFGS-B', 'SLSQP']: res_temp = minimize(dx_target_loss, init_x_dx, method=algo, bounds=bands_dx)
+                        else: res_temp = minimize(dx_target_loss, init_x_dx, method=algo)
+                        final_x = np.clip(res_temp.x, [b[0] for b in bands_dx], [b[1] for b in bands_dx])
+                        current_score_loss = dx_target_loss(final_x)
+                        algo_loss_dict_dx[algo] = round(float(current_score_loss), 6)
+                        if current_score_loss < best_loss_dx:
+                            best_loss_dx = current_score_loss
+                            best_res_dx = res_temp
+                            best_res_dx.x = final_x
+                            selected_algo_dx = algo
+                    except Exception:
+                        algo_loss_dict_dx[algo] = None
+                        continue
+
+                dx_progress_bar.progress(1.0, text=(f"✅ Optimization complete (100%) - Selected algorithm: {selected_algo_dx}" if _is2
+                                                      else f"✅ 최적화 완료 (100%) - 선택된 알고리즘: {selected_algo_dx}"))
+                q_opt_dx = st.session_state['scaler'].transform(pd.DataFrame([best_res_dx.x], columns=X_list))
+
+                update_dx_dict = {
+                    'sim_dx_result_x': best_res_dx.x,
+                    'sim_dx_confidence': round(max(0.0, 100.0 - (best_loss_dx * 5)), 1),
+                    'sim_dx_best_algorithm': selected_algo_dx,
+                    'sim_dx_algo_loss_dict': algo_loss_dict_dx,
+                    'sim_dx_na_mode_used': "평균값 고정" if _na_x_means_dx else "범위 탐색",
+                    'sim_dx_na_means_used': _na_x_means_dx,
+                    'ai_analysis_result': None
+                }
+                for tgt in target_vars:
+                    model_key = f'model_{tgt.lower()}'
+                    if st.session_state[model_key] is not None: update_dx_dict[f'sim_dx_pred_{tgt.lower()}'] = float(st.session_state[model_key].predict(q_opt_dx)[0])
+                    else: update_dx_dict[f'sim_dx_pred_{tgt.lower()}'] = 0.0
+                return update_dx_dict
+
+            _tab2_opt_update = run_blocking_task(
+                "tab2_opt_search", _run_tab2_opt_search,
+                running_msg=("Running forward optimization search across 4 algorithms..." if st.session_state.get('lang','KO')=='EN' else "4개 알고리즘으로 순방향 최적화 탐색 중..."),
+                trigger=_tab2_opt_btn, show_spinner=False
+            )
+            if _tab2_opt_update is not None:
+                st.session_state.update(_tab2_opt_update)
+                st.rerun()
+
+        with sim_r:
+                    if st.session_state.get('sim_dx_result_x') is not None:
+                        _is2b = st.session_state.get('lang', 'KO') == 'EN'
+                        st.markdown(f"<div class='glass-card'><div class='glass-card-title' style='color:#ffb84d;'>{L_G['pred_title']}</div>", unsafe_allow_html=True)
+                        with st.expander((f"▸ Forward Optimization Algorithm Competition  |  Selected: {st.session_state['sim_dx_best_algorithm']}" if _is2b
+                                           else f"▸ 순방향 최적화 알고리즘 경쟁 결과  |  채택: {st.session_state['sim_dx_best_algorithm']}"), expanded=False):
+                            _algo_info_dx = ({
+                                'L-BFGS-B':    'Gradient-based, bound-constrained',
+                                'SLSQP':       'Gradient-based, bound-constrained',
+                                'Powell':      'Directional search, clipped',
+                                'Nelder-Mead': 'Simplex-based, clipped',
+                            } if _is2b else {
+                                'L-BFGS-B':    '기울기 기반, 경계 준수',
+                                'SLSQP':       '기울기 기반, 경계 준수',
+                                'Powell':      '방향 탐색, clip 처리',
+                                'Nelder-Mead': '도형 변형, clip 처리',
+                            })
+                            _sel_dx = st.session_state['sim_dx_best_algorithm']
+                            _loss_d_dx = st.session_state.get('sim_dx_algo_loss_dict', {})
+                            _rows_algo_dx = ""
+                            for _a, _m in _algo_info_dx.items():
+                                _is_sel_dx = _a == _sel_dx
+                                _bg_dx = "#0f2410" if _is_sel_dx else "#2a1f0f"
+                                _nc_dx = "#10b981" if _is_sel_dx else "#9c9c9c"
+                                _star_dx = "★ " if _is_sel_dx else ""
+                                _lv_dx = _loss_d_dx.get(_a)
+                                if _lv_dx is None:
+                                    _loss_str_dx = f"<span style='color:#4d4d4d;'>{'Failed' if _is2b else '실행 실패'}</span>"
+                                    _conf_str_dx = "<span style='color:#4d4d4d;'>—</span>"
+                                    _bar_w_dx = 0
+                                else:
+                                    _conf_v_dx = round(max(0.0, 100.0 - (_lv_dx * 5)), 1)
+                                    _lc_dx = "#10b981" if _lv_dx < 0.01 else "#f59e0b" if _lv_dx < 1.0 else "#f87171"
+                                    _loss_str_dx = f"<span style='color:{_lc_dx};font-weight:700;font-family:monospace;'>{_lv_dx:.4f}</span>"
+                                    _conf_str_dx = f"<span style='color:{_lc_dx};font-weight:700;'>{_conf_v_dx}%</span>"
+                                    _bar_w_dx = min(int(_conf_v_dx), 100)
+                                _badge_dx = (f"<span style='background:#0f2410;color:#10b981;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>✅ {'Selected' if _is2b else '채택'}</span>" if _is_sel_dx else "")
+                                _bar_dx = f"<div style='background:#262626;border-radius:2px;height:6px;margin-top:2px;'><div style='width:{_bar_w_dx}%;background:{'#10b981' if _bar_w_dx>80 else '#f59e0b' if _bar_w_dx>50 else '#f87171'};height:6px;border-radius:2px;'></div></div>"
+                                _rows_algo_dx += (
+                                    f"<tr style='background:{_bg_dx};'>"
+                                    f"<td style='padding:6px 8px;color:{_nc_dx};font-weight:700;font-family:monospace;white-space:nowrap;'>{_star_dx}{_a}</td>"
+                                    f"<td style='padding:6px 8px;color:#8a8a8a;font-size:0.72rem;'>{_m}</td>"
+                                    f"<td style='padding:6px 8px;text-align:center;'>{_loss_str_dx}</td>"
+                                    f"<td style='padding:6px 8px;min-width:80px;'>{_conf_str_dx}{_bar_dx}</td>"
+                                    f"<td style='padding:6px 8px;text-align:center;'>{_badge_dx}</td>"
+                                    f"</tr>"
+                                )
+                            _th_a1, _th_a2, _th_a3, _th_a4, _th_a5 = (("Algorithm", "Method", "Loss ↓lower is better", "Confidence", "Selected") if _is2b
+                                                                        else ("알고리즘", "방식", "손실값 ↓낮을수록 좋음", "신뢰도", "채택"))
+                            _algo_footer_dx = ("The algorithm with the lowest loss is auto-selected. &nbsp;Confidence = max(0, 100 − loss×5)" if _is2b
+                                                else "손실값이 가장 낮은 알고리즘이 자동 채택됩니다. &nbsp;신뢰도 = max(0, 100 − 손실값×5)")
+                            st.markdown(
+                                f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                                f"<table style='width:100%;border-collapse:collapse;'>"
+                                f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_a1}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;'>{_th_a2}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th_a3}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;'>{_th_a4}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th_a5}</th>"
+                                f"</tr></thead>"
+                                f"<tbody>{_rows_algo_dx}</tbody>"
+                                f"</table>"
+                                f"<div style='margin-top:8px;font-size:0.72rem;color:#4d4d4d;'>{_algo_footer_dx}</div>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+
+                        st.markdown("<div style='margin: -10px 0 10px 0;'></div>", unsafe_allow_html=True)
+                        with st.expander(("▸ Design/Process Variable Target Range Precision" if _is2b else "▸ 설계/공정 변수 목표 범위 정밀도"), expanded=False):
+                            st.markdown(
+                                "<div style='font-size:0.72rem;color:#8a8a8a;margin-bottom:6px;'>"
+                                +
+                                (
+                                "How narrowly (precisely) the user-set target range is specified, relative to "
+                                "the total available range (spec or measured data min~max). Closer to 1.0 means "
+                                "a tighter target; closer to 0 means a broader range search."
+                                if _is2b else
+                                "전체 가용 범위(스펙 또는 데이터 실측 min~max) 대비, 사용자가 설정한 목표 범위가 "
+                                "얼마나 좁게(정밀하게) 지정됐는지 보여줍니다. 1.0에 가까울수록 타이트한 목표, "
+                                "0에 가까울수록 넓은 범위 탐색을 의미합니다."
+                                )
+                                + "</div>", unsafe_allow_html=True
+                            )
+                            _msr_rows_dx = ""
+                            for _v in X_list:
+                                _v_low = _v.lower()
+                                _cur_range_dx = st.session_state.get(f'sim_tgt_{_v_low}_s_val', chosen_bounds_dx.get(_v, (0.0, 1.0)))
+                                _full_lo, _full_hi = chosen_bounds_dx.get(_v, (0.0, 1.0))
+                                _full_span_dx = max(_full_hi - _full_lo, 1e-9)
+                                _tgt_span_dx = max(float(_cur_range_dx[1]) - float(_cur_range_dx[0]), 0.0)
+                                _r2f_dx = max(0.0, min(1.0, 1.0 - (_tgt_span_dx / _full_span_dx)))
+                                _bar_r2_dx = min(int(_r2f_dx*100), 100)
+                                _r2_color_dx = '#10b981' if _r2f_dx>=0.9 else '#f59e0b' if _r2f_dx>=0.7 else '#f87171'
+                                _msr_rows_dx += (
+                                    f"<tr>"
+                                    f"<td style='padding:5px 8px;color:#ececec;font-weight:700;'>{_v}</td>"
+                                    f"<td style='padding:5px 8px;min-width:120px;'>"
+                                    f"<span style='color:{_r2_color_dx};font-weight:700;font-family:monospace;'>{_r2f_dx:.2f}</span>"
+                                    f"<div style='background:#262626;border-radius:2px;height:4px;margin-top:2px;'>"
+                                    f"<div style='width:{_bar_r2_dx}%;background:{_r2_color_dx};height:4px;border-radius:2px;'></div></div>"
+                                    f"</td>"
+                                    f"</tr>"
+                                )
+                            _th_p1, _th_p2 = ("Target", "Target Range Precision") if _is2b else ("타겟", "목표 범위 정밀도")
+                            st.markdown("<div style='max-height:380px; overflow-y:auto;'>", unsafe_allow_html=True)
+                            st.markdown(
+                                f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                                f"<table style='width:100%;border-collapse:collapse;'>"
+                                f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_p1}</th>"
+                                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;'>{_th_p2}</th>"
+                                f"</tr></thead>"
+                                f"<tbody>{_msr_rows_dx}</tbody>"
+                                f"</table>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+                            st.markdown("</div>", unsafe_allow_html=True)
+
+                        _ox_status_dx = st.session_state.get('sim_dx_result_x')
+                        _na_means_status_dx = st.session_state.get('sim_dx_na_means_used', {})
+                        _loss_rows_dx = ""
+                        _total_loss_dx = 0.0
+                        if _ox_status_dx is not None:
+                            for _i, _v in enumerate(X_list):
+                                _v_low = _v.lower()
+                                _pv = float(_ox_status_dx[_i])
+                                if _v in _na_means_status_dx:
+                                    _fixed_lbl_dx = "Fixed at Mean" if _is2b else "평균값 고정"
+                                    _fixed_badge_dx = "Fixed" if _is2b else "고정"
+                                    _loss_rows_dx += (
+                                        f"<tr>"
+                                        f"<td style='padding:4px 8px;color:#8a8a8a;font-weight:600;'>{_v}</td>"
+                                        f"<td style='padding:4px 8px;color:#8a8a8a;text-align:center;'>{_pv:.3f}</td>"
+                                        f"<td style='padding:4px 8px;color:#4d4d4d;text-align:center;font-size:0.72rem;'>{_fixed_lbl_dx}</td>"
+                                        f"<td style='padding:4px 8px;color:#4d4d4d;text-align:center;'>—</td>"
+                                        f"<td style='padding:4px 8px;text-align:center;'><span style='background:#262626;color:#f59e0b;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>{_fixed_badge_dx}</span></td>"
+                                        f"</tr>"
+                                    )
+                                    continue
+                                _tgt_range = st.session_state.get(f'sim_tgt_{_v_low}_s_val', (None, None))
+                                if _tgt_range[0] is None: continue
+                                _lo, _hi = float(_tgt_range[0]), float(_tgt_range[1])
+                                _over = max(0, _lo - _pv) + max(0, _pv - _hi)
+                                _loss_v = _over ** 2
+                                _total_loss_dx += _loss_v
+                                _spec_str = f"{_lo:.3f}~{_hi:.3f}"
+                                _in_spec = _lo - 1e-6 <= _pv <= _hi + 1e-6
+                                _loss_color = "#10b981" if _loss_v == 0 else "#f87171"
+                                if _is2b:
+                                    _status_badge = (
+                                        f"<span style='background:#0f2410;color:#10b981;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>✅ Achieved</span>"
+                                        if _in_spec else
+                                        f"<span style='background:#2d0f0f;color:#f87171;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>⚠️ Deviated</span>"
+                                    )
+                                else:
+                                    _status_badge = (
+                                        f"<span style='background:#0f2410;color:#10b981;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>✅ 달성</span>"
+                                        if _in_spec else
+                                        f"<span style='background:#2d0f0f;color:#f87171;font-size:0.7rem;padding:1px 6px;border-radius:3px;'>⚠️ 이탈</span>"
+                                    )
+                                _loss_rows_dx += (
+                                    f"<tr>"
+                                    f"<td style='padding:4px 8px;color:#ececec;font-weight:700;'>{_v}</td>"
+                                    f"<td style='padding:4px 8px;color:#ffffff;text-align:center;font-weight:600;'>{_pv:.3f}</td>"
+                                    f"<td style='padding:4px 8px;color:#9c9c9c;text-align:center;font-size:0.8rem;'>{_spec_str}</td>"
+                                    f"<td style='padding:4px 8px;color:{_loss_color};text-align:center;font-weight:600;'>{_loss_v:.4f}</td>"
+                                    f"<td style='padding:4px 8px;text-align:center;'>{_status_badge}</td>"
+                                    f"</tr>"
+                                )
+                        if _loss_rows_dx:
+                            _loss_exp_title_dx = (f"▸ Loss Status by Target  |  Total Loss: {_total_loss_dx:.4f} {'✅' if _total_loss_dx < 0.01 else '⚠️'}" if _is2b
+                                                    else f"▸ 타겟별 손실 현황  |  전체 손실: {_total_loss_dx:.4f} {'✅' if _total_loss_dx < 0.01 else '⚠️'}")
+                            with st.expander(_loss_exp_title_dx, expanded=False):
+                                st.markdown("<div style='max-height:380px; overflow-y:auto;'>", unsafe_allow_html=True)
+                                _lh1d, _lh2d, _lh3d, _lh4d, _lh5d = (("Target", "Predicted", "Spec", "Loss", "Judgement") if _is2b
+                                                                       else ("타겟", "예측값", "스펙", "손실", "판정"))
+                                _total_loss_lbl_dx = "Total Loss" if _is2b else "전체 손실 합계"
+                                _perfect_lbl_dx = "← Perfect ✅" if _is2b else "← 완벽 ✅"
+                                st.markdown(
+                                    f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                                    f"<table style='width:100%;border-collapse:collapse;'>"
+                                    f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_lh1d}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh2d}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh3d}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh4d}</th>"
+                                    f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_lh5d}</th>"
+                                    f"</tr></thead>"
+                                    f"<tbody>{_loss_rows_dx}</tbody>"
+                                    f"</table>"
+                                    f"<div style='border-top:1px solid #3a3a3a;margin-top:6px;padding-top:6px;"
+                                    f"display:flex;justify-content:space-between;align-items:center;'>"
+                                    f"<span style='font-size:0.75rem;color:#9c9c9c;'>{_total_loss_lbl_dx}</span>"
+                                    f"<span style='font-size:0.9rem;font-weight:700;color:{'#10b981' if _total_loss_dx < 0.01 else '#f87171'};'>"
+                                    f"{_total_loss_dx:.4f} {_perfect_lbl_dx if _total_loss_dx < 0.01 else ''}</span>"
+                                    f"</div></div>",
+                                    unsafe_allow_html=True
+                                )
+                                st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                        # ── (스왑) 상단 카드: 예상 설계/공정 변수 값 (34개) ──
+                        _card1_title_dx = "▣ Expected Design/Process Variable Values (Optimal Point Within Target Range)" if _is2b else "▣ 예상 설계/공정 변수 값 (목표 범위 내 최적점)"
+                        st.markdown(f"<p style='font-size:0.82rem;font-weight:700;color:#10b981;margin:10px 0 6px 0;'>{_card1_title_dx}</p>", unsafe_allow_html=True)
+                        ox_dx = st.session_state['sim_dx_result_x']
+                        _na_x_res_dx = st.session_state.get('na_x_vars', [])
+                        _na_mode_used_dx = st.session_state.get('sim_dx_na_mode_used', '범위 탐색')
+                        cols_x_card_dx = st.columns(3)
+                        for idx, v_name in enumerate(X_list):
+                            _xv_dx = ox_dx[idx] if ox_dx[idx] is not None else 0.0
+                            val_display = f"{_xv_dx:.3f}"
+                            _is_fixed_dx = v_name in _na_x_res_dx and "평균값" in _na_mode_used_dx
+                            if v_name in _na_x_res_dx:
+                                _badge_txt_dx = ("Fixed" if _is_fixed_dx else "Spec N/A") if _is2b else ("고정값" if _is_fixed_dx else "스펙N/A")
+                                _sub_color_dx = "#f59e0b" if _is_fixed_dx else "#8a8a8a"
+                                cols_x_card_dx[idx % 3].markdown(
+                                    f"<div style='padding:8px;background:#1e1e1e;border:1px dashed #4d4d4d;"
+                                    f"border-radius:4px;margin-bottom:6px;opacity:0.8;'>"
+                                    f"<span style='color:#8a8a8a;font-size:0.72rem;'>{v_name}</span>"
+                                    f"<span style='float:right;background:#3d3d3d;color:{_sub_color_dx};font-size:0.65rem;"
+                                    f"padding:1px 5px;border-radius:3px;'>{_badge_txt_dx}</span><br>"
+                                    f"<strong style='font-size:1.05rem;color:#9c9c9c;'>{val_display}</strong></div>",
+                                    unsafe_allow_html=True
+                                )
+                            else:
+                                cols_x_card_dx[idx % 3].markdown(
+                                    f"<div style='padding:8px;background:#262626;border-radius:4px;margin-bottom:6px;'>"
+                                    f"<span style='color:#9c9c9c;font-size:0.72rem;'>{v_name}</span><br>"
+                                    f"<strong style='font-size:1.05rem;color:#ffffff;'>{val_display}</strong></div>",
+                                    unsafe_allow_html=True
+                                )
+
+                        st.metric(L_G['opt_conf'], f"{st.session_state['sim_dx_confidence']}%")
+
+                        # 예측 데이터 다운로드 (설계/공정 변수 결과, 34개)
+                        x_result_dict_dx = {X_list[i]: [ox_dx[i]] for i in range(len(X_list))}
+                        df_xres_export_dx = pd.DataFrame(x_result_dict_dx)
+                        col_pred_sel_dx, col_pred_trigger_dx = st.columns([1, 1])
+                        with col_pred_sel_dx:
+                            file_format_pred_dx = st.selectbox(L_G['dl_format'], ["Excel (.xlsx)", "Database (.db)"],
+                                                            key="fmt_dx_xres", label_visibility="collapsed")
+                        with col_pred_trigger_dx:
+                            if "Excel" in file_format_pred_dx:
+                                buffer_p_dx = io.BytesIO()
+                                with pd.ExcelWriter(buffer_p_dx) as writer: df_xres_export_dx.to_excel(writer, index=False, sheet_name='Design_Process_Variables')
+                                st.download_button(label=L_G['dl_btn_pred'], data=buffer_p_dx.getvalue(), file_name="dx_design_process_variables.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_btn_dx_xres_trigger")
+                            else:
+                                conn_p_dx = sqlite3.connect(":memory:")
+                                df_xres_export_dx.to_sql("design_process_variables", conn_p_dx, index=False, if_exists="replace")
+                                backup_conn_p_dx = sqlite3.connect("temp_dx_xres.db")
+                                conn_p_dx.backup(backup_conn_p_dx); backup_conn_p_dx.close(); conn_p_dx.close()
+                                with open("temp_dx_xres.db", "rb") as f: db_bytes_p_dx = f.read()
+                                st.download_button(label=L_G['dl_btn_pred'], data=db_bytes_p_dx, file_name="dx_design_process_variables.db", mime="application/x-sqlite3", key="dl_btn_dx_xres_db_trigger")
+                        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+
+                        # ── (스왑) 하단 카드: 예상 타겟 값 (품질, 스펙 달성 결과) ──
+                        _card2_title_dx = "Expected Target Values (Quality Spec Achievement Result)" if _is2b else "예상 타겟 값 (품질 스펙 달성 결과)"
+                        st.markdown(f"<div class='glass-card'><div class='glass-card-title' style='color:#10b981;'>{_card2_title_dx}</div>", unsafe_allow_html=True)
+                        st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+                        _na_tgts_dx = st.session_state.get('na_spec_targets', [])
+                        _mm_dx = st.session_state.get('model_metadata', {})
+                        def _r2_of(_tgt_name):
+                            _meta = _mm_dx.get(f'algo_{_tgt_name.lower()}', '')
+                            if 'R²=' not in _meta: return None
+                            try: return float(_meta.split('R²=')[-1].split(',')[0].rstrip(')'))
+                            except Exception: return None
+                        cols_y_card_dx = st.columns(3)
+                        for idx, tgt in enumerate(valid_tgts):
+                            p_val = st.session_state[f'sim_dx_pred_{tgt.lower()}']
+                            val_display = f"{p_val:.3f}" if isinstance(p_val, float) else "0.000"
+                            if tgt in _na_tgts_dx:
+                                cols_y_card_dx[idx % 3].markdown(
+                                    f"<div style='padding:8px;background:#1e1e1e;border:1px dashed #4d4d4d;"
+                                    f"border-radius:4px;margin-bottom:6px;opacity:0.8;'>"
+                                    f"<span style='color:#8a8a8a;font-size:0.72rem;'>Predicted {tgt}</span>"
+                                    f"<span style='float:right;background:#3d3d3d;color:#9c9c9c;font-size:0.65rem;"
+                                    f"padding:1px 5px;border-radius:3px;'>N/A</span><br>"
+                                    f"<strong style='font-size:1.05rem;color:#9c9c9c;'>{val_display}</strong></div>",
+                                    unsafe_allow_html=True
+                                )
+                            else:
+                                _sp_lo, _sp_hi = spec_limits.get(tgt, (None, None))
+                                if _sp_lo is not None and isinstance(p_val, float) and (p_val < _sp_lo or p_val > _sp_hi):
+                                    _dev_txt_dx = "Deviated" if _is2b else "이탈"
+                                    cols_y_card_dx[idx % 3].markdown(
+                                        f"<div style='padding:8px;background:#2d0f0f;border:1px solid #ef4444;"
+                                        f"border-radius:4px;margin-bottom:6px;'>"
+                                        f"<span style='color:#f87171;font-size:0.72rem;'>⚠️ {tgt} [{_dev_txt_dx}]</span><br>"
+                                        f"<strong style='font-size:1.05rem;color:#ef4444;'>{val_display}</strong>"
+                                        f"<span style='color:#f87171;font-size:0.68rem;'> ({_sp_lo}~{_sp_hi})</span></div>",
+                                        unsafe_allow_html=True
+                                    )
+                                else:
+                                    _tgt_r2 = _r2_of(tgt)
+                                    _rel_line_dx = ""
+                                    if _tgt_r2 is not None and _tgt_r2 < 0.5:
+                                        _rel_txt_dx = (f"Low reliability (CV R²={_tgt_r2:.2f})" if _is2b
+                                                       else f"신뢰도 낮음 (CV R²={_tgt_r2:.2f})")
+                                        _rel_line_dx = (
+                                            f"<br><span style='background:#2d1a0a;color:#f59e0b;font-size:0.6rem;"
+                                            f"padding:1px 5px;border-radius:3px;margin-top:2px;display:inline-block;'>⚠️ {_rel_txt_dx}</span>"
+                                        )
+                                    cols_y_card_dx[idx % 3].markdown(
+                                        f"<div style='padding:8px;background:#262626;border-radius:4px;margin-bottom:6px;'>"
+                                        f"<span style='color:#9c9c9c;font-size:0.72rem;'>Predicted {tgt}</span><br>"
+                                        f"<strong style='font-size:1.05rem;color:#ffffff;'>{val_display}</strong>{_rel_line_dx}</div>",
+                                        unsafe_allow_html=True
+                                    )
+                        y_pred_dict_dx = {tgt: [st.session_state[f'sim_dx_pred_{tgt.lower()}']] for tgt in valid_tgts}
+                        df_ypred_export_dx = pd.DataFrame(y_pred_dict_dx)
+                        col_dl_sel_dx, col_dl_trigger_dx = st.columns([1, 1])
+                        with col_dl_sel_dx:
+                            file_format_dx = st.selectbox(L_G['dl_format'], ["Excel (.xlsx)", "Database (.db)"],
+                                                       key="fmt_dx_ypred", label_visibility="collapsed")
+                        with col_dl_trigger_dx:
+                            if "Excel" in file_format_dx:
+                                buffer_dx = io.BytesIO()
+                                with pd.ExcelWriter(buffer_dx) as writer: df_ypred_export_dx.to_excel(writer, index=False, sheet_name='Predicted_Quality')
+                                st.download_button(label=L_G['dl_btn_spec'], data=buffer_dx.getvalue(), file_name="dx_predicted_quality_targets.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_btn_dx_ypred_trigger")
+                            else:
+                                conn_dx = sqlite3.connect(":memory:")
+                                df_ypred_export_dx.to_sql("predicted_quality_targets", conn_dx, index=False, if_exists="replace")
+                                backup_conn_dx = sqlite3.connect("temp_dx_ypred.db")
+                                conn_dx.backup(backup_conn_dx); backup_conn_dx.close(); conn_dx.close()
+                                with open("temp_dx_ypred.db", "rb") as f: db_bytes_dx = f.read()
+                                st.download_button(label=L_G['dl_btn_spec'], data=db_bytes_dx, file_name="dx_predicted_quality_targets.db", mime="application/x-sqlite3", key="dl_btn_dx_ypred_db_trigger")
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+        if st.session_state.get('sim_dx_result_x') is not None:
+            _is2c = st.session_state.get('lang', 'KO') == 'EN'
+            st.markdown(f"### □ {'Result Analysis & Diagnosis' if _is2c else '결과 분석 및 진단'}")
+            has_warning_dx = False
+            feasibility_info_dx = st.session_state.get('sim_dx_feasibility', {})
+
+            result_cards_dx = []
+            _na_tgts_res_dx = st.session_state.get('na_spec_targets', [])
+            for tgt in valid_tgts:
+                pred_val_dx = st.session_state.get(f'sim_dx_pred_{tgt.lower()}')
+                if pred_val_dx is None: continue
+
+                if tgt in _na_tgts_res_dx:
+                    if _is2c:
+                        result_cards_dx.append(('na',
+                            f"⬜ **{tgt}** — Spec N/A\n\n"
+                            f"Predicted: **{pred_val_dx:.3f}**\n\n"
+                            f"Excluded from optimization (no spec set)"
+                        ))
+                    else:
+                        result_cards_dx.append(('na',
+                            f"⬜ **{tgt}** — 스펙 N/A\n\n"
+                            f"예측값: **{pred_val_dx:.3f}**\n\n"
+                            f"스펙 미설정으로 최적화 계산에서 제외"
+                        ))
+                    continue
+
+                t_range_dx = spec_limits.get(tgt, (None, None))
+                feas_dx = feasibility_info_dx.get(tgt, {})
+                overlap_dx2 = feas_dx.get('overlap_ratio', 1.0)
+                pred_min_dx2 = feas_dx.get('pred_min', None)
+                pred_max_dx2 = feas_dx.get('pred_max', None)
+
+                if overlap_dx2 < 0.1 and pred_min_dx2 is not None:
+                    if _is2c:
+                        result_cards_dx.append(('error',
+                            f"🚫 **{tgt}** Infeasible\n\n"
+                            f"Predicted range: **{pred_min_dx2:.2f}~{pred_max_dx2:.2f}**\n\n"
+                            f"Target spec: {t_range_dx[0]}~{t_range_dx[1]}\n\n"
+                            f"Prediction: **{pred_val_dx:.3f}**"
+                        ))
+                    else:
+                        result_cards_dx.append(('error',
+                            f"🚫 **{tgt}** 달성 불가\n\n"
+                            f"예측 범위: **{pred_min_dx2:.2f}~{pred_max_dx2:.2f}**\n\n"
+                            f"설정 스펙: {t_range_dx[0]}~{t_range_dx[1]}\n\n"
+                            f"예측 결과: **{pred_val_dx:.3f}**"
+                        ))
+                    has_warning_dx = True
+                elif t_range_dx[0] is not None and t_range_dx[1] is not None and (pred_val_dx > t_range_dx[1] or pred_val_dx < t_range_dx[0]):
+                    if _is2c:
+                        result_cards_dx.append(('warning', f"⚠️ **{tgt}** Out of Spec\n\nPredicted **{pred_val_dx:.3f}**\n\nTarget spec {t_range_dx[0]}~{t_range_dx[1]}"))
+                    else:
+                        result_cards_dx.append(('warning', f"⚠️ **{tgt}** 스펙 이탈\n\n예측값 **{pred_val_dx:.3f}**\n\n설정 스펙 {t_range_dx[0]}~{t_range_dx[1]}"))
+                    has_warning_dx = True
+                else:
+                    if _is2c:
+                        result_cards_dx.append(('success', f"✅ **{tgt}** Achieved\n\nPredicted **{pred_val_dx:.3f}**\n\nTarget spec {t_range_dx[0]}~{t_range_dx[1]}"))
+                    else:
+                        result_cards_dx.append(('success', f"✅ **{tgt}** 정상 도달\n\n예측값 **{pred_val_dx:.3f}**\n\n설정 스펙 {t_range_dx[0]}~{t_range_dx[1]}"))
+
+            RESULT_COLS_PER_ROW_DX = 5
+            for i in range(0, len(result_cards_dx), RESULT_COLS_PER_ROW_DX):
+                row_cards_dx = result_cards_dx[i:i + RESULT_COLS_PER_ROW_DX]
+                grid_cols_dx = st.columns(RESULT_COLS_PER_ROW_DX)
+                for gc_dx, (rtype_dx, msg_dx) in zip(grid_cols_dx, row_cards_dx):
+                    with gc_dx:
+                        if rtype_dx == 'na':
+                            _p_dx = msg_dx.replace('**','').split('\n\n')
+                            _t_dx = _p_dx[0] if _p_dx else ''
+                            gc_dx.markdown(
+                                f"<div style='background:#262626;border:1px dashed #4d4d4d;"
+                                f"border-radius:6px;padding:8px 12px;font-size:0.82rem;margin-bottom:6px;'>"
+                                f"<span style='color:#9c9c9c;font-weight:700;font-size:0.80rem;'>{_t_dx}</span><br>"
+                                f"<span style='color:#8a8a8a;font-size:0.78rem;'>&nbsp;</span>"
+                                f"<span style='color:#4d4d4d;font-size:0.72rem;display:block;'>&nbsp;</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
                             )
                         else:
-                            reliability_caption = (
-                                f"<span style='color:#ff5252;'>{L['reliability_na']}</span>"
-                                f" · {n_total}{L['reliability_samples']}"
-                                f" · <span style='color:#a3e635; font-size:0.68rem;'>[{algo_name}]</span>"
+                            _parts_dx = msg_dx.split('\n\n')
+                            _title_dx = _parts_dx[0].replace('**','') if _parts_dx else ''
+                            _pred_dx  = _parts_dx[1].replace('**','') if len(_parts_dx) > 1 else ''
+                            _spec_dx  = _parts_dx[2].replace('**','') if len(_parts_dx) > 2 else ''
+                            if rtype_dx == 'success':
+                                _bg_dx2, _bd_dx2, _tc_dx2, _vc_dx2 = '#0f2410', '#10b981', '#6ee7b7', '#ffffff'
+                            elif rtype_dx == 'warning':
+                                _bg_dx2, _bd_dx2, _tc_dx2, _vc_dx2 = '#1a1200', '#f59e0b', '#fcd34d', '#ffffff'
+                            else:
+                                _bg_dx2, _bd_dx2, _tc_dx2, _vc_dx2 = '#2d0f0f', '#ef4444', '#f87171', '#ffffff'
+                            gc_dx.markdown(
+                                f"<div style='background:{_bg_dx2};border:1px solid {_bd_dx2};"
+                                f"border-radius:6px;padding:8px 12px;font-size:0.82rem;margin-bottom:6px;'>"
+                                f"<span style='color:{_tc_dx2};font-weight:700;font-size:0.80rem;'>{_title_dx}</span><br>"
+                                f"<span style='color:{_vc_dx2};font-size:0.78rem;'>{_pred_dx}</span>"
+                                f"<span style='color:#8a8a8a;font-size:0.72rem;display:block;'>{_spec_dx}</span>"
+                                f"</div>",
+                                unsafe_allow_html=True
                             )
-                        if rel['low_sample']:
-                            reliability_caption += f" · <span style='color:#ff5252;'>⚠ {L['reliability_low_sample']}</span>"
 
+            if has_warning_dx:
+                if _is2c:
+                    st.info(
+                        "**Reliability-Guaranteed Optimization Applied**\n\n"
+                        "Infeasible targets are converted to soft weights in the loss function, so the "
+                        "optimizer is automatically adjusted to avoid drifting to extreme values "
+                        "(Feasibility-Aware Adaptive Optimization). The current result is the most realistic "
+                        "best condition derivable within the design/process target range you specified."
+                    )
+                else:
+                    st.info(
+                        "**신뢰성 보장 최적화 적용됨**\n\n"
+                        "달성 불가 타겟은 손실 함수에서 소프트 가중치(Soft Weight)로 전환되어, "
+                        "옵티마이저가 극단적인 값으로 이탈하지 않도록 자동 조정되었습니다(Feasibility-Aware Adaptive Optimization). "
+                        "현재 결과는 설정하신 설계/공정 목표 범위 내에서 가장 현실적으로 도출된 최선의 조건입니다."
+                    )
+            else:
+                if _is2c:
+                    st.info("□  **All Valid Targets Achieved**\n\nWithin the design/process variable target range you specified, all targets are predicted to fully reach the quality spec range.")
+                else:
+                    st.info("□  **전체 유효 타겟 정상 도달**\n\n설정하신 설계/공정 변수 목표 범위 안에서 모든 타겟이 품질 스펙 범위 내에 완벽히 도달할 수 있는 것으로 분석되었습니다.")
+
+        if st.session_state.get('sim_dx_result_x') is not None:
+            st.markdown("---")
+            st.markdown(f"### □ {'Process Improvement Guide (Result Diagnosis Report)' if _is2c else '공정 개선 가이드 (결과 진단 리포트)'}")
+            _fi_col2, _ = st.columns([1.3, 1.2], gap="large")
+            with _fi_col2:
+                _fi_btn2 = st.button(("□ Generate FI Diagnosis + LLM Integrated Process Guide" if _is2c else "□ FI 진단 + LLM 통합 공정 가이드 생성"), key="btn_combined_tab2", type="primary")
+
+            def _run_fi_report_tab2():
+                for _tgt in valid_tgts:
+                    st.session_state[f'dx_{_tgt.lower()}_s_val'] = spec_limits.get(_tgt, (0.0, 1.0))
+                dx_pred_kpis_now = {tgt: st.session_state[f'sim_dx_pred_{tgt.lower()}'] for tgt in valid_tgts if st.session_state.get(f'sim_dx_pred_{tgt.lower()}') is not None}
+                current_p_specs_dx = {X_list[i]: st.session_state['sim_dx_result_x'][i] for i in range(len(X_list))}
+                return generate_combined_report(
+                    process_specs=current_p_specs_dx,
+                    predicted_kpis=dx_pred_kpis_now,
+                    feasibility_info=st.session_state.get('sim_dx_feasibility', {}),
+                    confidence_score=st.session_state.get('sim_dx_confidence', 0),
+                    mode="Simulation",
+                    range_key_prefix='dx_'
+                )
+
+            _fi_result2 = run_blocking_task(
+                "fi_report_tab2", _run_fi_report_tab2,
+                running_msg=("Generating Feature Importance analysis + LLM guideline integration... (10-20 sec)" if _is2c else "Feature Importance 분석 + LLM 가이드라인 통합 생성 중... (10~20초 소요)"),
+                trigger=_fi_btn2
+            )
+            if _fi_result2 is not None:
+                st.session_state['sim_dx_combined_report_text'] = _fi_result2
+
+            if st.session_state.get('sim_dx_combined_report_text'):
+                with st.expander(("□ Integrated Process Analysis Report (FI Diagnosis + LLM)" if _is2c else "□ 통합 공정 분석 보고서 (FI 진단 + LLM)"), expanded=True):
                     st.markdown(
-                        f"""<div style="margin-bottom: 12px; {opacity_style}">
-                            <span style="font-size:0.95rem; font-weight:600; color:#ffffff;">{full_name}</span>
-                            <div class="custom-progress-container">
-                                <div class="custom-progress-bar"
-                                    style="width: {r_perc}%; background: {bar_color};">
-                                    {r_perc}%
-                                </div>
-                            </div>
-                            <div style="font-size:0.72rem; color:#cbd5e1; margin-top:2px;">{reliability_caption}</div>
-                        </div>""",
+                        f"<div class='scrollable-box' style='height:600px;'>"
+                        f"{st.session_state['sim_dx_combined_report_text'].replace(chr(10), '<br>')}"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                    st.download_button(
+                        label=("□ Download Integrated Report" if _is2c else "□ 통합 보고서 다운로드"),
+                        data=st.session_state['sim_dx_combined_report_text'],
+                        file_name=f"JOINT_AI_DX_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                        mime="text/plain",
+                        key="dl_combined_tab2"
+                    )
+
+    with tab3:
+        _df3  = st.session_state.get('df_caulking', pd.DataFrame())
+        _fi3  = st.session_state.get('feature_importance', {})
+        _mm3  = st.session_state.get('model_metadata', {})
+        _vt3  = st.session_state.get('valid_target_vars', target_vars)
+        is_en3 = st.session_state.get('lang', 'KO') == 'EN'
+
+        # ── ① 원시 데이터 ───────────────────────────────────────────
+        _raw_lbl = "+ Raw Data" if is_en3 else "+ 원시 데이터"
+        with st.expander(_raw_lbl, expanded=False):
+            if not _df3.empty:
+                st.markdown(
+                    "<p style='color:#d4d4d4;font-size:0.83rem;'>"
+                    + ("All accumulated production log data. Defect columns represent measured values." if is_en3 else
+                       "업로드된 파일과 이력이 누적된 전체 데이터입니다. 불량/품질 컬럼은 실측값입니다.")
+                    + "</p>", unsafe_allow_html=True
+                )
+                st.dataframe(_df3, use_container_width=True)
+            else:
+                st.info("데이터가 없습니다. 사이드바에서 데이터를 업로드하세요." if not is_en3 else "No data. Upload files from the sidebar.")
+
+        # ── ② 품질 타겟 & 이탈 분포 ────────────────────────────────
+        _dist_lbl = "+ Quality Distribution & Out-of-Spec Analysis" if is_en3 else "+ 품질 타겟 분포 & 이탈 분석"
+        with st.expander(_dist_lbl, expanded=False):
+            st.markdown(
+                "<details style='margin-bottom:12px;'>"
+                f"<summary style='font-size:0.72rem;color:#8a8a8a;cursor:pointer;padding:4px 0;list-style:none;'>{'▶ Learn what this means and how it is analyzed' if is_en3 else '▶ 이 항목의 의미와 분석 방법 보기'}</summary>"
+                "<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.72rem;color:#d4d4d4;line-height:1.8;'>"
+                + (
+                "<b style='color:#ff9f1c;'>Quality Distribution & Out-of-Spec Analysis</b>?<br>"
+                "Shows how the measured values of a selected quality item (BT, RT, ABAMS, etc.) are distributed, "
+                "and highlights samples outside the set spec range in red.<br><br>"
+                "<b style='color:#a3e635;'>Key things to check</b><br>"
+                "· <b>Out-of-spec sample count & ratio</b> — number of spec deviations relative to the total. Immediate process review is recommended if over 10%.<br>"
+                "· <b>Distribution skew</b> — if most values are clustered near one edge of the spec, the process center may need adjustment.<br>"
+                "· <b>Red zone</b> — the out-of-spec region. Check the correlation heatmap for the process variables driving that range."
+                if is_en3 else
+                "<b style='color:#ff9f1c;'>품질 타겟 분포 & 이탈 분석</b>이란?<br>"
+                "선택한 품질 항목(BT, RT, ABAMS 등)의 실측값이 어떤 범위에 얼마나 분포하는지 보여주며, "
+                "설정된 스펙 범위를 벗어난 샘플을 빨간색으로 강조합니다.<br><br>"
+                "<b style='color:#a3e635;'>주요 확인 포인트</b><br>"
+                "· <b>이탈 샘플 수 & 비율</b> — 전체 대비 스펙 이탈 건수. 10% 초과 시 공정 즉시 점검 권장.<br>"
+                "· <b>분포 치우침</b> — 대부분의 값이 스펙 한쪽 끝에 몰려 있으면 공정 중심값 조정이 필요합니다.<br>"
+                "· <b>빨간색 구간</b> — 스펙 이탈 구간. 해당 범위를 유발하는 공정 변수를 상관관계 히트맵에서 확인하세요."
+                )
+                + "</div></details>",
+                unsafe_allow_html=True
+            )
+            if _df3.empty:
+                st.info("데이터 없음" if not is_en3 else "No data available.")
+            else:
+                _tgt_cols = [c for c in _df3.columns if c in target_vars]
+                if not _tgt_cols:
+                    st.info("품질 타겟 컬럼이 없습니다." if not is_en3 else "No quality target columns found in data.")
+                else:
+                    _sel_lbl = "불량 항목 선택" if not is_en3 else "Select Quality Target"
+                    _sel_h = st.selectbox(_sel_lbl, _tgt_cols,
+                                          format_func=lambda k: TARGET_GLOSSARY.get(k, k),
+                                          key="t3_hist_sel")
+                    _hd = pd.to_numeric(_df3[_sel_h], errors='coerce').dropna()
+                    if _hd.empty:
+                        st.warning(f"{_sel_h} 데이터가 없습니다." if not is_en3 else f"No data for {_sel_h}.")
+                    else:
+                        # 스펙 범위
+                        _sp_lo, _sp_hi = spec_limits.get(_sel_h, (None, None))
+                        _hm  = float(_hd.mean())
+                        _hs  = float(_hd.std())
+                        _hn  = len(_hd)
+                        # 이탈 샘플 수
+                        if _sp_lo is not None and _sp_hi is not None:
+                            _out = int((((_hd < _sp_lo) | (_hd > _sp_hi)).sum()))
+                            _out_pct = _out / _hn * 100
+                            if is_en3:
+                                _insight_txt = (
+                                    f"Mean: <b style='color:#ff9f1c;'>{_hm:.3f}</b> &nbsp;|&nbsp; "
+                                    f"Std Dev: <b>{_hs:.3f}</b> &nbsp;|&nbsp; "
+                                    f"Spec Range: <b>{_sp_lo}~{_sp_hi}</b> &nbsp;|&nbsp; "
+                                    f"Out-of-Spec: <b style='color:{'#f87171' if _out_pct>20 else '#ffab00' if _out_pct>5 else '#10b981'};'>"
+                                    f"{_out} ({_out_pct:.1f}%)</b>"
+                                )
+                                _advice = ("⚠️ High out-of-spec rate. Prioritize checking this quality target." if _out_pct > 20 else
+                                           "Some samples are in the caution zone. Strengthen monitoring." if _out_pct > 5 else
+                                           "Most samples are within the spec range.")
+                            else:
+                                _insight_txt = (
+                                    f"평균: <b style='color:#ff9f1c;'>{_hm:.3f}</b> &nbsp;|&nbsp; "
+                                    f"표준편차: <b>{_hs:.3f}</b> &nbsp;|&nbsp; "
+                                    f"스펙 범위: <b>{_sp_lo}~{_sp_hi}</b> &nbsp;|&nbsp; "
+                                    f"이탈 샘플: <b style='color:{'#f87171' if _out_pct>20 else '#ffab00' if _out_pct>5 else '#10b981'};'>"
+                                    f"{_out}개 ({_out_pct:.1f}%)</b>"
+                                )
+                                _advice = ("⚠️ 이탈 비율이 높습니다. 해당 품질 타겟을 우선 점검하세요." if _out_pct > 20 else
+                                           "주의 구간 샘플이 일부 있습니다. 모니터링을 강화하세요." if _out_pct > 5 else
+                                           "대부분의 샘플이 스펙 범위 내에 있습니다.")
+                        else:
+                            _out, _out_pct = 0, 0.0
+                            if is_en3:
+                                _insight_txt = f"Mean: <b style='color:#ff9f1c;'>{_hm:.3f}</b> &nbsp;|&nbsp; Std Dev: <b>{_hs:.3f}</b> &nbsp;|&nbsp; n={_hn}"
+                                _advice = "No spec range set — showing data distribution only."
+                            else:
+                                _insight_txt = f"평균: <b style='color:#ff9f1c;'>{_hm:.3f}</b> &nbsp;|&nbsp; 표준편차: <b>{_hs:.3f}</b> &nbsp;|&nbsp; n={_hn}"
+                                _advice = "스펙 범위 미설정 — 데이터 분포만 표시합니다."
+
+                        st.markdown(
+                            f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-left:3px solid #ff9f1c;"
+                            f"border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
+                            f"<span style='color:#ececec;'>{_insight_txt}</span><br>"
+                            f"<span style='color:#d4d4d4;font-size:0.78rem;'>→ {_advice}</span></div>",
+                            unsafe_allow_html=True
+                        )
+                        # 히스토그램
+                        _bins_n = min(15, max(5, _hn // 3))
+                        _cnt, _edg = np.histogram(_hd.values.astype(float), bins=_bins_n)
+                        _mx_c = int(_cnt.max()) if _cnt.max() > 0 else 1
+                        _bar_h = ""
+                        for _i, _c in enumerate(_cnt):
+                            _lo, _hi2 = float(_edg[_i]), float(_edg[_i+1])
+                            _mid = (_lo + _hi2) / 2
+                            _bp  = int(_c) / _mx_c * 100
+                            # 스펙 기준 색상 (스펙 있으면 이탈=빨강, 정상=파랑; 없으면 파랑)
+                            if _sp_lo is not None and _sp_hi is not None:
+                                _bc = "#f87171" if (_lo < _sp_lo or _hi2 > _sp_hi) else "#ff9f1c"
+                            else:
+                                _bc = "#ff9f1c"
+                            _bar_h += (
+                                f"<div style='display:flex;align-items:center;margin-bottom:4px;gap:8px;'>"
+                                f"<span style='color:#d4d4d4;font-size:11px;width:100px;text-align:right;'>{_lo:.3f}~{_hi2:.3f}</span>"
+                                f"<div style='flex:1;background:#262626;border-radius:3px;height:18px;'>"
+                                f"<div style='width:{_bp:.1f}%;background:{_bc};height:18px;border-radius:3px;"
+                                f"display:flex;align-items:center;padding-left:6px;'>"
+                                f"<span style='color:#fff;font-size:11px;'>{int(_c)}</span></div></div></div>"
+                            )
+                        if is_en3:
+                            _sp_note = f"● Blue: within spec ({_sp_lo}~{_sp_hi}) &nbsp; ● Red: out of spec" if _sp_lo is not None else "● Blue: measured value distribution"
+                            _dist_word = "Distribution"
+                        else:
+                            _sp_note = f"● 파란색: 스펙 내 ({_sp_lo}~{_sp_hi}) &nbsp; ● 빨간색: 스펙 이탈" if _sp_lo is not None else "● 파란색: 측정값 분포"
+                            _dist_word = "분포"
+                        st.markdown(
+                            f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:10px;padding:16px;'>"
+                            f"<div style='font-size:13px;color:#ececec;font-weight:600;margin-bottom:12px;'>"
+                            f"{TARGET_GLOSSARY.get(_sel_h, _sel_h)} {_dist_word} (n={_hn})</div>"
+                            f"{_bar_h}"
+                            f"<div style='color:#9c9c9c;font-size:11px;margin-top:8px;'>{_sp_note}</div>"
+                            f"</div>", unsafe_allow_html=True
+                        )
+
+        # ── ③ 변수 상관관계 히트맵 ────────────────────────────────
+        _corr_lbl = "+ Process Variable Correlation Heatmap" if is_en3 else "+ 변수 상관관계 히트맵"
+        with st.expander(_corr_lbl, expanded=False):
+            st.markdown(
+                "<details style='margin-bottom:12px;'>"
+                f"<summary style='font-size:0.72rem;color:#8a8a8a;cursor:pointer;padding:4px 0;list-style:none;'>{'▶ Learn what this means and how it is analyzed' if is_en3 else '▶ 이 항목의 의미와 분석 방법 보기'}</summary>"
+                "<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.72rem;color:#d4d4d4;line-height:1.8;'>"
+                "<b style='color:#ff9f1c;'>변수 상관관계 히트맵</b>이란?<br>"
+                "34개 공정 변수(입력)와 품질 타겟(출력) 사이의 선형 상관계수(r)를 색상으로 표현한 표입니다. "
+                "어떤 공정 변수가 품질에 가장 큰 영향을 미치는지 한눈에 파악할 수 있습니다.<br><br>"
+                "<b style='color:#a3e635;'>주요 확인 포인트</b><br>"
+                "· <b style='color:#ff9f1c;'>파란색(양의 상관, r > 0.3)</b> — 이 변수가 증가하면 품질값도 증가하는 경향.<br>"
+                "· <b style='color:#f87171;'>빨간색(음의 상관, r &lt; -0.3)</b> — 이 변수가 증가하면 품질값이 감소하는 경향.<br>"
+                "· <b>|r| ≥ 0.5</b> — 강한 상관관계. 역최적화 시 이 변수들을 우선 조정 대상으로 삼으세요.<br>"
+                "· <b>|r| &lt; 0.3</b> — 선형 상관 약함. 비선형 관계이거나 해당 변수의 영향이 적을 수 있습니다."
+                "</div></details>",
+                unsafe_allow_html=True
+            )
+            if _df3.empty:
+                st.info("데이터 없음" if not is_en3 else "No data available.")
+            else:
+                _num_cols = _df3.select_dtypes(include=[np.number]).columns.tolist()
+                _proc_c   = [c for c in _num_cols if c not in target_vars]
+                _tgt_c    = [c for c in _num_cols if c in target_vars]
+                if not _proc_c or not _tgt_c:
+                    st.info("상관관계 계산에 필요한 공정 변수 또는 품질 타겟 컬럼이 충분하지 않습니다." if not is_en3 else "Insufficient columns for correlation.")
+                else:
+                    _corr_all = _df3[_proc_c + _tgt_c].corr()
+                    _sc       = _corr_all.loc[_proc_c, _tgt_c]
+                    _top10    = _sc.abs().max(axis=1).sort_values(ascending=False).head(10).index.tolist()
+                    _sc       = _sc.loc[_top10]
+                    _flat     = _sc.abs().stack()
+                    if not _flat.empty:
+                        _tp  = _flat.idxmax()
+                        _tv  = float(_sc.loc[_tp[0], _tp[1]])
+                        if is_en3:
+                            _dir = "positive" if _tv > 0 else "negative"
+                        else:
+                            _dir = "양의 방향으로" if _tv > 0 else "음의 방향으로"
+                        # 강한 상관 쌍 수
+                        _strong = [(r,c,float(_sc.loc[r,c])) for r in _sc.index for c in _sc.columns if abs(float(_sc.loc[r,c])) >= 0.5]
+                        if is_en3:
+                            _advice_c = (f"{len(_strong)} strong correlated variable-quality pairs with |r| ≥ 0.5 — key targets for process control." if _strong
+                                         else "No strong linear correlation (|r| ≥ 0.5) found. Non-linear interactions may dominate.")
+                            _strongest_lbl = "Strongest correlation:"
+                        else:
+                            _advice_c = (f"|r| ≥ 0.5 강한 상관 변수-품질 쌍 {len(_strong)}개 — 공정 관리의 핵심 타겟입니다." if _strong
+                                         else "강한 선형 상관(|r| ≥ 0.5)이 없습니다. 비선형 상호작용이 지배적일 수 있습니다.")
+                            _strongest_lbl = "가장 강한 상관관계:"
+                        _dir_txt = f"({_dir}, r={_tv:.2f})" if is_en3 else f"({_dir}으로, r={_tv:.2f})"
+                        st.markdown(
+                            f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-left:3px solid #ff9f1c;"
+                            f"border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
+                            f"<span style='color:#ececec;'>{_strongest_lbl} <b style='color:#ff9f1c;'>{_tp[0]}</b> → "
+                            f"<b style='color:#ff9f1c;'>{_tp[1]}</b> {_dir_txt}</span><br>"
+                            f"<span style='color:#d4d4d4;font-size:0.78rem;'>→ {_advice_c}</span></div>",
+                            unsafe_allow_html=True
+                        )
+                    _hdr = "".join([f"<th style='padding:5px 7px;font-size:11px;color:#d4d4d4;text-align:center;white-space:nowrap;'>{c}</th>" for c in _sc.columns])
+                    _rows_c = ""
+                    for _vr in _sc.index:
+                        _cells = f"<td style='padding:5px 7px;font-size:11px;color:#ececec;font-weight:600;white-space:nowrap;'>{_vr}</td>"
+                        for _vc in _sc.columns:
+                            _vc_val = float(_sc.loc[_vr, _vc])
+                            _ic = abs(_vc_val)
+                            if _vc_val > 0.3:   _bg, _tc = f"rgba(56,189,248,{min(_ic,0.9):.2f})", "#000"
+                            elif _vc_val < -0.3: _bg, _tc = f"rgba(239,68,68,{min(_ic,0.9):.2f})", "#fff"
+                            else:                _bg, _tc = "#262626", "#8a8a8a"
+                            _cells += f"<td style='padding:5px 7px;text-align:center;background:{_bg};color:{_tc};font-size:11px;'>{_vc_val:.2f}</td>"
+                        _rows_c += f"<tr>{_cells}</tr>"
+                    _corr_title = ("Process Variable ↔ Quality Item Correlation Coefficients (Top 10 Process Variables)" if is_en3
+                                    else "공정 변수 ↔ 불량 항목 상관관계수 (상위 10개 공정 변수)")
+                    st.markdown(
+                        f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:10px;padding:16px;overflow-x:auto;'>"
+                        f"<div style='color:#ececec;font-size:0.9rem;font-weight:600;margin-bottom:12px;'>{_corr_title}</div>"
+                        f"<table style='border-collapse:collapse;width:100%;'>"
+                        f"<thead><tr><th style='padding:5px 7px;'></th>{_hdr}</tr></thead>"
+                        f"<tbody>{_rows_c}</tbody></table>"
+                        f"<div style='color:#8a8a8a;font-size:0.72rem;margin-top:8px;'>{'● Blue: positive correlation &nbsp; ● Red: negative correlation &nbsp; ● Gray: weak correlation' if is_en3 else '● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함'}</div>"
+                        f"</div>", unsafe_allow_html=True
+                    )
+
+        # ── ④ 변수 민감도 분석 (모델 기반) ──────────────────────────
+        _sens_lbl = "+ Variable Sensitivity Analysis (Model-based)" if is_en3 else "+ 변수 민감도 분석 (모델 기반)"
+        with st.expander(_sens_lbl, expanded=False):
+            st.markdown(
+                "<details style='margin-bottom:12px;'>"
+                f"<summary style='font-size:0.72rem;color:#8a8a8a;cursor:pointer;padding:4px 0;list-style:none;'>{'▶ Learn what this means and how it is analyzed' if is_en3 else '▶ 이 항목의 의미와 분석 방법 보기'}</summary>"
+                "<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.72rem;color:#d4d4d4;line-height:1.8;'>"
+                "<b style='color:#ff9f1c;'>변수 민감도 분석</b>이란?<br>"
+                "상관관계 히트맵은 데이터 전체의 <b>선형</b> 관계만 보여주지만, 이 분석은 실제 <b>학습된 예측 모델</b>에 "
+                "각 공정 변수를 기준점(데이터 중앙값)에서 살짝(±5%) 흔들어보고, 예측값이 어느 쪽으로 얼마나 움직이는지 "
+                "직접 확인합니다. XGBoost 같은 비선형 모델의 실제 반응을 그대로 반영합니다.<br><br>"
+                "<b style='color:#a3e635;'>주요 확인 포인트</b><br>"
+                "· <b style='color:#ff9f1c;'>↑ (양의 방향)</b> — 이 변수를 늘리면 예측값도 증가.<br>"
+                "· <b style='color:#f87171;'>↓ (음의 방향)</b> — 이 변수를 늘리면 예측값이 감소.<br>"
+                "· <b>민감도 크기</b> — 값이 클수록 예측 결과에 미치는 영향이 큼. 우선 조정 대상 변수를 고를 때 참고하세요.<br>"
+                "· 상관관계 히트맵과 방향이 다르게 나온다면, 그 변수는 <b>비선형 관계</b>를 가질 가능성이 높습니다."
+                "</div></details>",
+                unsafe_allow_html=True
+            )
+            if _df3.empty or st.session_state.get('scaler') is None:
+                st.info("데이터 및 모델 학습이 필요합니다." if not is_en3 else "Data and trained models are required.")
+            else:
+                _sens_tgt_opts = [t for t in target_vars if st.session_state.get(f'model_{t.lower()}') is not None]
+                if not _sens_tgt_opts:
+                    st.info("학습된 예측 모델이 없습니다." if not is_en3 else "No trained models available.")
+                else:
+                    _sens_sel_lbl = "품질 타겟 선택" if not is_en3 else "Select Quality Target"
+                    _sens_sel = st.selectbox(_sens_sel_lbl, _sens_tgt_opts,
+                                              format_func=lambda k: TARGET_GLOSSARY.get(k, k),
+                                              key="t3_sens_sel")
+                    _sens_model = st.session_state[f'model_{_sens_sel.lower()}']
+                    _sens_scaler = st.session_state['scaler']
+
+                    # 기준점: 각 공정 변수의 데이터 중앙값
+                    _baseline_x = []
+                    _span_x = {}
+                    for v in X_list:
+                        if v in _df3.columns:
+                            _col_v = pd.to_numeric(_df3[v], errors='coerce').dropna()
+                        else:
+                            _col_v = pd.Series(dtype=float)
+                        if not _col_v.empty:
+                            _baseline_x.append(float(_col_v.median()))
+                            _span_x[v] = max(float(_col_v.max() - _col_v.min()), 1e-9)
+                        else:
+                            _lo_v, _hi_v = db.get(v, (0.0, 1.0))
+                            _baseline_x.append(float((_lo_v + _hi_v) / 2))
+                            _span_x[v] = max(_hi_v - _lo_v, 1e-9)
+
+                    _sens_rows = []
+                    for _i, v in enumerate(X_list):
+                        _delta = _span_x[v] * 0.05
+                        _x_up = list(_baseline_x);   _x_up[_i]   += _delta
+                        _x_down = list(_baseline_x); _x_down[_i] -= _delta
+                        _q_up   = _sens_scaler.transform(pd.DataFrame([_x_up], columns=X_list))
+                        _q_down = _sens_scaler.transform(pd.DataFrame([_x_down], columns=X_list))
+                        _p_up   = float(_sens_model.predict(_q_up)[0])
+                        _p_down = float(_sens_model.predict(_q_down)[0])
+                        _sensitivity = (_p_up - _p_down) / 2.0
+                        _sens_rows.append((v, _sensitivity))
+
+                    _sens_rows.sort(key=lambda r: abs(r[1]), reverse=True)
+                    _max_abs_sens = max(abs(r[1]) for r in _sens_rows) if _sens_rows else 1e-9
+                    _max_abs_sens = max(_max_abs_sens, 1e-9)
+
+                    _top_var, _top_val = _sens_rows[0]
+                    if is_en3:
+                        _top_dir = "positive (increases with higher value)" if _top_val > 0 else "negative (decreases with higher value)"
+                        _top_msg = f"→ Adjusting {_top_var} causes the largest response in {_sens_sel}. Consider it a priority adjustment target."
+                        _top_lbl = "Most sensitive variable:"
+                    else:
+                        _top_dir = "양의 방향(늘리면 증가)" if _top_val > 0 else "음의 방향(늘리면 감소)"
+                        _top_msg = f"→ {_top_var} 조정 시 {_sens_sel} 값이 가장 크게 반응합니다. 우선 조정 대상으로 고려하세요."
+                        _top_lbl = "가장 민감한 변수:"
+                    st.markdown(
+                        f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-left:3px solid #ff9f1c;"
+                        f"border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
+                        f"<span style='color:#ececec;'>{_top_lbl} <b style='color:#ff9f1c;'>{_top_var}</b> → "
+                        f"<b style='color:#ff9f1c;'>{_sens_sel}</b> ({_top_dir}, Δ={_top_val:+.4f})</span><br>"
+                        f"<span style='color:#d4d4d4;font-size:0.78rem;'>{_top_msg}</span></div>",
                         unsafe_allow_html=True
                     )
 
-            if st.session_state['last_opt_df'] is not None:
-                df = st.session_state['last_opt_df'].astype(int)
-                headers = "".join([f"<th>{c}</th>" for c in df.columns])
-                rows = "".join([f"<td>{v}</td>" for v in df.values[0]])
-                st.markdown(
-                    f"""<div style="overflow-x: auto;">
-                        <table class="optimized-table">
-                            <thead><tr>{headers}</tr></thead>
-                            <tbody><tr>{rows}</tr></tbody>
-                        </table>
-                    </div>""",
-                    unsafe_allow_html=True
-                )
-                csv = st.session_state['last_opt_df'].to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label=L['btn_download'],
-                    data=csv,
-                    file_name='total_optimized_params.csv',
-                    mime='text/csv'
-                )
-
-        # ── D. 불량 가중치 ────────────────────────────────────────────
-        st.markdown(
-            f'<div class="section-title"><span class="square-icon"></span>{L["sec_d_weight"]}</div>',
-            unsafe_allow_html=True
-        )
-
-        # ── D-1. 가중치 추천 (진단 결과 기반) ───────────────────────
-        _is_d_en = st.session_state.lang == 'en'
-        _d_has_result = bool(st.session_state.get('last_defect_risks'))
-        _d_wgt_badge = " ✅" if _d_has_result else " (진단 필요)"
-        _d_wgt_badge_en = " ✅" if _d_has_result else " (Run diagnosis first)"
-        _d_wgt_rec_lbl = f"▶  Defect Weight Recommendation{_d_wgt_badge_en}" if _is_d_en else f"▶  불량 가중치 추천{_d_wgt_badge}"
-        with st.expander(_d_wgt_rec_lbl, expanded=False):
-            _d_last_risks = st.session_state.get('last_defect_risks', {})
-            _d_models = st.session_state.get('models', {})
-            if not _d_last_risks:
-                st.info("진단 또는 최적화를 먼저 실행해 주세요." if not _is_d_en else "Please run diagnosis or optimization first.")
-            else:
-                # 최신 진단/최적화 시각 표시
-                _last_opt_is_done = st.session_state.get('last_opt_df') is not None
-                _last_res_val = st.session_state.get('last_res_val')
-                _result_type = ("Optimization" if _last_opt_is_done else "Diagnosis") if _is_d_en else ("최적화 후" if _last_opt_is_done else "진단 후")
-                _total_risk_pct = round(_last_res_val * 100, 1) if _last_res_val is not None else 0.0
-                st.markdown(
-                    f"<div style='background:#0a1628;border:1px solid #1e3a5f;border-radius:8px;"
-                    f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
-                    f"<span style='color:#94a3b8;'>"
-                    + ("📊 Based on latest " + _result_type + " result. " if _is_d_en
-                       else f"📊 최근 {_result_type} 결과 기준. ")
-                    + ("Total risk: " if _is_d_en else "종합 위험도: ")
-                    + f"<b style='color:#{'ff5252' if _total_risk_pct>=70 else 'ffab00' if _total_risk_pct>=30 else '10b981'}'>{_total_risk_pct}%</b>"
-                    + ("</span><br><span style='color:#64748b;font-size:0.76rem;'>"
-                       + ("ℹ️ Individual defect risk reflects each model's prediction probability. "
-                          "Changing weights affects only the total weighted risk — re-run diagnosis/optimization to recalculate." if _is_d_en
-                          else "ℹ️ 개별 불량 위험도는 각 모델의 예측 확률입니다. "
-                               "가중치 변경은 종합 위험도에만 반영되며, 새 위험도를 보려면 진단/최적화를 다시 실행하세요.")
-                       + "</span></div>"),
-                    unsafe_allow_html=True
-                )
-                _d_wgt_rows = []
-                for _d_tk in _d_models.keys():
-                    _d_risk_v = _d_last_risks.get(_d_tk, 0)
-                    _d_risk_pct = _d_risk_v * 100
-                    _d_rec_wgt = round(1.0 + (_d_risk_v / max(_d_last_risks.values(), default=1) * 9), 1)
-                    _d_cur_wgt = st.session_state['defect_weights'].get(_d_tk, 1.0)
-                    _d_status = "🔴 High" if _d_risk_pct >= 70 else ("🟡 Med" if _d_risk_pct >= 30 else "🟢 Low")
-                    # 가중치가 이미 추천값 이상이면 "현재 적용 중"으로 표시
-                    if _d_cur_wgt >= _d_rec_wgt - 0.3:
-                        _d_action = "✅ OK"
-                    elif _d_rec_wgt > _d_cur_wgt + 0.5:
-                        _d_action = f"↑ {_d_rec_wgt:.1f} 권장" if not _is_d_en else f"↑ Set to {_d_rec_wgt:.1f}"
-                    else:
-                        _d_action = f"↓ {_d_rec_wgt:.1f} 권장" if not _is_d_en else f"↓ Set to {_d_rec_wgt:.1f}"
-                    _d_wgt_rows.append({
-                        ("Defect" if _is_d_en else "불량"): TARGET_VARS.get(_d_tk, _d_tk),
-                        ("Risk (%)" if _is_d_en else "현재 위험도 (%)"): f"{_d_risk_pct:.1f}%",
-                        ("Level" if _is_d_en else "위험 수준"): _d_status,
-                        ("Current" if _is_d_en else "현재 가중치"): f"{_d_cur_wgt:.1f}",
-                        ("Recommended" if _is_d_en else "추천 가중치"): f"{_d_rec_wgt:.1f}",
-                        ("Action" if _is_d_en else "조치"): _d_action
-                    })
-                _d_wgt_df = pd.DataFrame(_d_wgt_rows)
-                _d_wgt_df['_rs'] = [_d_last_risks.get(k, 0) for k in _d_models.keys()]
-                _d_wgt_df = _d_wgt_df.sort_values('_rs', ascending=False).drop(columns=['_rs'])
-                st.dataframe(_d_wgt_df, use_container_width=True, hide_index=True)
-                _rerun_note = ("💡 Re-run Diagnosis or Optimization after changing weights to see updated results."
-                               if _is_d_en else
-                               "💡 가중치를 변경한 후 C섹션에서 진단 또는 최적화를 다시 실행하면 새 위험도와 추천값이 갱신됩니다.")
-                st.caption(_rerun_note)
-
-        # ── D-2. 가중치 설정 ───────────────────────────────────────
-        # 핵심 원칙: defect_weights[tk]를 단일 진실의 원천(single source of truth)으로 사용
-        # 슬라이더는 0.5 스냅, number_input은 자유 입력 후 0.5 반올림하여 저장
-        def _wgt_clamp(v):
-            return max(0.0, min(10.0, round(round(float(v) / 0.5) * 0.5, 1)))
-
-        def _on_wgt_num_change(tk):
-            raw = st.session_state.get(f"wnum_{tk}", 1.0)
-            snapped = _wgt_clamp(raw)
-            st.session_state['defect_weights'][tk] = snapped
-            # 슬라이더 위젯 상태도 직접 갱신 → 다음 rerun에 반영
-            st.session_state[f"wsld_{tk}"] = snapped
-
-        def _on_wgt_sld_change(tk):
-            val = _wgt_clamp(st.session_state.get(f"wsld_{tk}", 1.0))
-            st.session_state['defect_weights'][tk] = val
-            st.session_state[f"wnum_{tk}"] = val
-
-        _d_slider_lbl = "▶  Defect Weight Settings  (Click to expand/collapse)" if _is_d_en else "▶  불량 가중치 설정  (클릭하여 펼치기 / 닫기)"
-        with st.expander(_d_slider_lbl, expanded=False):
-            active_targets = list(st.session_state['models'].keys())
-            w_cols = st.columns(3)
-            for idx, target_key in enumerate(active_targets):
-                with w_cols[idx % 3]:
-                    is_on = st.checkbox(
-                        f"{TARGET_VARS[target_key]}",
-                        value=st.session_state['defect_switches'].get(target_key, True),
-                        key=f"onoff_w_{target_key}"
-                    )
-                    st.session_state['defect_switches'][target_key] = is_on
-
-                    # defect_weights가 진실의 원천 — 항상 여기서 읽음
-                    _wval = _wgt_clamp(
-                        st.session_state['defect_weights'].get(target_key, 1.0)
-                    )
-                    # 슬라이더/입력 위젯 상태 초기화 (최초 1회)
-                    if f"wsld_{target_key}" not in st.session_state:
-                        st.session_state[f"wsld_{target_key}"] = _wval
-                    if f"wnum_{target_key}" not in st.session_state:
-                        st.session_state[f"wnum_{target_key}"] = _wval
-
-                    _wc1, _wc2 = st.columns([3, 1])
-                    with _wc1:
-                        st.slider(
-                            "", 0.0, 10.0,
-                            value=st.session_state[f"wsld_{target_key}"],
-                            step=0.5, disabled=not is_on,
-                            key=f"wsld_{target_key}",
-                            on_change=_on_wgt_sld_change,
-                            args=(target_key,)
-                        )
-                    with _wc2:
-                        st.number_input(
-                            "", 0.0, 10.0,
-                            value=st.session_state[f"wnum_{target_key}"],
-                            step=0.5,
-                            format="%.1f",
-                            disabled=not is_on,
-                            key=f"wnum_{target_key}",
-                            label_visibility='collapsed',
-                            on_change=_on_wgt_num_change,
-                            args=(target_key,)
-                        )
-                    # 최종 저장 (위젯 상태 읽어서 항상 최신 유지)
-                    st.session_state['defect_weights'][target_key] = _wgt_clamp(
-                        st.session_state.get(f"wnum_{target_key}",
-                        st.session_state.get(f"wsld_{target_key}", _wval))
-                    )
-
-        # ── E. Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단 ──
-        st.markdown(
-            f'<div class="section-title"><span class="square-icon"></span>{L["sec_e"]}</div>',
-            unsafe_allow_html=True
-        )
-        _combined_lbl = (
-            "▶  Feature Importance-based Diagnosis & AI Expert Report  (Click to expand/collapse)"
-            if st.session_state.lang == "en"
-            else "▶  Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단  (클릭하여 펼치기 / 닫기)"
-        )
-        with st.expander(_combined_lbl, expanded=False):
-
-            # ── 1) Feature Importance 기반 공정 진단 가이드 ──────────
-            if st.session_state.get('last_res_val') is not None:
-                risks = st.session_state['last_defect_risks']
-                normal_count   = sum(1 for r in risks.values() if r < DEFECT_THRESHOLD)
-                out_spec_count = len(risks) - normal_count
-                success_status = L['guide_all_success'] if out_spec_count == 0 else (
-                    f"Caution Required ({out_spec_count} out of spec)" if st.session_state.lang == "en"
-                    else f"주의 필요 ({out_spec_count}개 이탈)"
-                )
-                success_msg = L['guide_success_msg'] if out_spec_count == 0 else L['guide_partial_msg']
-                icon = "✓" if out_spec_count == 0 else "⚠"
-                unachievable_label = "Unachievable" if st.session_state.lang == "en" else "달성 불가"
-                out_spec_label     = "Out of Spec"  if st.session_state.lang == "en" else "이탈"
-                normal_label       = "Normal"       if st.session_state.lang == "en" else "정상"
-                guide_html = f"""
-                <div style="background-color:#12141d; border:1px solid #2d3142;
-                            border-radius:10px; padding:16px 20px; margin-bottom:16px;">
-                    <div style="font-size:0.82rem; color:#00e5ff; font-weight:700;
-                                margin-bottom:10px;">▸ {L['guide_subtitle']}</div>
-                    <div style="border-left:4px solid #10b981; padding:8px 12px;
-                                background:#1a1c24; border-radius:4px;
-                                font-size:0.82rem; color:#cbd5e1; margin-bottom:10px;">
-                        {L['guide_pred_rel']}: <b>100.0%</b> &nbsp;|&nbsp;
-                        {unachievable_label}: <b>0</b> &nbsp;|&nbsp;
-                        {out_spec_label}: <b>{out_spec_count}</b> &nbsp;|&nbsp;
-                        {normal_label}: <b>{normal_count}</b>
-                    </div>
-                    <div style="color:#10b981; font-size:0.88rem; font-weight:700;
-                                margin-bottom:6px;">{icon} {success_status}</div>
-                    <div style="font-size:0.85rem; color:#e1e1e1; line-height:1.6;">
-                        {success_msg}
-                    </div>
-                </div>
-                """
-                st.markdown(guide_html, unsafe_allow_html=True)
-            else:
-                st.info("진단 또는 최적화를 먼저 실행해 주세요." if st.session_state.lang != "en"
-                        else "Please run Diagnose or Optimize first.")
-
-            # ── 2) AI 전문가 진단 ────────────────────────────────────
-            if st.session_state['last_res_val'] is None:
-                st.warning(L['warn_need_diagnose'])
-            else:
-                is_optimized = st.session_state['last_opt_df'] is not None
-                st.success(L['opt_success_msg'] if is_optimized else L['diag_success_msg'])
-                if st.button(L['btn_ai_report'], key="btn_report_active"):
-                    with st.spinner(L['spinner_analyzing']):
-                        import re
-                        no_diag_text = "No diagnosis" if st.session_state.lang == "en" else "진단 없음"
-                        results = st.session_state.get('last_defect_risks', no_diag_text)
-                        if is_optimized:
-                            params = st.session_state['last_opt_df'].to_dict(orient='records')
+                    _rows_html = ""
+                    for v, sens in _sens_rows[:15]:
+                        _bar_pct = min(int(abs(sens) / _max_abs_sens * 100), 100)
+                        _is_pos = sens > 0
+                        _dir_arrow = "▲" if _is_pos else "▼" if sens < 0 else "—"
+                        _dir_color = "#ff9f1c" if _is_pos else "#f87171" if sens < 0 else "#8a8a8a"
+                        if is_en3:
+                            _dir_txt = "Increases" if _is_pos else "Decreases" if sens < 0 else "No effect"
                         else:
-                            params = [{v: st.session_state['current_inputs'].get(v, 0)
-                                       for v in st.session_state['ui_display_vars']}]
-                        report = generate_ai_report(
-                            results, params, num_actions=NUM_ACTIONS,
-                            lang=st.session_state.lang, is_optimized=is_optimized
+                            _dir_txt = "늘리면 증가" if _is_pos else "늘리면 감소" if sens < 0 else "영향 없음"
+                        _rows_html += (
+                            f"<tr>"
+                            f"<td style='padding:5px 8px;font-size:0.8rem;color:#ececec;font-weight:700;white-space:nowrap;'>{v}</td>"
+                            f"<td style='padding:5px 8px;font-size:0.78rem;color:{_dir_color};font-weight:700;white-space:nowrap;'>{_dir_arrow} {_dir_txt}</td>"
+                            f"<td style='padding:5px 8px;min-width:140px;'>"
+                            f"<span style='color:{_dir_color};font-weight:700;font-family:monospace;font-size:0.8rem;'>{sens:+.4f}</span>"
+                            f"<div style='background:#262626;border-radius:2px;height:5px;margin-top:2px;'>"
+                            f"<div style='width:{_bar_pct}%;background:{_dir_color};height:5px;border-radius:2px;'></div></div>"
+                            f"</td>"
+                            f"</tr>"
                         )
-                        cleaned = re.sub(r'<br\s*/?>', '\n', report)
-                        cleaned = re.sub(r'<[^>]+>', '', cleaned)
-                        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-                        lines = cleaned.strip().split('\n')
-                        html_lines = []
-                        for line in lines:
-                            line = line.strip()
-                            if not line:
-                                html_lines.append('<div style="margin:6px 0;"></div>')
-                            elif re.match(r'^\d+[\.\.].', line):
-                                html_lines.append(
-                                    f'<div style="margin:10px 0 4px 0; color:#00e5ff;'
-                                    f' font-weight:700; font-size:0.92rem;">{line}</div>'
-                                )
-                            else:
-                                html_lines.append(
-                                    f'<div style="margin:2px 0 2px 12px; color:#e1e1e1;'
-                                    f' font-size:0.88rem; line-height:1.6;">{line}</div>'
-                                )
-                        report_html = f"""
-                        <div style="background-color:#12141d; border:1px solid #2d3142;
-                                    border-radius:10px; padding:20px 24px; margin-top:12px;
-                                    max-height:420px; overflow-y:auto;">
-                            <div style="color:#cbd5e1; font-size:0.8rem; margin-bottom:12px;
-                                        letter-spacing:0.05em;">{L['report_box_title']}</div>
-                            {''.join(html_lines)}
-                        </div>"""
-                        st.markdown(report_html, unsafe_allow_html=True)
-
-        # FI 섹션은 Tab3 원시 데이터 아래로 이동됨
-
-
-    # ── 실시간 최적화 결과 예측 탭 ──────────────────────────────────
-    with t_live:
-        _is_live_en = st.session_state.lang == 'en'
-        _models = st.session_state.get('models', {})
-        _scalers = st.session_state.get('scalers', {})
-        _proc_vars = st.session_state.get('global_process_vars', [])
-        _bounds = st.session_state.get('global_bounds', {})
-        _cur = st.session_state.get('current_inputs', {})
-
-        if not _models or not _proc_vars:
-            st.info("AI 모델 학습 후 사용 가능합니다." if not _is_live_en else "Available after AI model training.")
-        else:
-            # ── 상단: 3열 메트릭 ──────────────────────────────────
-            _live_title = "Real-Time Optimization Prediction" if _is_live_en else "실시간 최적화 결과 예측"
-            st.markdown(f"<h3 style='color:#00e5ff;font-size:1.2rem;margin-bottom:1rem;'>{_live_title}</h3>", unsafe_allow_html=True)
-
-            # ── (A) 순방향: 목표 불량률 → 최적 공정 조건 ─────────
-            _fwd_title = "Backward Optimization: Set Target Defect Rate → Find Optimal Process Conditions" if _is_live_en else "역방향 최적화: 목표 불량률 설정 → 최적 공정 조건 탐색"
-            with st.expander(f"▶  {_fwd_title}", expanded=False):
-                st.markdown(
-                    f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
-                    + ("Set the target defect rate for each defect type. The system will find process conditions that achieve all targets simultaneously." if _is_live_en
-                       else "각 불량 유형별 목표 불량률을 설정하면, 모든 목표를 동시에 달성하는 최적 공정 조건을 탐색합니다.")
-                    + "</div>", unsafe_allow_html=True
-                )
-                _active_targets = list(_models.keys())
-                _fwd_targets = {}
-                _fwd_cols = st.columns(min(3, len(_active_targets)))
-                for _fi, _tk in enumerate(_active_targets):
-                    with _fwd_cols[_fi % 3]:
-                        _lbl = TARGET_VARS.get(_tk, _tk)
-                        _tgt_pct = st.slider(
-                            f"{_lbl}",
-                            min_value=0, max_value=100,
-                            value=st.session_state.get(f'fwd_target_{_tk}', 30),
-                            step=5, key=f'fwd_tgt_{_tk}',
-                            help=("Target maximum defect rate (%)" if _is_live_en else "목표 최대 불량률 (%)")
-                        )
-                        st.session_state[f'fwd_target_{_tk}'] = _tgt_pct
-                        _fwd_targets[_tk] = _tgt_pct / 100.0
-
-                _fwd_opt_btn = st.button(
-                    "▸ Run Backward Optimization" if _is_live_en else "▸ 역방향 최적화 실행",
-                    type="primary", key="fwd_opt_btn"
-                )
-
-                def _run_fwd_opt():
-                    _all_v = st.session_state['global_process_vars']
-                    _bnds = [st.session_state['global_bounds'].get(v, (0,100)) for v in _all_v]
-                    _x0 = [float(st.session_state['current_inputs'].get(v, (_bnds[i][0]+_bnds[i][1])/2)) for i, v in enumerate(_all_v)]
-                    _tgts = {k: st.session_state.get(f'fwd_target_{k}', 0.3) for k in st.session_state['models'].keys()}
-
-                    def _fwd_obj(x):
-                        _df = pd.DataFrame([x], columns=_all_v)
-                        _total_penalty = 0.0
-                        for _tk2, _mdl in st.session_state['models'].items():
-                            _sc = st.session_state['scalers'][_tk2]
-                            _prob = _mdl.predict_proba(_sc.transform(_df))[0, 1]
-                            _target_prob = _tgts.get(_tk2, 0.3)
-                            if _prob > _target_prob:
-                                _total_penalty += (_prob - _target_prob) ** 2 * 10
-                            else:
-                                _total_penalty += _prob * 0.1
-                        return _total_penalty
-
-                    _best_res = None
-                    _best_val = float('inf')
-                    for _algo in ['L-BFGS-B', 'SLSQP', 'Powell']:
-                        try:
-                            _r = minimize(_fwd_obj, _x0, method=_algo, bounds=_bnds, options={'maxiter': 500})
-                            if _r.fun < _best_val:
-                                _best_val = _r.fun
-                                _best_res = _r
-                        except Exception:
-                            continue
-
-                    if _best_res is None:
-                        return None
-                    _fx = [np.clip(v, _bnds[i][0], _bnds[i][1]) for i, v in enumerate(_best_res.x)]
-                    _opt_dict = {v: int(round(val)) for v, val in zip(_all_v, _fx)}
-                    _df_res = pd.DataFrame([_fx], columns=_all_v)
-                    _achieved = {}
-                    for _tk2, _mdl in st.session_state['models'].items():
-                        _sc = st.session_state['scalers'][_tk2]
-                        _achieved[_tk2] = float(_mdl.predict_proba(_sc.transform(_df_res))[0, 1])
-                    return {'opt_dict': _opt_dict, 'achieved': _achieved, 'fx': _fx}
-
-                _fwd_result = run_blocking_task(
-                    "fwd_optimize", _run_fwd_opt,
-                    running_msg=("Running backward optimization..." if _is_live_en else "역방향 최적화 탐색 중..."),
-                    done_msg=("Backward optimization complete!" if _is_live_en else "역방향 최적화 완료!"),
-                    trigger=_fwd_opt_btn, show_spinner=False
-                )
-                if _fwd_result is not None:
-                    st.session_state['fwd_opt_result'] = _fwd_result
-                    st.rerun()
-
-                if st.session_state.get('fwd_opt_result'):
-                    _fr = st.session_state['fwd_opt_result']
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    _res_title = "▣ Backward Optimization Result" if _is_live_en else "▣ 역방향 최적화 결과"
-                    st.markdown(f"**{_res_title}**")
-
-                    # 목표 vs 달성 비교
-                    _cmp_rows = []
-                    for _tk2 in _models.keys():
-                        _tgt_v = _fwd_targets.get(_tk2, 0.3) * 100
-                        _ach_v = _fr['achieved'].get(_tk2, 0) * 100
-                        _ok = "✅" if _ach_v <= _tgt_v else "⚠️"
-                        _cmp_rows.append({
-                            ("Defect" if _is_live_en else "불량"): TARGET_VARS.get(_tk2, _tk2),
-                            ("Target (%)" if _is_live_en else "목표율 (%)"): f"{_tgt_v:.0f}%",
-                            ("Achieved (%)" if _is_live_en else "달성율 (%)"): f"{_ach_v:.1f}%",
-                            ("Result" if _is_live_en else "판정"): _ok
-                        })
-                    st.dataframe(pd.DataFrame(_cmp_rows), use_container_width=True, hide_index=True)
-
-                    # 최적 공정 조건 표
-                    _opt_df_fwd = pd.DataFrame([{v: _fr['opt_dict'].get(v, 0) for v in st.session_state['ui_display_vars']}])
-                    st.markdown(f"**{'Optimal Process Conditions' if _is_live_en else '추천 최적 공정 조건'}**")
-                    st.dataframe(_opt_df_fwd.astype(int), use_container_width=True, hide_index=True)
-                    _csv_fwd = _opt_df_fwd.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(
-                        "📥 Download CSV" if _is_live_en else "📥 최적 조건 다운로드 (.csv)",
-                        _csv_fwd, "forward_optimal_conditions.csv", "text/csv"
-                    )
-
-            # ── (B) AI 추천값 vs 현재 조건 비교 ──────────────────
-            _cmp_exp_title = "▶  AI Recommended vs Current Condition Comparison" if _is_live_en else "▶  AI 추천값 vs 현재 조건 비교"
-            with st.expander(_cmp_exp_title, expanded=False):
-                _opt_df = st.session_state.get('last_opt_df')
-                if _opt_df is None:
-                    st.info("역추론 최적화를 먼저 실행해 주세요." if not _is_live_en else "Please run inverse optimization first.")
-                else:
-                    _all_v2 = st.session_state['ui_display_vars']
-                    _cmp_data = []
-                    for _v in _all_v2:
-                        _ai_val = int(_opt_df[_v].iloc[0]) if _v in _opt_df.columns else 0
-                        _cur_val = int(st.session_state['current_inputs'].get(_v, 0))
-                        _diff = _ai_val - _cur_val
-                        _abs_diff = abs(_diff)
-                        _arrow = "↑" if _diff > 0 else ("↓" if _diff < 0 else "−")
-                        _priority = "🔴 High" if _abs_diff > 10 else ("🟡 Med" if _abs_diff > 3 else "🟢 Low")
-                        _cmp_data.append({
-                            ("Variable" if _is_live_en else "변수"): _v,
-                            ("AI Recommended" if _is_live_en else "AI 추천값"): _ai_val,
-                            ("Current" if _is_live_en else "현재값"): _cur_val,
-                            ("Diff" if _is_live_en else "차이"): f"{_arrow} {_diff:+d}",
-                            ("Priority" if _is_live_en else "우선순위"): _priority
-                        })
-                    _cmp_df = pd.DataFrame(_cmp_data)
-                    import re as _re
-                    _cmp_df['_sort'] = _cmp_df["Diff" if _is_live_en else "차이"].apply(lambda x: int(_re.search(r'\d+', str(x)).group()) if _re.search(r'\d+', str(x)) else 0)
-                    _cmp_df_sorted = _cmp_df.sort_values('_sort', ascending=False).drop(columns=['_sort'])
-
+                    if is_en3:
+                        _sens_table_title = f"{_sens_sel} — Top 15 Sensitive Variables (prediction response to ±5% change from data median)"
+                        _th_s1, _th_s2, _th_s3 = "Process Variable", "Direction", "Sensitivity (Δ Predicted)"
+                        _sens_footer = ("▲ Blue: variable increase → prediction increases &nbsp; ▼ Red: variable increase → prediction decreases &nbsp;|&nbsp; "
+                                        "This reflects the local ±5% response around the baseline (median); direction may change in other ranges.")
+                    else:
+                        _sens_table_title = f"{_sens_sel} 민감도 상위 15개 변수 (데이터 중앙값 기준 ±5% 변화 시 예측 반응)"
+                        _th_s1, _th_s2, _th_s3 = "공정 변수", "방향성", "민감도 (Δ예측값)"
+                        _sens_footer = ("▲ 파란색: 변수 증가 → 예측값 증가 &nbsp; ▼ 빨간색: 변수 증가 → 예측값 감소 &nbsp;|&nbsp; "
+                                        "기준점(중앙값)에서 ±5% 국소 변화에 대한 반응이라 구간이 달라지면 방향이 바뀔 수 있습니다.")
                     st.markdown(
-                        f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:0.8rem;'>"
-                        + ("Variables sorted by magnitude of change. Red = high priority adjustment." if _is_live_en
-                           else "변화 폭이 큰 순으로 정렬합니다. 빨간색 = 우선 조정 대상.")
-                        + "</div>", unsafe_allow_html=True
-                    )
-                    st.dataframe(_cmp_df_sorted, use_container_width=True, hide_index=True)
-
-            # ── (C) 예측 성능 분석 ────────────────────────────────
-            _perf_exp_title = "▶  Model Prediction Performance Analysis" if _is_live_en else "▶  예측 성능 분석"
-            with st.expander(_perf_exp_title, expanded=False):
-                _reliability = st.session_state.get('model_reliability', {})
-                _algo_names  = st.session_state.get('model_algo_names', {})
-                _df_inj = st.session_state.get('df_injection', pd.DataFrame())
-                if not _models or not _reliability:
-                    st.info("데이터 학습 후 확인 가능합니다." if not _is_live_en else "Available after model training.")
-                else:
-                    st.markdown(
-                        f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
-                        + ("CV F1 score and sample counts per defect model. Closer to 1.0 = more reliable." if _is_live_en
-                           else "각 불량별 CV F1 점수와 샘플 수를 표시합니다. 1에 가까울수록 신뢰도가 높습니다.")
-                        + "</div>", unsafe_allow_html=True
-                    )
-                    _perf_rows = []
-                    for _tk2 in _models.keys():
-                        _rel = _reliability.get(_tk2, {})
-                        _cv_f = _rel.get('cv_score', None)
-                        _n_pos = _rel.get('n_pos', 0)
-                        _n_neg = _rel.get('n_neg', 0)
-                        _n_tot = _rel.get('n_total', 0)
-                        _algo_name = _algo_names.get(_tk2, _rel.get('algo', 'N/A'))
-                        _low = _rel.get('low_sample', False)
-                        _cv_disp = (f"{'🟢' if _cv_f>=0.7 else '🟡' if _cv_f>=0.4 else '🔴'} {_cv_f:.3f}") if _cv_f is not None else '⚪ N/A'
-                        _perf_rows.append({
-                            ("Defect" if _is_live_en else "불량"): TARGET_VARS.get(_tk2, _tk2),
-                            ("Algorithm" if _is_live_en else "알고리즘"): _algo_name,
-                            ("CV F1" if _is_live_en else "CV F1 점수"): _cv_disp,
-                            ("Defect" if _is_live_en else "불량 샘플"): f"{_n_pos}{'⚠️' if _low else ''}",
-                            ("Normal" if _is_live_en else "정상 샘플"): str(_n_neg),
-                            ("Total" if _is_live_en else "총 샘플"): str(_n_tot),
-                        })
-                    st.dataframe(pd.DataFrame(_perf_rows), use_container_width=True, hide_index=True)
-                    st.markdown(
-                        "<div style='font-size:0.75rem;color:#64748b;margin-top:0.5rem;'>"
-                        + ("🟢 ≥0.7 Good  🟡 0.4~0.7 Fair  🔴 <0.4 Poor  ⚠️ Low sample" if _is_live_en
-                           else "🟢 ≥0.7 우수  🟡 0.4~0.7 보통  🔴 <0.4 미흡  ⚠️ 샘플 부족 — 데이터 추가 권장")
-                        + "</div>", unsafe_allow_html=True
+                        f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:10px;padding:16px;overflow-x:auto;'>"
+                        f"<div style='color:#ececec;font-size:0.9rem;font-weight:600;margin-bottom:12px;'>"
+                        f"{_sens_table_title}</div>"
+                        f"<table style='width:100%;border-collapse:collapse;'>"
+                        f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_s1}</th>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_s2}</th>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_s3}</th>"
+                        f"</tr></thead>"
+                        f"<tbody>{_rows_html}</tbody>"
+                        f"</table>"
+                        f"<div style='color:#8a8a8a;font-size:0.72rem;margin-top:8px;'>{_sens_footer}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True
                     )
 
-            # ── (D) 불량 가중치 추천 ──────────────────────────────
-            _wgt_exp_title = "▶  Defect Weight Recommendation" if _is_live_en else "▶  불량 가중치 추천"
-            with st.expander(_wgt_exp_title, expanded=False):
-                _last_risks = st.session_state.get('last_defect_risks', {})
-                if not _last_risks:
-                    st.info("진단 또는 최적화를 먼저 실행해 주세요." if not _is_live_en else "Please run diagnosis or optimization first.")
-                else:
-                    st.markdown(
-                        f"<div style='font-size:0.82rem;color:#94a3b8;margin-bottom:1rem;'>"
-                        + ("Recommended weights are calculated based on current risk levels. High-risk defects should have higher weights." if _is_live_en
-                           else "현재 진단된 위험도를 기반으로 불량 가중치 추천값을 계산합니다. 위험도가 높은 불량에 높은 가중치를 부여하세요.")
-                        + "</div>", unsafe_allow_html=True
-                    )
-                    _wgt_rows = []
-                    _total_risk = sum(_last_risks.values()) + 1e-9
-                    for _tk2 in _models.keys():
-                        _risk_v = _last_risks.get(_tk2, 0)
-                        _risk_pct = _risk_v * 100
-                        _rec_wgt = round(1.0 + (_risk_v / max(_last_risks.values(), default=1) * 9), 1)
-                        _cur_wgt = st.session_state['defect_weights'].get(_tk2, 1.0)
-                        _status = "🔴 High" if _risk_pct >= 70 else ("🟡 Med" if _risk_pct >= 30 else "🟢 Low")
-                        _wgt_rows.append({
-                            ("Defect" if _is_live_en else "불량"): TARGET_VARS.get(_tk2, _tk2),
-                            ("Risk (%)" if _is_live_en else "현재 위험도 (%)"): f"{_risk_pct:.1f}%",
-                            ("Status" if _is_live_en else "위험 수준"): _status,
-                            ("Current Weight" if _is_live_en else "현재 가중치"): f"{_cur_wgt:.1f}",
-                            ("Recommended Weight" if _is_live_en else "추천 가중치"): f"{_rec_wgt:.1f}",
-                            ("Action" if _is_live_en else "조치"): ("↑ Increase" if _rec_wgt > _cur_wgt + 0.5 else ("↓ Decrease" if _rec_wgt < _cur_wgt - 0.5 else "✅ OK"))
-                        })
-                    _wgt_df = pd.DataFrame(_wgt_rows)
-                    _wgt_df['_rs'] = [_last_risks.get(k, 0) for k in _models.keys()]
-                    _wgt_df = _wgt_df.sort_values('_rs', ascending=False).drop(columns=['_rs'])
-                    st.dataframe(_wgt_df, use_container_width=True, hide_index=True)
-                    st.caption("💡 " + ("Weights 0~10. Apply recommended weights in Section B." if _is_live_en else "가중치 0~10. 추천값을 B섹션에 적용하세요."))
-
-
-    with t2:
-        if not st.session_state['df_injection'].empty:
-            import streamlit.components.v1 as components
-            df_view = st.session_state['df_injection'].copy()
-            is_en   = st.session_state.lang == "en"
-
-            # ── 상단 데이터 & 모델 현황 요약 카드 ───────────────────────
-            target_cols_all  = [c for c in df_view.columns if c in TARGET_VARS]
-            process_cols_all = [c for c in df_view.columns if c not in TARGET_VARS and c != 'vars']
-            n_rows           = len(df_view)
-            n_proc           = len(process_cols_all)
-            n_tgt            = len(target_cols_all)
-
-            # 모델 신뢰도 평균
-            rel_dict  = st.session_state.get('model_reliability', {})
-            cv_scores = [v['cv_score'] for v in rel_dict.values() if v.get('cv_score') is not None]
-            avg_cv    = f"{np.mean(cv_scores)*100:.1f}%" if cv_scores else "N/A"
-
-            # 고위험 불량 수 (마지막 진단 결과 기준)
-            last_risks   = st.session_state.get('last_defect_risks', {})
-            high_risk_n  = sum(1 for v in last_risks.values() if v >= DEFECT_THRESHOLD)
-            high_risk_names = [TARGET_VARS.get(k, k) for k, v in last_risks.items() if v >= DEFECT_THRESHOLD]
-
-            # 알고리즘별 선택 횟수
-            algo_summary = st.session_state.get('algo_summary', {})
-            from collections import Counter
-            algo_counts  = Counter(info['algo'] for info in algo_summary.values())
-            algo_dist_str = " / ".join([f"{k}: {v}" for k, v in algo_counts.most_common()])
-
-            if is_en:
-                card_items = [
-                    ("Total Samples",          f"{n_rows} rows"),
-                    ("Process Variables",       f"{n_proc} vars"),
-                    ("Defect Targets",          f"{n_tgt} types"),
-                    ("Avg. Model CV Accuracy",  avg_cv),
-                    ("High-Risk Defects",       f"{high_risk_n} types" if last_risks else "Not diagnosed yet"),
-                    ("Algorithm Distribution",  algo_dist_str if algo_dist_str else "Not trained yet"),
-                ]
-                summary_title = "Dataset & Model Overview"
-                insight_title = "Key Insights"
-
-                # 인사이트 메시지 생성
-                insights = []
-                if cv_scores:
-                    best_tgt = max(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 0)
-                    worst_tgt = min(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 1)
-                    insights.append(f"Best model accuracy: <b style='color:#a3e635;'>{TARGET_VARS.get(best_tgt, best_tgt)}</b> ({rel_dict[best_tgt].get('cv_score',0)*100:.1f}%)")
-                    worst_cv = rel_dict[worst_tgt].get('cv_score') or 0
-                    if worst_cv < 0.7:
-                        insights.append(f"Low accuracy warning: <b style='color:#ff5252;'>{TARGET_VARS.get(worst_tgt, worst_tgt)}</b> ({worst_cv*100:.1f}%) — consider collecting more data.")
-                if high_risk_n > 0:
-                    insights.append(f"<b style='color:#ffab00;'>{high_risk_n} high-risk defect(s)</b> detected in last diagnosis: {', '.join(h.split('(')[0].strip() for h in high_risk_names[:3])}")
-                else:
-                    if last_risks:
-                        insights.append("<b style='color:#10b981;'>All defects below risk threshold</b> in last diagnosis.")
-                if algo_counts:
-                    top_algo = algo_counts.most_common(1)[0][0]
-                    insights.append(f"Most selected algorithm: <b style='color:#00e5ff;'>{top_algo}</b> ({algo_counts[top_algo]}/{n_tgt} defects)")
-                low_sample_targets = [k for k, v in rel_dict.items() if v.get('low_sample')]
-                if low_sample_targets:
-                    insights.append(f"<b style='color:#ff5252;'>Low sample warning</b> on: {', '.join(low_sample_targets)} — predictions may be unreliable.")
-            else:
-                card_items = [
-                    ("전체 샘플 수",         f"{n_rows} 행"),
-                    ("공정 변수 수",         f"{n_proc} 개"),
-                    ("불량 타겟 수",         f"{n_tgt} 종"),
-                    ("평균 모델 CV 정확도",   avg_cv),
-                    ("고위험 불량",          f"{high_risk_n} 종" if last_risks else "아직 진단 안 함"),
-                    ("알고리즘 분포",         algo_dist_str if algo_dist_str else "미학습"),
-                ]
-                summary_title = "데이터셋 & 모델 현황 요약"
-                insight_title = "주요 인사이트"
-
-                insights = []
-                if cv_scores:
-                    best_tgt = max(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 0)
-                    worst_tgt = min(rel_dict, key=lambda k: rel_dict[k].get('cv_score') or 1)
-                    insights.append(f"가장 높은 모델 정확도: <b style='color:#a3e635;'>{TARGET_VARS.get(best_tgt, best_tgt)}</b> ({rel_dict[best_tgt].get('cv_score',0)*100:.1f}%)")
-                    worst_cv = rel_dict[worst_tgt].get('cv_score') or 0
-                    if worst_cv < 0.7:
-                        insights.append(f"정확도 낮음 주의: <b style='color:#ff5252;'>{TARGET_VARS.get(worst_tgt, worst_tgt)}</b> ({worst_cv*100:.1f}%) — 데이터 추가 수집 권장")
-                if high_risk_n > 0:
-                    insights.append(f"마지막 진단에서 <b style='color:#ffab00;'>고위험 불량 {high_risk_n}종</b> 감지: {', '.join(h.split('(')[0].strip() for h in high_risk_names[:3])}")
-                else:
-                    if last_risks:
-                        insights.append("<b style='color:#10b981;'>마지막 진단에서 모든 불량이 기준치 이하</b>로 확인됨.")
-                if algo_counts:
-                    top_algo = algo_counts.most_common(1)[0][0]
-                    insights.append(f"가장 많이 선택된 알고리즘: <b style='color:#00e5ff;'>{top_algo}</b> ({algo_counts[top_algo]}/{n_tgt}종 불량)")
-                low_sample_targets = [k for k, v in rel_dict.items() if v.get('low_sample')]
-                if low_sample_targets:
-                    insights.append(f"<b style='color:#ff5252;'>표본 부족 경고</b>: {', '.join(low_sample_targets)} — 예측 신뢰도 낮을 수 있음")
-
-            # 요약 카드 렌더링
-            card_html = "".join([
-                f"<div style='text-align:center;padding:10px 6px;background:#1a1c24;"
-                f"border:1px solid #2d3142;border-radius:8px;'>"
-                f"<div style='font-size:0.68rem;color:#cbd5e1;margin-bottom:4px;'>{label}</div>"
-                f"<div style='font-size:0.95rem;font-weight:700;color:#ffffff;'>{val}</div>"
-                f"</div>"
-                for label, val in card_items
-            ])
+        # ── ⑤ 시계열 트렌드 차트 ──────────────────────────────────
+        _trend_lbl = "+ Time-Series Trend Chart" if is_en3 else "+ 시계열 트렌드 차트"
+        with st.expander(_trend_lbl, expanded=False):
             st.markdown(
-                f"<div style='background:#12141d;border:1px solid #2d3142;border-radius:10px;"
-                f"padding:16px 20px;margin-bottom:10px;'>"
-                f"<div style='font-size:0.82rem;color:#00e5ff;font-weight:700;margin-bottom:12px;'>"
-                f"▸ {summary_title}</div>"
-                f"<div style='display:grid;grid-template-columns:repeat(6,1fr);gap:8px;'>{card_html}</div>"
+                "<details style='margin-bottom:12px;'>"
+                f"<summary style='font-size:0.72rem;color:#8a8a8a;cursor:pointer;padding:4px 0;list-style:none;'>{'▶ Learn what this means and how it is analyzed' if is_en3 else '▶ 이 항목의 의미와 분석 방법 보기'}</summary>"
+                "<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.72rem;color:#d4d4d4;line-height:1.8;'>"
+                + (
+                "<b style='color:#ff9f1c;'>Time-Series Trend Chart</b>?<br>"
+                "Shows the change in quality and process values over the row order of the data (measurement or "
+                "chronological order) as a line graph. Useful for checking whether the process is stable or "
+                "whether quality has been degrading from a certain point.<br><br>"
+                "<b style='color:#a3e635;'>Key things to check</b><br>"
+                "· <b style='color:#f87171;'>↑ Upward trend</b> — the second-half average is higher than the first half. Quality value is trending upward.<br>"
+                "· <b style='color:#10b981;'>↓ Downward trend</b> — the second-half average is lower than the first half. Quality value is trending downward.<br>"
+                "· <b>If the trend heads toward a spec limit</b> — possible process drift. Check the root-cause variable immediately.<br>"
+                "· <b>Chart values are normalized 0~1</b> — to compare multiple items at once, each item is scaled to a relative value with its own min=0 and max=1."
+                if is_en3 else
+                "<b style='color:#ff9f1c;'>시계열 트렌드 차트</b>이란?<br>"
+                "데이터 행 순서(측정 순서 또는 시간 순서)에 따라 품질값과 공정값의 변화 추이를 선 그래프로 보여줍니다. "
+                "공정이 안정적인지, 특정 시점부터 품질이 나빠지고 있는지를 파악하는 데 유용합니다.<br><br>"
+                "<b style='color:#a3e635;'>주요 확인 포인트</b><br>"
+                "· <b style='color:#f87171;'>↑ 상승 추세</b> — 후반부 평균이 전반부보다 높음. 품질값이 증가 방향으로 변화 중.<br>"
+                "· <b style='color:#10b981;'>↓ 하락 추세</b> — 후반부 평균이 전반부보다 낮음. 품질값이 감소 방향으로 변화 중.<br>"
+                "· <b>추세가 스펙 한계 방향이면</b> — 공정 드리프트 가능성. 즉시 원인 변수 점검 필요.<br>"
+                "· <b>차트 값은 0~1 정규화</b> — 여러 항목을 동시에 비교하기 위해 각 항목의 최솟값=0, 최댓값=1로 변환한 상대값입니다."
+                )
+                + "</div></details>",
+                unsafe_allow_html=True
+            )
+            if _df3.empty:
+                st.info("데이터 없음" if not is_en3 else "No data available.")
+            else:
+                _tgt_t  = [c for c in _df3.columns if c in target_vars]
+                _proc_t = [c for c in _df3.select_dtypes(include=[np.number]).columns if c not in target_vars]
+                # 추세 분석 (전반부 vs 후반부)
+                _tr_ins = []
+                for _tc3 in _tgt_t:
+                    _td = pd.to_numeric(_df3[_tc3], errors='coerce').dropna()
+                    if len(_td) >= 4:
+                        _fh = float(_td.iloc[:len(_td)//2].mean())
+                        _lh = float(_td.iloc[len(_td)//2:].mean())
+                        _dl = _lh - _fh
+                        if abs(_dl) >= 0.001:
+                            if is_en3:
+                                _dir2 = "↑ Upward" if _dl > 0 else "↓ Downward"
+                            else:
+                                _dir2 = "↑ 상승 추세" if _dl > 0 else "↓ 하락 추세"
+                            _col2 = "#f87171" if _dl > 0 else "#10b981"
+                            _tr_ins.append(f"<b style='color:{_col2};'>{_tc3}</b>: {_dir2} (Δ{_dl:+.3f})")
+                if not _tr_ins and not _tgt_t:
+                    st.info("품질 타겟 컬럼이 없어 추세 분석을 할 수 없습니다." if not is_en3 else "No target columns for trend analysis.")
+                else:
+                    if _tr_ins:
+                        _tr_title = ("▸ Quality Risk Trend (first-half vs. second-half average comparison)" if is_en3
+                                      else "▸ 품질 리스크 추세 (데이터 전반부 vs. 후반부 평균 비교)")
+                        st.markdown(
+                            f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-left:3px solid #ff9f1c;"
+                            f"border-radius:6px;padding:10px 14px;margin-bottom:10px;'>"
+                            f"<div style='font-size:0.78rem;color:#ff9f1c;font-weight:600;margin-bottom:6px;'>"
+                            f"{_tr_title}</div>"
+                            + "".join([f"<div style='font-size:0.80rem;color:#ececec;padding:2px 0;'>{t}</div>" for t in _tr_ins])
+                            + "</div>", unsafe_allow_html=True
+                        )
+                    else:
+                        _no_trend_txt = ("✅ No significant trend change (first-half vs. second-half difference is minimal)" if is_en3
+                                          else "✅ 유의미한 추세 변화 없음 (전반부 vs 후반부 차이 미미)")
+                        st.markdown(
+                            "<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-left:3px solid #10b981;"
+                            f"border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.82rem;color:#10b981;'>"
+                            f"{_no_trend_txt}</div>",
+                            unsafe_allow_html=True
+                        )
+                    _all_t = _tgt_t + _proc_t
+                    _tr_sel = st.multiselect(
+                        "트렌드 확인할 항목 선택 (복수 선택 가능)" if not is_en3 else "Select items for trend (multi-select)",
+                        _all_t,
+                        default=_tgt_t[:3] if len(_tgt_t) >= 3 else _tgt_t,
+                        format_func=lambda k: TARGET_GLOSSARY.get(k, k),
+                        key="t3_trend_sel"
+                    )
+                    if _tr_sel:
+                        _tdf = _df3[_tr_sel].reset_index(drop=True)
+                        _COLS = ["#ff9f1c","#a3e635","#ffab00","#f87171","#c084fc","#fb923c","#34d399","#f472b6","#ffc670","#fbbf24"]
+                        _ldefs = []
+                        for _ci3, _col3 in enumerate(_tr_sel):
+                            _cd = pd.to_numeric(_tdf[_col3], errors='coerce').dropna()
+                            if _cd.empty: continue
+                            _mn3, _mx3 = float(_cd.min()), float(_cd.max())
+                            _sp3b = _mx3 - _mn3 if _mx3 != _mn3 else 1.0
+                            _ldefs.append({'col': _col3, 'data': (_cd-_mn3)/_sp3b, 'raw': _cd, 'color': _COLS[_ci3 % len(_COLS)]})
+                        if _ldefs:
+                            W, H, PAD = 900, 240, 40
+                            _svg = ""
+                            for _ld in _ldefs:
+                                _pts = []
+                                for _xi, (_, _yv) in enumerate(_ld['data'].items()):
+                                    _x = PAD + (_xi / max(len(_ld['data'])-1, 1)) * (W-2*PAD)
+                                    _y = PAD + (1-float(_yv)) * (H-2*PAD)
+                                    _pts.append(f"{_x:.1f},{_y:.1f}")
+                                if _pts:
+                                    _svg += f"<polyline points='{' '.join(_pts)}' fill='none' stroke='{_ld['color']}' stroke-width='2' opacity='0.85'/>"
+                                    _lx2, _ly2 = float(_pts[-1].split(',')[0]), float(_pts[-1].split(',')[1])
+                                    _svg += f"<circle cx='{_lx2}' cy='{_ly2}' r='4' fill='{_ld['color']}'/>"
+                                    _svg += f"<text x='{min(_lx2+6,W-60)}' y='{_ly2+4}' fill='{_ld['color']}' font-size='10'>{float(_ld['raw'].iloc[-1]):.3f}</text>"
+                            _leg = ""
+                            for _li, _ld in enumerate(_ldefs):
+                                _lx3 = PAD + _li * 130
+                                _leg += f"<rect x='{_lx3}' y='{H+8}' width='14' height='8' fill='{_ld['color']}' rx='2'/>"
+                                _leg += f"<text x='{_lx3+18}' y='{H+16}' fill='#d4d4d4' font-size='10'>{TARGET_GLOSSARY.get(_ld['col'],_ld['col'])[:12]}</text>"
+                            st.markdown(
+                                f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:10px;padding:16px;overflow-x:auto;'>"
+                                f"<div style='color:#ececec;font-size:0.88rem;font-weight:600;margin-bottom:8px;'>{'Trend Chart (Normalized 0~1)' if is_en3 else '트렌드 차트 (정규화 0~1 표시)'}</div>"
+                                f"<svg viewBox='0 0 {W} {H+36}' style='width:100%;max-height:280px;'>"
+                                f"<line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#3a3a3a' stroke-width='1'/>"
+                                f"<line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#3a3a3a' stroke-width='1'/>"
+                                f"{_svg}{_leg}</svg></div>",
+                                unsafe_allow_html=True
+                            )
+
+    with tab4:
+        _run4 = False
+        _is4 = st.session_state.get('lang', 'KO') == 'EN'
+
+        # AI 추천값 vs 현재(TEST) 값의 차이 순위를 미리 계산 (조정 처방 표 정렬에도 동일하게 재사용)
+        _t4_ai_ref = None
+        if st.session_state.get('opt_result_x') is not None:
+            _t4_ai_ref = list(st.session_state['opt_result_x'])
+        elif st.session_state.get('sim_dx_result_x') is not None:
+            _t4_ai_ref = list(st.session_state['sim_dx_result_x'])
+
+        _df_t4_rank = st.session_state.get('df_imputed_ref')
+        _t4_test_ref = []
+        for v in X_list:
+            if _df_t4_rank is not None and v in _df_t4_rank.columns:
+                _cv_r = pd.to_numeric(_df_t4_rank[v], errors='coerce')
+                _t4_test_ref.append(float(_cv_r.mean()) if not _cv_r.dropna().empty else float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2))
+            else:
+                _t4_test_ref.append(float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2))
+
+        if _t4_ai_ref is not None:
+            _t4_diff_rank = {v: abs(_t4_ai_ref[i] - _t4_test_ref[i]) for i, v in enumerate(X_list)}
+        else:
+            _t4_diff_rank = {v: 0.0 for v in X_list}
+
+        t4_l, t4_r = st.columns([1.3, 1.2], gap="large")
+
+        with t4_l:
+            _t4_card1_title = "Reset Target Spec" if _is4 else "목표 스펙 재설정"
+            st.markdown(f"<div class='glass-card'><div class='glass-card-title'>{_t4_card1_title}</div>", unsafe_allow_html=True)
+            if _is4:
+                st.markdown(
+                    "<div style='font-size:0.78rem;color:#8a8a8a;margin-bottom:10px;'>"
+                    "Change the target range and instantly see <b style='color:#ff9f1c;'>which variable to adjust, "
+                    "in which direction, and by how much</b> to bring it back within range. "
+                    "(Instead of Tab1/Tab2's heavy algorithm search, this gives a fast sensitivity-based first-order estimate)"
+                    "</div>", unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    "<div style='font-size:0.78rem;color:#8a8a8a;margin-bottom:10px;'>"
+                    "목표 범위를 바꿔보면, <b style='color:#ff9f1c;'>어떤 변수를 어느 방향으로 얼마큼 "
+                    "조정해야</b> 그 범위 안에 들어오는지 즉시 계산해드립니다. (Tab1/Tab2의 무거운 알고리즘 탐색 대신, "
+                    "민감도 기반 1차 근사로 빠르게 처방합니다)"
+                    "</div>", unsafe_allow_html=True
+                )
+
+            _t4_tgt_opts = [t for t in valid_tgts if st.session_state.get(f'model_{t.lower()}') is not None]
+            if not _t4_tgt_opts:
+                st.info("No trained prediction models available." if _is4 else "학습된 예측 모델이 없습니다.")
+            else:
+                st.markdown(f"<div class='glass-card-title' style='font-size:0.85rem;'>{'Baseline Setting' if _is4 else '기준점 설정'}</div>", unsafe_allow_html=True)
+
+                _t4_base_labels = {
+                    "tab1":        ("최근 역방향 최적화 결과 (Tab1)", "Latest Backward Optimization Result (Tab1)"),
+                    "median_back": ("데이터 중앙값 기준 (역방향)", "Data Median (Backward)"),
+                    "tab2":        ("최근 순방향 최적화 결과 (Tab2)", "Latest Forward Optimization Result (Tab2)"),
+                    "median_fwd":  ("데이터 중앙값 기준 (순방향)", "Data Median (Forward)"),
+                }
+                def _t4_lbl(_code):
+                    return _t4_base_labels[_code][1 if _is4 else 0]
+
+                _tab1_avail4 = st.session_state.get('opt_result_x') is not None
+                _tab2_avail4 = st.session_state.get('sim_dx_result_x') is not None
+
+                if "t4_base_code" not in st.session_state:
+                    st.session_state["t4_base_code"] = "tab2" if _tab2_avail4 else ("tab1" if _tab1_avail4 else "median_back")
+
+                _t4_base_code = st.session_state["t4_base_code"]
+
+                def _t4_base_btn(_col, _code, _available):
+                    _is_sel = (_t4_base_code == _code)
+                    if _col.button(_t4_lbl(_code), key=f"t4_base_btn_{_code}",
+                                   type=("primary" if _is_sel else "secondary"),
+                                   use_container_width=True, disabled=not _available):
+                        st.session_state["t4_base_code"] = _code
+                        st.rerun()
+
+                _t4_row1 = st.columns(2)
+                _t4_base_btn(_t4_row1[0], "tab1", _tab1_avail4)
+                _t4_base_btn(_t4_row1[1], "median_back", True)
+                _t4_row2 = st.columns(2)
+                _t4_base_btn(_t4_row2[0], "tab2", _tab2_avail4)
+                _t4_base_btn(_t4_row2[1], "median_fwd", True)
+
+                if _is4:
+                    st.caption("Top row = backward (quality-target mode, same idea as Tab1)  ·  Bottom row = forward (design/process-variable mode, same idea as Tab2)")
+                else:
+                    st.caption("윗줄 = 역방향(품질 타겟 모드, Tab1과 동일한 방식)  ·  아랫줄 = 순방향(설계/공정 변수 모드, Tab2와 동일한 방식)")
+                st.markdown("<div style='margin-bottom:10px;'></div>", unsafe_allow_html=True)
+
+                _t4_mode = "x" if _t4_base_code in ("tab2", "median_fwd") else "y"
+
+                if _t4_mode == "y":
+                    _t4_sel = st.selectbox("Select Quality Target" if _is4 else "품질 타겟 선택", _t4_tgt_opts,
+                                            format_func=lambda k: TARGET_GLOSSARY.get(k, k),
+                                            key="t4_target_sel")
+
+                    _sp_lo4, _sp_hi4 = spec_limits.get(_t4_sel, (0.0, 1.0))
+                    _span4 = max(_sp_hi4 - _sp_lo4, 0.01)
+                    _step4 = max(round(_span4 / 200, 4), 0.001)
+                    _t4_prefix = _t4_sel.lower()
+
+                    _t4_range_lbl = (f"{_t4_sel} New Target Range (Base Spec: {_sp_lo4:.2f} ~ {_sp_hi4:.2f})" if _is4
+                                      else f"{_t4_sel} 새 목표 Range (기본 스펙: {_sp_lo4:.2f} ~ {_sp_hi4:.2f})")
+                    st.markdown(f"<p style='font-size:0.85rem; font-weight:600; color:#ff9f1c; margin-bottom:5px;'>{_t4_range_lbl}</p>", unsafe_allow_html=True)
+                    _t4_key = f"t4_range_{_t4_prefix}_s_val"
+                    st.session_state.setdefault(_t4_key, (float(_sp_lo4), float(_sp_hi4)))
+                    st.session_state.setdefault(f"t4_range_{_t4_prefix}_n_min", float(st.session_state[_t4_key][0]))
+                    st.session_state.setdefault(f"t4_range_{_t4_prefix}_n_max", float(st.session_state[_t4_key][1]))
+
+                    _default_slider_min4 = round(_sp_lo4 - _span4 * 0.5, 4)
+                    _default_slider_max4 = round(_sp_hi4 + _span4 * 0.5, 4)
+                    _slider_min4, _slider_max4 = _dyn_bounds(
+                        _default_slider_min4, _default_slider_max4,
+                        f"t4_range_{_t4_prefix}_n_min", f"t4_range_{_t4_prefix}_n_max"
+                    )
+
+                    _c4a, _c4b, _c4c = st.columns([1.8, 0.6, 0.6])
+                    with _c4a:
+                        st.slider(f"{_t4_sel} Range4", float(_slider_min4), float(_slider_max4), step=_step4,
+                                  format="%.3f", label_visibility="collapsed", key=_t4_key,
+                                  on_change=on_t4_slider_change, args=(_t4_prefix,))
+                    with _c4b:
+                        st.number_input("Min", step=_step4, format="%.3f", key=f"t4_range_{_t4_prefix}_n_min",
+                                         on_change=on_t4_min_change, args=(_t4_prefix,))
+                    with _c4c:
+                        st.number_input("Max", step=_step4, format="%.3f", key=f"t4_range_{_t4_prefix}_n_max",
+                                         on_change=on_t4_max_change, args=(_t4_prefix,))
+                else:
+                    _t4_x_sel = st.selectbox("Select Design/Process Variable" if _is4 else "설계/공정 변수 선택", X_list,
+                                              format_func=lambda k: VAR_GLOSSARY.get(k, k),
+                                              key="t4_x_sel")
+                    _x_lo4, _x_hi4 = db.get(_t4_x_sel, (0.0, 1.0))
+                    _xspan4 = max(_x_hi4 - _x_lo4, 0.01)
+                    _xstep4 = max(round(_xspan4 / 200, 4), 0.001)
+                    _t4x_prefix = _t4_x_sel.lower()
+
+                    _t4x_range_lbl = (f"{_t4_x_sel} New Target Range (Data Range: {_x_lo4:.2f} ~ {_x_hi4:.2f})" if _is4
+                                       else f"{_t4_x_sel} 새 목표 Range (데이터 범위: {_x_lo4:.2f} ~ {_x_hi4:.2f})")
+                    st.markdown(f"<p style='font-size:0.85rem; font-weight:600; color:#ff9f1c; margin-bottom:5px;'>{_t4x_range_lbl}</p>", unsafe_allow_html=True)
+                    _t4x_key = f"t4x_range_{_t4x_prefix}_s_val"
+                    st.session_state.setdefault(_t4x_key, (float(_x_lo4), float(_x_hi4)))
+                    st.session_state.setdefault(f"t4x_range_{_t4x_prefix}_n_min", float(st.session_state[_t4x_key][0]))
+                    st.session_state.setdefault(f"t4x_range_{_t4x_prefix}_n_max", float(st.session_state[_t4x_key][1]))
+
+                    _default_xslider_min4 = round(_x_lo4 - _xspan4 * 0.3, 4)
+                    _default_xslider_max4 = round(_x_hi4 + _xspan4 * 0.3, 4)
+                    _xslider_min4, _xslider_max4 = _dyn_bounds(
+                        _default_xslider_min4, _default_xslider_max4,
+                        f"t4x_range_{_t4x_prefix}_n_min", f"t4x_range_{_t4x_prefix}_n_max"
+                    )
+
+                    _cx4a, _cx4b, _cx4c = st.columns([1.8, 0.6, 0.6])
+                    with _cx4a:
+                        st.slider(f"{_t4_x_sel} Range4", float(_xslider_min4), float(_xslider_max4), step=_xstep4,
+                                  format="%.3f", label_visibility="collapsed", key=_t4x_key,
+                                  on_change=on_t4x_slider_change, args=(_t4x_prefix,))
+                    with _cx4b:
+                        st.number_input("Min", step=_xstep4, format="%.3f", key=f"t4x_range_{_t4x_prefix}_n_min",
+                                         on_change=on_t4x_min_change, args=(_t4x_prefix,))
+                    with _cx4c:
+                        st.number_input("Max", step=_xstep4, format="%.3f", key=f"t4x_range_{_t4x_prefix}_n_max",
+                                         on_change=on_t4x_max_change, args=(_t4x_prefix,))
+                    st.caption(("Baseline is forward-direction (Tab2 result or forward median), so this recalculates "
+                                "against the design/process variable range, matching Tab2's own approach." if _is4 else
+                                "기준점이 순방향 계열(Tab2 결과 또는 순방향 중앙값)이므로, Tab2와 동일하게 설계/공정 변수 범위 기준으로 재계산합니다."))
+
+                _run4_btn = st.button("⚡ Compute Prescription (Instant)" if _is4 else "⚡ 처방 계산 (즉시)", type="primary", key="t4_run_btn")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with t4_r:
+            _t4_card2_title = "Real-time Deviation Diagnosis & Adjustment Prescription" if _is4 else "실시간 이탈 진단 & 조정 처방"
+            st.markdown(f"<div class='glass-card'><div class='glass-card-title' style='color:#ffb84d;'>{_t4_card2_title}</div>", unsafe_allow_html=True)
+
+            def _run_t4_prescription():
+                """실제 계산만 수행하고, 화면에 그릴 내용은 (종류, 내용) 튜플 리스트로 모아서 반환.
+                (모달 안에서 직접 st.markdown을 부르면 결과가 모달 안에 그려져버리므로,
+                계산과 렌더링을 분리해서 '확인' 누른 뒤 본문에 결과가 나오도록 함)"""
+                _out = []
+                if _t4_mode == "x":
+                    _df4x = st.session_state.get('df_imputed_ref')
+                    if _t4_base_code == "tab2" and st.session_state.get('sim_dx_result_x') is not None:
+                        _baseline_x4x = list(st.session_state['sim_dx_result_x'])
+                    elif _df4x is not None and not _df4x.empty:
+                        _baseline_x4x = [float(pd.to_numeric(_df4x[v], errors='coerce').median()) if v in _df4x.columns else float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2) for v in X_list]
+                    else:
+                        _baseline_x4x = [float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2) for v in X_list]
+
+                    _idx4x = X_list.index(_t4_x_sel)
+                    _new_lo_x, _new_hi_x = st.session_state[_t4x_key]
+                    _cur_val_x = _baseline_x4x[_idx4x]
+                    _in_range_x = _new_lo_x <= _cur_val_x <= _new_hi_x
+                    _needed_delta_x = 0.0 if _in_range_x else (_new_lo_x - _cur_val_x if _cur_val_x < _new_lo_x else _new_hi_x - _cur_val_x)
+                    _target_val_x = _cur_val_x + _needed_delta_x
+
+                    if _is4:
+                        _status_badge4x = (
+                            "<span style='background:#0f2410;color:#10b981;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>✅ In Range</span>"
+                            if _in_range_x else
+                            "<span style='background:#2d0f0f;color:#f87171;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>⚠️ Out of Range</span>"
+                        )
+                        _baseline_pred_lbl_x = f"Baseline Value ({_t4_x_sel})"
+                        _new_range_lbl_x = "New Target Range"
+                    else:
+                        _status_badge4x = (
+                            "<span style='background:#0f2410;color:#10b981;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>✅ 범위 내</span>"
+                            if _in_range_x else
+                            "<span style='background:#2d0f0f;color:#f87171;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>⚠️ 이탈</span>"
+                        )
+                        _baseline_pred_lbl_x = f"기준점 값 ({_t4_x_sel})"
+                        _new_range_lbl_x = "새 목표 Range"
+                    _out.append(('markdown',
+                        f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;margin-bottom:12px;'>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                        f"<span style='color:#9c9c9c;font-size:0.8rem;'>{_baseline_pred_lbl_x}</span>{_status_badge4x}</div>"
+                        f"<div style='font-size:1.3rem;font-weight:700;color:#ffffff;margin-top:4px;'>{_cur_val_x:.3f}</div>"
+                        f"<div style='font-size:0.78rem;color:#8a8a8a;margin-top:2px;'>{_new_range_lbl_x}: {_new_lo_x:.3f} ~ {_new_hi_x:.3f}"
+                        + (f" &nbsp;|&nbsp; {'Needed Movement' if _is4 else '필요 이동량'}: <b style='color:#f59e0b;'>{_needed_delta_x:+.4f}</b>" if not _in_range_x else "")
+                        + f"</div></div>"
+                    ))
+
+                    if _in_range_x:
+                        _out.append(('success',
+                            f"{_t4_x_sel} is already within the new target range at the current baseline. No adjustment needed." if _is4 else
+                            f"현재 기준점에서 이미 {_t4_x_sel}이(가) 새 목표 Range 안에 있습니다. 별도 조정이 필요 없습니다."
+                        ))
+                    else:
+                        _scaler4x = st.session_state['scaler']
+                        _x_after4 = list(_baseline_x4x); _x_after4[_idx4x] = _target_val_x
+                        _q_after4x = _scaler4x.transform(pd.DataFrame([_x_after4], columns=X_list))
+                        _q_base4x = _scaler4x.transform(pd.DataFrame([_baseline_x4x], columns=X_list))
+
+                        _impact_title = (f"▣ Impact on Quality Targets if {_t4_x_sel} moves to {_target_val_x:.3f}" if _is4 else
+                                          f"▣ {_t4_x_sel}을(를) {_target_val_x:.3f}(으)로 이동 시, 품질 타겟에 미치는 영향")
+                        _out.append(('markdown', f"<p style='font-size:0.82rem;font-weight:700;color:#10b981;margin:6px 0 8px 0;'>{_impact_title}</p>"))
+
+                        _rows4x_html = ""
+                        for _tq in _t4_tgt_opts:
+                            _mdl4x = st.session_state[f'model_{_tq.lower()}']
+                            _p_before = float(_mdl4x.predict(_q_base4x)[0])
+                            _p_after4x = float(_mdl4x.predict(_q_after4x)[0])
+                            _lo_tq, _hi_tq = spec_limits.get(_tq, (None, None))
+                            if _lo_tq is None:
+                                _judge_txt, _jc = ("N/A", "#8a8a8a")
+                            else:
+                                _ok_after = _lo_tq <= _p_after4x <= _hi_tq
+                                _judge_txt = ("OK" if _ok_after else "NG")
+                                _jc = "#10b981" if _ok_after else "#f87171"
+                            _rows4x_html += (
+                                f"<tr>"
+                                f"<td style='padding:6px 8px;color:#ececec;font-weight:700;'>{_tq}</td>"
+                                f"<td style='padding:6px 8px;color:#9c9c9c;font-family:monospace;text-align:center;'>{_p_before:.3f}</td>"
+                                f"<td style='padding:6px 8px;color:#ffffff;font-family:monospace;text-align:center;font-weight:700;'>{_p_after4x:.3f}</td>"
+                                f"<td style='padding:6px 8px;text-align:center;'><span style='color:{_jc};font-weight:700;'>{_judge_txt}</span></td>"
+                                f"</tr>"
+                            )
+                        if _is4:
+                            _th4x = ("Quality Target", "Before", "After", "Judgement")
+                            _footnote4x = "※ First-order sensitivity estimate. Re-verify precise values using Tab1/Tab2 optimization search."
+                        else:
+                            _th4x = ("품질 타겟", "이동 전", "이동 후", "판정")
+                            _footnote4x = "※ 민감도 기반 1차 근사입니다. 정밀한 확정값은 Tab1/Tab2 최적화 탐색으로 재확인하세요."
+                        _out.append(('markdown',
+                            f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                            f"<table style='width:100%;border-collapse:collapse;'>"
+                            f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                            f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th4x[0]}</th>"
+                            f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th4x[1]}</th>"
+                            f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th4x[2]}</th>"
+                            f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th4x[3]}</th>"
+                            f"</tr></thead>"
+                            f"<tbody>{_rows4x_html}</tbody>"
+                            f"</table>"
+                            f"<div style='color:#8a8a8a;font-size:0.72rem;margin-top:8px;'>{_footnote4x}</div>"
+                            f"</div>"
+                        ))
+                    return _out
+
+                # ── Y모드(품질 타겟) 계산 ──
+                _df4 = st.session_state.get('df_imputed_ref')
+                _model4 = st.session_state[f'model_{_t4_sel.lower()}']
+                _scaler4 = st.session_state['scaler']
+                _new_lo, _new_hi = st.session_state[_t4_key]
+
+                if _t4_base_code == "tab1" and st.session_state.get('opt_result_x') is not None:
+                    _baseline_x4 = list(st.session_state['opt_result_x'])
+                elif _df4 is not None and not _df4.empty:
+                    _baseline_x4 = [float(pd.to_numeric(_df4[v], errors='coerce').median()) if v in _df4.columns else float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2) for v in X_list]
+                else:
+                    _baseline_x4 = [float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2) for v in X_list]
+
+                _span_x4 = {}
+                for v in X_list:
+                    if _df4 is not None and v in _df4.columns:
+                        _cv = pd.to_numeric(_df4[v], errors='coerce').dropna()
+                        _span_x4[v] = max(float(_cv.max() - _cv.min()), 1e-9) if not _cv.empty else max(db.get(v,(0,1))[1]-db.get(v,(0,1))[0], 1e-9)
+                    else:
+                        _span_x4[v] = max(db.get(v,(0,1))[1]-db.get(v,(0,1))[0], 1e-9)
+
+                _q_base4 = _scaler4.transform(pd.DataFrame([_baseline_x4], columns=X_list))
+                _pred_base4 = float(_model4.predict(_q_base4)[0])
+
+                _in_spec4 = _new_lo <= _pred_base4 <= _new_hi
+                _gap4 = 0.0 if _in_spec4 else (_new_lo - _pred_base4 if _pred_base4 < _new_lo else _new_hi - _pred_base4)
+
+                if _is4:
+                    _status_badge4 = (
+                        f"<span style='background:#0f2410;color:#10b981;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>✅ In Spec</span>"
+                        if _in_spec4 else
+                        f"<span style='background:#2d0f0f;color:#f87171;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>⚠️ Out of Spec</span>"
+                    )
+                    _baseline_pred_lbl = f"Baseline Predicted Value ({_t4_sel})"
+                    _new_range_lbl = "New Target Range"
+                    _gap_lbl = "Gap"
+                else:
+                    _status_badge4 = (
+                        f"<span style='background:#0f2410;color:#10b981;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>✅ 스펙 내</span>"
+                        if _in_spec4 else
+                        f"<span style='background:#2d0f0f;color:#f87171;font-size:0.75rem;padding:2px 8px;border-radius:4px;'>⚠️ 이탈</span>"
+                    )
+                    _baseline_pred_lbl = f"기준점 예측값 ({_t4_sel})"
+                    _new_range_lbl = "새 목표 Range"
+                    _gap_lbl = "부족분(gap)"
+                _out.append(('markdown',
+                    f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;margin-bottom:12px;'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                    f"<span style='color:#9c9c9c;font-size:0.8rem;'>{_baseline_pred_lbl}</span>{_status_badge4}</div>"
+                    f"<div style='font-size:1.3rem;font-weight:700;color:#ffffff;margin-top:4px;'>{_pred_base4:.3f}</div>"
+                    f"<div style='font-size:0.78rem;color:#8a8a8a;margin-top:2px;'>{_new_range_lbl}: {_new_lo:.3f} ~ {_new_hi:.3f}"
+                    + (f" &nbsp;|&nbsp; {_gap_lbl}: <b style='color:#f59e0b;'>{_gap4:+.4f}</b>" if not _in_spec4 else "")
+                    + f"</div></div>"
+                ))
+
+                if _in_spec4:
+                    _out.append(('success',
+                        f"{_t4_sel} is already within the new target range at the current baseline. No adjustment needed." if _is4 else
+                        f"현재 기준점에서 이미 {_t4_sel}이(가) 새 목표 Range 안에 있습니다. 별도 조정이 필요 없습니다."
+                    ))
+                else:
+                    _rows4 = []
+                    for _i, v in enumerate(X_list):
+                        _delta_probe = _span_x4[v] * 0.05
+                        _x_up = list(_baseline_x4);   _x_up[_i]   += _delta_probe
+                        _x_down = list(_baseline_x4); _x_down[_i] -= _delta_probe
+                        _p_up = float(_model4.predict(_scaler4.transform(pd.DataFrame([_x_up], columns=X_list)))[0])
+                        _p_down = float(_model4.predict(_scaler4.transform(pd.DataFrame([_x_down], columns=X_list)))[0])
+                        _sens4 = (_p_up - _p_down) / (2.0 * _delta_probe)
+                        if abs(_sens4) < 1e-9:
+                            continue
+                        _needed_delta = _gap4 / _sens4
+                        _new_val4 = _baseline_x4[_i] + _needed_delta
+                        _x_after = list(_baseline_x4); _x_after[_i] = _new_val4
+                        _p_after = float(_model4.predict(_scaler4.transform(pd.DataFrame([_x_after], columns=X_list)))[0])
+                        _lo_v4, _hi_v4 = db.get(v, (0.0, 1.0))
+                        _feasible4 = _lo_v4 <= _new_val4 <= _hi_v4
+                        _rows4.append((v, _needed_delta, _baseline_x4[_i], _new_val4, _p_after, _feasible4))
+
+                    _rows4.sort(key=lambda r: _t4_diff_rank.get(r[0], 0.0), reverse=True)
+                    _rows4 = _rows4[:10]
+
+                    _presc_title = ("▣ Adjustment Prescription (sorted by largest difference, same order as "
+                                     "'AI Recommended vs Current(TEST) Value Comparison' below)" if _is4 else
+                                     "▣ 조정 처방 (아래 'AI 추천값 vs 현재(TEST) 값 비교'와 동일하게, 차이가 큰 순으로 정렬)")
+                    _out.append(('markdown', f"<p style='font-size:0.82rem;font-weight:700;color:#10b981;margin:6px 0 8px 0;'>{_presc_title}</p>"))
+
+                    _rows_html4 = ""
+                    for v, delta, cur_v, new_v, p_after, feasible in _rows4:
+                        if _is4:
+                            _dir_arrow4 = "▲ Increase" if delta > 0 else "▼ Decrease"
+                        else:
+                            _dir_arrow4 = "▲ 증가" if delta > 0 else "▼ 감소"
+                        _dir_color4 = "#ff9f1c" if delta > 0 else "#f87171"
+                        _after_in_spec = _new_lo <= p_after <= _new_hi
+                        if _is4:
+                            _after_badge = (
+                                "<span style='background:#0f2410;color:#10b981;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>✅ In Spec</span>"
+                                if _after_in_spec else
+                                "<span style='background:#2d0f0f;color:#f87171;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>⚠️ Not Met</span>"
+                            )
+                            _feas_badge = (
+                                "<span style='background:#0f2410;color:#10b981;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>✅ Within Data Range</span>"
+                                if feasible else
+                                "<span style='background:#2d0f0f;color:#f59e0b;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>⚠️ Exceeds Data Range</span>"
+                            )
+                        else:
+                            _after_badge = (
+                                "<span style='background:#0f2410;color:#10b981;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>✅ 스펙 내</span>"
+                                if _after_in_spec else
+                                "<span style='background:#2d0f0f;color:#f87171;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>⚠️ 미달</span>"
+                            )
+                            _feas_badge = (
+                                "<span style='background:#0f2410;color:#10b981;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>✅ 데이터 범위 내</span>"
+                                if feasible else
+                                "<span style='background:#2d0f0f;color:#f59e0b;font-size:0.68rem;padding:1px 6px;border-radius:3px;'>⚠️ 데이터 범위 초과</span>"
+                            )
+                        _rows_html4 += (
+                            f"<tr>"
+                            f"<td style='padding:6px 8px;color:#ececec;font-weight:700;'>{v}</td>"
+                            f"<td style='padding:6px 8px;color:{_dir_color4};font-weight:700;font-size:0.8rem;white-space:nowrap;'>{_dir_arrow4}</td>"
+                            f"<td style='padding:6px 8px;color:#ffffff;font-family:monospace;font-size:0.8rem;'>{delta:+.4f}<br>"
+                            f"<span style='color:#8a8a8a;font-size:0.68rem;'>{cur_v:.3f} → {new_v:.3f}</span></td>"
+                            f"<td style='padding:6px 8px;font-size:0.78rem;'>{p_after:.3f}<br>{_after_badge}</td>"
+                            f"<td style='padding:6px 8px;'>{_feas_badge}</td>"
+                            f"</tr>"
+                        )
+                    if _is4:
+                        _th_var, _th_dir, _th_delta, _th_after, _th_feas = "Variable", "Direction", "Needed Movement", "Predicted After Adjustment", "Feasibility"
+                        _footnote4 = ("※ This is a sensitivity-based first-order estimate — error can grow for large "
+                                       "changes or values beyond the data range. Re-verify precise values using Tab1/Tab2 optimization search.")
+                    else:
+                        _th_var, _th_dir, _th_delta, _th_after, _th_feas = "변수", "방향", "필요 이동량", "조정 후 예측", "실현 가능성"
+                        _footnote4 = ("※ 민감도 기반 1차 근사입니다 — 변화량이 크거나 데이터 범위를 초과하면 오차가 커질 수 있습니다. "
+                                       "정밀한 확정값은 Tab1/Tab2 최적화 탐색으로 재확인하세요.")
+                    _out.append(('markdown',
+                        f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                        f"<table style='width:100%;border-collapse:collapse;'>"
+                        f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_var}</th>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_dir}</th>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_delta}</th>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_after}</th>"
+                        f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th_feas}</th>"
+                        f"</tr></thead>"
+                        f"<tbody>{_rows_html4}</tbody>"
+                        f"</table>"
+                        f"<div style='color:#8a8a8a;font-size:0.72rem;margin-top:8px;'>{_footnote4}</div>"
+                        f"</div>"
+                    ))
+                return _out
+
+            if not _t4_tgt_opts:
+                st.info("Please load data on the left first." if _is4 else "좌측에서 데이터를 먼저 로드하세요.")
+            else:
+                _t4_presc_out = run_blocking_task(
+                    "t4_prescription", _run_t4_prescription,
+                    running_msg=("Calculating prescription..." if _is4 else "처방 계산 중..."),
+                    trigger=_run4_btn
+                )
+                if _t4_presc_out is not None:
+                    st.session_state['t4_last_presc_output'] = _t4_presc_out
+
+                _t4_disp = st.session_state.get('t4_last_presc_output')
+                if _t4_disp:
+                    for _kind, _content in _t4_disp:
+                        if _kind == 'markdown':
+                            st.markdown(_content, unsafe_allow_html=True)
+                        elif _kind == 'success':
+                            st.success(_content)
+                        elif _kind == 'info':
+                            st.info(_content)
+                else:
+                    st.info("Set a new target Range on the left and click '⚡ Compute Prescription'." if _is4
+                            else "좌측에서 새 목표 Range를 설정하고 '⚡ 처방 계산' 버튼을 눌러주세요.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("---")
+        _t4_cmp_title = "### □ AI Recommended vs Current (TEST) Value Comparison — Identify Priority Changes" if _is4 else "### □ AI 추천값 vs 현재(TEST) 값 비교 — 우선 변경 대상 파악"
+        st.markdown(_t4_cmp_title)
+        if _is4:
+            st.markdown(
+                "<div style='font-size:0.78rem;color:#8a8a8a;margin-bottom:10px;'>"
+                "Compares the AI-recommended design/process variable values side by side with the values "
+                "currently in use (TEST). The <b style='color:#facc15;'>larger the difference (AI-TEST), the "
+                "higher the priority</b> for a real-world change — check exactly which variables to change, and "
+                "by how much, if you want to satisfy the spec by changing as few variables as possible."
+                "</div>", unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                "<div style='font-size:0.78rem;color:#8a8a8a;margin-bottom:10px;'>"
+                "AI가 도출한 추천 설계/공정 변수 값과, 현재 실제 사용 중인(TEST) 값을 나란히 비교합니다. "
+                "차이(AI-TEST)가 <b style='color:#facc15;'>큰 변수일수록 실물 변경 시 우선순위</b>가 높습니다 — "
+                "적은 변수만 바꿔서 스펙을 만족시키고 싶을 때, 어떤 변수를 얼마나 바꿀지 바로 확인하세요."
+                "</div>", unsafe_allow_html=True
+            )
+
+        _ai_src_opts = []
+        if st.session_state.get('opt_result_x') is not None:
+            _ai_src_opts.append("Tab1 Backward Optimization Result" if _is4 else "Tab1 역방향 최적화 결과")
+        if st.session_state.get('sim_dx_result_x') is not None:
+            _ai_src_opts.append("Tab2 Forward Optimization Result" if _is4 else "Tab2 순방향 최적화 결과")
+
+        if not _ai_src_opts:
+            st.info("Please run an optimization in Tab1 or Tab2 first to generate an AI recommendation." if _is4
+                    else "먼저 Tab1 또는 Tab2에서 최적화를 실행해 AI 추천값을 만들어주세요.")
+        else:
+            _cmp_c1, _cmp_c2, _cmp_c3 = st.columns([1, 1, 0.6])
+            with _cmp_c1:
+                _ai_src_sel = st.selectbox("AI Recommendation Source" if _is4 else "AI 추천값 소스", _ai_src_opts, key="t4_ai_src_sel")
+            with _cmp_c2:
+                if _is4:
+                    _test_src_sel = st.radio("Current (TEST) Value Basis", ["Use Data Average", "Manual Input"], horizontal=True, key="t4_test_src_mode")
+                else:
+                    _test_src_sel = st.radio("현재(TEST) 값 기준", ["데이터 평균값 사용", "직접 입력"], horizontal=True, key="t4_test_src_mode")
+            with _cmp_c3:
+                _top_n_sel = st.number_input("Number of Priority Items to Show" if _is4 else "우선 변경 대상 표시 개수", min_value=1, max_value=34, value=5, step=1, key="t4_top_n")
+
+            _ai_x = list(st.session_state['opt_result_x']) if _ai_src_sel.startswith("Tab1") else list(st.session_state['sim_dx_result_x'])
+
+            _df_t4c = st.session_state.get('df_imputed_ref')
+            _test_x = []
+            for v in X_list:
+                if _df_t4c is not None and v in _df_t4c.columns:
+                    _cv = pd.to_numeric(_df_t4c[v], errors='coerce')
+                    _test_x.append(float(_cv.mean()) if not _cv.dropna().empty else float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2))
+                else:
+                    _test_x.append(float((db.get(v,(0,1))[0]+db.get(v,(0,1))[1])/2))
+
+            if _test_src_sel in ("직접 입력", "Manual Input"):
+                _manual_exp_lbl = "▸ Manually Enter Current (TEST) Values (34 variables)" if _is4 else "▸ 현재(TEST) 값 직접 입력 (34개 변수)"
+                with st.expander(_manual_exp_lbl, expanded=False):
+                    st.markdown("<div style='max-height:380px; overflow-y:auto; padding-right:10px;'>", unsafe_allow_html=True)
+                    for _i, v in enumerate(X_list):
+                        st.session_state.setdefault(f"t4_test_val_{v.lower()}", _test_x[_i])
+                        _new_val = st.number_input(v, value=float(st.session_state[f"t4_test_val_{v.lower()}"]),
+                                                    step=0.001, format="%.3f", key=f"t4_test_val_{v.lower()}")
+                        _test_x[_i] = _new_val
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            # 차이 계산 (AI - TEST), 절댓값 큰 순 정렬
+            _diff_rows = []
+            for _i, v in enumerate(X_list):
+                _ai_v = float(_ai_x[_i])
+                _test_v = float(_test_x[_i])
+                _diff_rows.append((v, _ai_v, _test_v, _ai_v - _test_v))
+            _diff_rows.sort(key=lambda r: abs(r[3]), reverse=True)
+            _top_vars = set(r[0] for r in _diff_rows[:int(_top_n_sel)])
+
+            _rows_html_diff = ""
+            _diff_export_rows = []
+            for v, ai_v, test_v, diff_v in _diff_rows:
+                _is_top = v in _top_vars
+                if _is4:
+                    _diff_export_rows.append({
+                        "Design/Process Variable": v, "AI Recommended": round(ai_v, 4), "Current (TEST)": round(test_v, 4),
+                        "Difference (AI-TEST)": round(diff_v, 4), "Priority Change": "Y" if _is_top else ""
+                    })
+                else:
+                    _diff_export_rows.append({
+                        "설계/공정 변수": v, "AI 추천값": round(ai_v, 4), "현재(TEST) 값": round(test_v, 4),
+                        "차이(AI-TEST)": round(diff_v, 4), "우선 변경 대상": "Y" if _is_top else ""
+                    })
+                _row_bg = "background:#3d3106;" if _is_top else ""
+                _diff_color = "#facc15" if _is_top else ("#ff9f1c" if diff_v > 0 else "#f87171" if diff_v < 0 else "#8a8a8a")
+                _sign_txt = "(+)" if diff_v > 0 else "(-)" if diff_v < 0 else ""
+                _priority_txt = "★ Priority" if _is4 else "★ 우선 변경"
+                _priority_badge = (
+                    f"<span style='background:#78350f;color:#fde047;font-size:0.62rem;padding:1px 6px;"
+                    f"border-radius:3px;margin-left:6px;'>{_priority_txt}</span>" if _is_top else ""
+                )
+                _rows_html_diff += (
+                    f"<tr style='{_row_bg}'>"
+                    f"<td style='padding:5px 8px;color:#ececec;font-weight:700;white-space:nowrap;'>{v}{_priority_badge}</td>"
+                    f"<td style='padding:5px 8px;color:#9c9c9c;text-align:center;font-family:monospace;'>{ai_v:.3f}</td>"
+                    f"<td style='padding:5px 8px;color:#9c9c9c;text-align:center;font-family:monospace;'>{test_v:.3f}</td>"
+                    f"<td style='padding:5px 8px;color:{_diff_color};text-align:center;font-weight:700;font-family:monospace;'>{_sign_txt} {abs(diff_v):.3f}</td>"
+                    f"</tr>"
+                )
+
+            if _is4:
+                _th1, _th2, _th3, _th4 = "Design/Process Variable", "AI Recommended", "Current (TEST) Value", "Difference (AI-TEST)"
+                _diff_footer = f"★ Yellow highlight = top {int(_top_n_sel)} variables with the largest difference (priority for real-world change)"
+            else:
+                _th1, _th2, _th3, _th4 = "설계/공정 변수", "AI 추천값", "현재(TEST) 값", "차이 (AI-TEST)"
+                _diff_footer = f"★ 노란색 강조 = 차이가 가장 큰 상위 {int(_top_n_sel)}개 변수 (실물 변경 시 우선순위)"
+            st.markdown(
+                f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;max-height:420px;overflow-y:auto;'>"
+                f"<table style='width:100%;border-collapse:collapse;'>"
+                f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_th1}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th2}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th3}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_th4}</th>"
+                f"</tr></thead>"
+                f"<tbody>{_rows_html_diff}</tbody>"
+                f"</table>"
+                f"<div style='color:#8a8a8a;font-size:0.72rem;margin-top:8px;'>{_diff_footer}</div>"
                 f"</div>",
                 unsafe_allow_html=True
             )
 
-            # 인사이트 박스
-            if insights:
-                insight_rows = "".join([
-                    f"<div style='padding:5px 0;border-bottom:1px solid #23263a;"
-                    f"font-size:0.82rem;color:#e1e1e1;line-height:1.5;'>• {msg}</div>"
-                    for msg in insights
-                ])
-                st.markdown(
-                    f"<div style='background:#12141d;border:1px solid #2d3142;"
-                    f"border-left:3px solid #00e5ff;border-radius:10px;"
-                    f"padding:14px 20px;margin-bottom:12px;'>"
-                    f"<div style='font-size:0.82rem;color:#00e5ff;font-weight:700;margin-bottom:8px;'>"
-                    f"▸ {insight_title}</div>"
-                    f"{insight_rows}</div>",
-                    unsafe_allow_html=True
+            # 스펙 판정 비교 (AI 값 vs TEST 값 기준 예측)
+            st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+            _spec_cmp_title = "▣ Quality Prediction Comparison: AI Value vs Current (TEST) Value" if _is4 else "▣ AI 값 vs 현재(TEST) 값 기준 품질 예측 비교"
+            st.markdown(f"<p style='font-size:0.85rem;font-weight:700;color:#10b981;'>{_spec_cmp_title}</p>", unsafe_allow_html=True)
+            _scaler_c = st.session_state['scaler']
+            _q_ai_c = _scaler_c.transform(pd.DataFrame([_ai_x], columns=X_list))
+            _q_test_c = _scaler_c.transform(pd.DataFrame([_test_x], columns=X_list))
+            _spec_rows_html = ""
+            _spec_export_rows = []
+            for tgt in valid_tgts:
+                _mdl_c = st.session_state.get(f'model_{tgt.lower()}')
+                if _mdl_c is None:
+                    continue
+                _p_ai = float(_mdl_c.predict(_q_ai_c)[0])
+                _p_test = float(_mdl_c.predict(_q_test_c)[0])
+                _lo_c, _hi_c = spec_limits.get(tgt, (None, None))
+                if _lo_c is None:
+                    _spec_str_c = "-"
+                    _judge_ai_txt, _judge_test_txt = "-", "-"
+                    _jc_ai, _jc_test = "#8a8a8a", "#8a8a8a"
+                else:
+                    _spec_str_c = f"{_lo_c}~{_hi_c}"
+                    _ok_ai = _lo_c <= _p_ai <= _hi_c
+                    _ok_test = _lo_c <= _p_test <= _hi_c
+                    _judge_ai_txt = "OK" if _ok_ai else "NG"
+                    _judge_test_txt = "OK" if _ok_test else "NG"
+                    _jc_ai = "#10b981" if _ok_ai else "#f87171"
+                    _jc_test = "#10b981" if _ok_test else "#f87171"
+                if _is4:
+                    _spec_export_rows.append({
+                        "Target": tgt, "AI Predicted": round(_p_ai, 4), "AI Judgement": _judge_ai_txt,
+                        "TEST Predicted": round(_p_test, 4), "TEST Judgement": _judge_test_txt, "Spec.": _spec_str_c
+                    })
+                else:
+                    _spec_export_rows.append({
+                        "타겟": tgt, "AI 예측값": round(_p_ai, 4), "AI 판정": _judge_ai_txt,
+                        "TEST 예측값": round(_p_test, 4), "TEST 판정": _judge_test_txt, "Spec.": _spec_str_c
+                    })
+                _spec_rows_html += (
+                    f"<tr>"
+                    f"<td style='padding:5px 8px;color:#ececec;font-weight:700;'>{tgt}</td>"
+                    f"<td style='padding:5px 8px;text-align:center;font-family:monospace;color:#ff9f1c;font-weight:700;'>{_p_ai:.3f}</td>"
+                    f"<td style='padding:5px 8px;text-align:center;'><span style='color:{_jc_ai};font-weight:700;'>{_judge_ai_txt}</span></td>"
+                    f"<td style='padding:5px 8px;text-align:center;font-family:monospace;color:#9c9c9c;'>{_p_test:.3f}</td>"
+                    f"<td style='padding:5px 8px;text-align:center;'><span style='color:{_jc_test};font-weight:700;'>{_judge_test_txt}</span></td>"
+                    f"<td style='padding:5px 8px;text-align:center;color:#8a8a8a;font-size:0.78rem;'>{_spec_str_c}</td>"
+                    f"</tr>"
                 )
+            if _is4:
+                _sh1, _sh2, _sh3, _sh4, _sh5, _sh6 = "Target", "AI Predicted", "Judgement", "TEST Predicted", "Judgement", "Spec."
+            else:
+                _sh1, _sh2, _sh3, _sh4, _sh5, _sh6 = "타겟", "AI 예측값", "판정", "TEST 예측값", "판정", "Spec."
+            st.markdown(
+                f"<div style='background:#1c1c1c;border:1px solid #3a3a3a;border-radius:8px;padding:12px 14px;'>"
+                f"<table style='width:100%;border-collapse:collapse;'>"
+                f"<thead><tr style='border-bottom:1px solid #3a3a3a;'>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:left;'>{_sh1}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_sh2}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_sh3}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_sh4}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_sh5}</th>"
+                f"<th style='padding:4px 8px;font-size:0.68rem;color:#8a8a8a;text-align:center;'>{_sh6}</th>"
+                f"</tr></thead>"
+                f"<tbody>{_spec_rows_html}</tbody>"
+                f"</table></div>",
+                unsafe_allow_html=True
+            )
 
-            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-
-            # ── Raw Data ── expander ───────────────────────────────────
-            raw_label = "+ Raw Data" if is_en else "+ 원시 데이터"
-            with st.expander(raw_label, expanded=False):
-                if is_en:
-                    st.markdown(
-                        "<p style='color:#cbd5e1;font-size:0.83rem;'>"
-                        "All accumulated data including uploaded files and diagnosis/optimization history. "
-                        "Defect columns represent predicted probability (0~1).</p>",
-                        unsafe_allow_html=True
+            # 다운로드 (설계/공정 변수 차이 표 + 품질 예측 비교 표, 시트 2개)
+            st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+            _df_diff_export = pd.DataFrame(_diff_export_rows)
+            _df_spec_export = pd.DataFrame(_spec_export_rows)
+            _dl_col1, _dl_col2 = st.columns([1, 1])
+            with _dl_col1:
+                _dl_fmt4 = st.selectbox(L_G['dl_format'], ["Excel (.xlsx)", "Database (.db)"],
+                                         key="t4_cmp_dl_fmt", label_visibility="collapsed")
+            _dl_btn_lbl4 = "□ Download Comparison Result" if _is4 else "□ 비교 결과 다운로드"
+            with _dl_col2:
+                if "Excel" in _dl_fmt4:
+                    _buf4 = io.BytesIO()
+                    with pd.ExcelWriter(_buf4) as _writer4:
+                        _df_diff_export.to_excel(_writer4, index=False, sheet_name='AI_vs_TEST_Diff')
+                        _df_spec_export.to_excel(_writer4, index=False, sheet_name='Spec_Judgement')
+                    st.download_button(
+                        label=_dl_btn_lbl4,
+                        data=_buf4.getvalue(),
+                        file_name=f"AI_vs_TEST_comparison_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="t4_cmp_dl_xlsx"
                     )
                 else:
-                    st.markdown(
-                        "<p style='color:#cbd5e1;font-size:0.83rem;'>"
-                        "업로드된 파일과 진단/최적화 이력이 누적된 전체 데이터입니다. "
-                        "불량 컬럼은 예측 확률(0~1)을 나타냅니다.</p>",
-                        unsafe_allow_html=True
-                    )
-                st.dataframe(df_view, use_container_width=True)
-
-
-            # ── Feature Importance (원시 데이터 바로 아래) ─────────────
-            _fi_all_t2 = st.session_state.get('feature_importance', {})
-            if _fi_all_t2:
-                import streamlit.components.v1 as _comp_t2
-                _fi_title_t2 = "+ Feature Importance — Top Influential Variables per Defect" if is_en else "+ Feature Importance — 불량별 주요 영향 변수"
-                with st.expander(_fi_title_t2, expanded=False):
-                    _fi_keys_t2 = list(_fi_all_t2.keys())
-                    _fi_sel_t2 = st.selectbox(
-                        "Select Defect" if is_en else "불량 항목 선택",
-                        options=_fi_keys_t2,
-                        format_func=lambda k: TARGET_VARS.get(k, k),
-                        key="fi_t2_sel"
-                    )
-                    if _fi_sel_t2 and _fi_sel_t2 in _fi_all_t2:
-                        _fi_data_t2 = _fi_all_t2[_fi_sel_t2]
-                        _fi_ser_t2 = pd.Series(_fi_data_t2).sort_values(ascending=False).head(15)
-                        _fi_algo_t2 = st.session_state.get('model_algo_names', {}).get(_fi_sel_t2, '')
-                        _fi_max_t2 = _fi_ser_t2.max() if _fi_ser_t2.max() > 0 else 1.0
-                        _fi_bars_t2 = ""
-                        for _vn, _iv in _fi_ser_t2.items():
-                            _bp = _iv / _fi_max_t2 * 100
-                            _bc = "#00e5ff" if _bp >= 60 else "#10b981" if _bp >= 30 else "#94a3b8"
-                            _fi_bars_t2 += (
-                                f'<div style="margin-bottom:8px;">'
-                                f'<div style="display:flex;justify-content:space-between;font-size:13px;color:#e1e1e1;margin-bottom:3px;">'
-                                f'<span style="font-weight:600;">{_vn}</span>'
-                                f'<span style="color:#cbd5e1;">{_iv:.4f}</span></div>'
-                                f'<div style="background:#1e293b;border-radius:3px;height:10px;">'
-                                f'<div style="width:{_bp:.1f}%;background:{_bc};height:10px;border-radius:3px;"></div>'
-                                f'</div></div>'
-                            )
-                        _fi_html_t2 = (
-                            '<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">'
-                            f'<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">'
-                            f'<div style="color:#cbd5e1;font-size:12px;margin-bottom:14px;">'
-                            f'{TARGET_VARS.get(_fi_sel_t2, _fi_sel_t2)} &middot; Algorithm: <span style="color:#a3e635;">{_fi_algo_t2}</span> &middot; Top 15</div>'
-                            f'{_fi_bars_t2}</div></body></html>'
-                        )
-                        _comp_t2.html(_fi_html_t2, height=60 + len(_fi_ser_t2) * 36, scrolling=False)
-            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-
-            # ── Defect Distribution ── expander ───────────────────────
-            dist_label = "+ Defect Probability Distribution" if is_en else "+ 불량률 분포 히스토그램"
-            with st.expander(dist_label, expanded=False):
-                target_cols = [c for c in df_view.columns if c in TARGET_VARS]
-                if target_cols:
-                    sel_label = "Select Defect" if is_en else "불량 항목 선택"
-                    sel_hist = st.selectbox(
-                        sel_label,
-                        options=target_cols,
-                        format_func=lambda k: TARGET_VARS.get(k, k),
-                        key="hist_target_sel"
-                    )
-                    hist_data = df_view[sel_hist].dropna()
-                    if not hist_data.empty:
-                        # 결과 분석 인사이트 계산
-                        h_mean   = hist_data.mean()
-                        h_std    = hist_data.std()
-                        h_high   = (hist_data >= DEFECT_THRESHOLD).sum()
-                        h_pct    = h_high / len(hist_data) * 100
-
-                        if is_en:
-                            dist_insight = (
-                                f"Mean risk: <b style='color:#00e5ff;'>{h_mean:.3f}</b> &nbsp;|&nbsp; "
-                                f"Std dev: <b>{h_std:.3f}</b> &nbsp;|&nbsp; "
-                                f"High-risk samples (≥{int(DEFECT_THRESHOLD*100)}%): "
-                                f"<b style='color:#{'ff5252' if h_pct>30 else 'ffab00' if h_pct>10 else '10b981'};'>"
-                                f"{h_high} ({h_pct:.1f}%)</b>"
-                            )
-                            if h_pct > 30:
-                                dist_advice = "High proportion of danger-zone samples. Priority inspection recommended."
-                            elif h_pct > 10:
-                                dist_advice = "Some samples in the caution zone. Monitor this defect type closely."
-                            else:
-                                dist_advice = "Most samples are in the safe zone. Low defect risk overall."
-                        else:
-                            dist_insight = (
-                                f"평균 리스크: <b style='color:#00e5ff;'>{h_mean:.3f}</b> &nbsp;|&nbsp; "
-                                f"표준편차: <b>{h_std:.3f}</b> &nbsp;|&nbsp; "
-                                f"고위험 샘플 (≥{int(DEFECT_THRESHOLD*100)}%): "
-                                f"<b style='color:#{'ff5252' if h_pct>30 else 'ffab00' if h_pct>10 else '10b981'};'>"
-                                f"{h_high}개 ({h_pct:.1f}%)</b>"
-                            )
-                            if h_pct > 30:
-                                dist_advice = "위험 구간 샘플 비율이 높습니다. 해당 불량을 우선 점검하세요."
-                            elif h_pct > 10:
-                                dist_advice = "주의 구간 샘플이 일부 존재합니다. 이 불량 유형을 주의 깊게 모니터링하세요."
-                            else:
-                                dist_advice = "대부분의 샘플이 안전 구간에 있습니다. 전반적으로 낮은 불량 리스크입니다."
-
-                        st.markdown(
-                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
-                            f"border-left:3px solid #00e5ff;border-radius:6px;"
-                            f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
-                            f"<span style='color:#e1e1e1;'>{dist_insight}</span><br>"
-                            f"<span style='color:#cbd5e1;font-size:0.78rem;'>→ {dist_advice}</span>"
-                            f"</div>",
-                            unsafe_allow_html=True
-                        )
-
-                        bins = min(20, max(5, len(hist_data) // 3))
-                        counts, edges = np.histogram(hist_data.values.astype(float), bins=bins, range=(0.0, 1.0))
-                        legend_txt = (
-                            "<span style='color:#00e5ff;'>●</span> Blue: Safe(0~0.3) &nbsp; <span style='color:#ffab00;'>●</span> Orange: Caution(0.3~0.7) &nbsp; <span style='color:#ff5252;'>●</span> Red: Danger(0.7~1.0)"
-                            if is_en else
-                            "<span style='color:#00e5ff;'>●</span> 파란색: 안전(0~0.3) &nbsp; <span style='color:#ffab00;'>●</span> 주황색: 주의(0.3~0.7) &nbsp; <span style='color:#ff5252;'>●</span> 빨간색: 위험(0.7~1.0)"
-                        )
-                        dist_title = f"{TARGET_VARS.get(sel_hist, sel_hist)} {'Distribution' if is_en else '분포'} (n={len(hist_data)})"
-                        max_count = int(counts.max()) if counts.max() > 0 else 1
-                        bar_rows_h = ""
-                        for i, cnt in enumerate(counts):
-                            lo, hi  = float(edges[i]), float(edges[i+1])
-                            mid     = (lo + hi) / 2.0
-                            bp      = int(cnt) / max_count * 100
-                            bc      = "#00e5ff" if mid < 0.3 else "#ffab00" if mid < 0.7 else "#ff5252"
-                            bar_rows_h += f"""
-                            <div style="display:flex;align-items:center;margin-bottom:5px;gap:8px;">
-                              <span style="color:#cbd5e1;font-size:11px;width:80px;text-align:right;">{lo:.2f}~{hi:.2f}</span>
-                              <div style="flex:1;background:#1e293b;border-radius:3px;height:18px;">
-                                <div style="width:{bp:.1f}%;background:{bc};height:18px;border-radius:3px;display:flex;align-items:center;padding-left:6px;">
-                                  <span style="color:#fff;font-size:11px;">{int(cnt)}</span>
-                                </div>
-                              </div>
-                            </div>"""
-                        hist_html = f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#12141d;font-family:Inter,sans-serif;">
-                        <div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;">
-                          <div style="color:#e1e1e1;font-size:14px;font-weight:600;margin-bottom:14px;">{dist_title}</div>
-                          {bar_rows_h}
-                          <div style="color:#cbd5e1;font-size:11px;margin-top:10px;">{legend_txt}</div>
-                        </div></body></html>"""
-                        components.html(hist_html, height=80 + len(counts) * 28, scrolling=False)
-
-            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-
-            # ── Correlation Heatmap ── expander ───────────────────────
-            corr_label = "+ Process Variable Correlation Heatmap" if is_en else "+ 변수 상관관계 히트맵"
-            with st.expander(corr_label, expanded=False):
-                numeric_cols = df_view.select_dtypes(include=[np.number]).columns.tolist()
-                if len(numeric_cols) >= 2:
-                    process_vars = [c for c in numeric_cols if c not in TARGET_VARS]
-                    defect_vars  = [c for c in numeric_cols if c in TARGET_VARS]
-
-                    if process_vars and defect_vars:
-                        corr_df  = df_view[process_vars + defect_vars].corr()
-                        sub_corr = corr_df.loc[process_vars, defect_vars]
-                        top_vars = sub_corr.abs().max(axis=1).sort_values(ascending=False).head(10).index.tolist()
-                        sub_corr = sub_corr.loc[top_vars]
-
-                        # 상관관계 인사이트 자동 추출
-                        flat = sub_corr.abs().stack()
-                        top_pair = flat.idxmax()
-                        top_val  = sub_corr.loc[top_pair[0], top_pair[1]]
-                        top_dir  = ("positively" if top_val > 0 else "negatively") if is_en else ("양의 방향으로" if top_val > 0 else "음의 방향으로")
-                        strong_pairs = [(r, c, sub_corr.loc[r, c]) for r in sub_corr.index for c in sub_corr.columns if abs(sub_corr.loc[r, c]) >= 0.5]
-                        strong_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
-
-                        if is_en:
-                            corr_insight = (
-                                f"Strongest correlation: <b style='color:#00e5ff;'>{top_pair[0]}</b> ↔ "
-                                f"<b style='color:#00e5ff;'>{top_pair[1]}</b> "
-                                f"({top_dir}, r={top_val:.2f})"
-                            )
-                            if strong_pairs:
-                                corr_advice = f"{len(strong_pairs)} variable-defect pair(s) with |r| ≥ 0.5 — these variables are strong predictors and key targets for process control."
-                            else:
-                                corr_advice = "No strong linear correlations (|r| ≥ 0.5) found. Nonlinear interactions may be dominant — tree-based models handle this well."
-                        else:
-                            corr_insight = (
-                                f"가장 강한 상관관계: <b style='color:#00e5ff;'>{top_pair[0]}</b> ↔ "
-                                f"<b style='color:#00e5ff;'>{top_pair[1]}</b> "
-                                f"({top_dir}, r={top_val:.2f})"
-                            )
-                            if strong_pairs:
-                                corr_advice = f"|r| ≥ 0.5 이상의 강한 상관 변수-불량 쌍 {len(strong_pairs)}개 — 공정 관리의 핵심 타겟 변수입니다."
-                            else:
-                                corr_advice = "강한 선형 상관(|r| ≥ 0.5)이 없습니다. 비선형 상호작용이 지배적일 수 있습니다 — 트리 기반 모델이 유리합니다."
-
-                        st.markdown(
-                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
-                            f"border-left:3px solid #00e5ff;border-radius:6px;"
-                            f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
-                            f"<span style='color:#e1e1e1;'>{corr_insight}</span><br>"
-                            f"<span style='color:#cbd5e1;font-size:0.78rem;'>→ {corr_advice}</span>"
-                            f"</div>",
-                            unsafe_allow_html=True
-                        )
-
-                        corr_title = "Process Variables ↔ Defect Correlation (Top 10)" if is_en else "공정 변수 ↔ 불량 항목 상관계수 (상위 10개 공정 변수)"
-                        corr_leg   = "● Blue: Positive &nbsp; ● Red: Negative &nbsp; ● Gray: Weak" if is_en else "● 파란색: 양의 상관 &nbsp; ● 빨간색: 음의 상관 &nbsp; ● 회색: 상관 약함"
-
-                        header_cells = "".join([f"<th style='padding:6px 8px;font-size:11px;color:#cbd5e1;text-align:center;white-space:nowrap;'>{c}</th>" for c in sub_corr.columns])
-                        data_rows = ""
-                        for var_r in sub_corr.index:
-                            cells = f"<td style='padding:6px 8px;font-size:12px;color:#e1e1e1;font-weight:600;'>{var_r}</td>"
-                            for var_c in sub_corr.columns:
-                                val = float(sub_corr.loc[var_r, var_c])
-                                intensity = abs(val)
-                                if val > 0.3:
-                                    bg = f"rgba(0,229,255,{min(intensity,0.9):.2f})"
-                                    tc = "#000"
-                                elif val < -0.3:
-                                    bg = f"rgba(255,82,82,{min(intensity,0.9):.2f})"
-                                    tc = "#fff"
-                                else:
-                                    bg = "#1e293b"
-                                    tc = "#94a3b8"
-                                cells += f"<td style='padding:6px 8px;text-align:center;background:{bg};color:{tc};font-size:12px;'>{val:.2f}</td>"
-                            data_rows += f"<tr>{cells}</tr>"
-
-                        st.markdown(
-                            f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:20px 24px;margin-top:8px;overflow-x:auto;">
-                                <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:14px;">{corr_title}</div>
-                                <table style="border-collapse:collapse;width:100%;">
-                                    <thead><tr><th style="padding:6px 8px;"></th>{header_cells}</tr></thead>
-                                    <tbody>{data_rows}</tbody>
-                                </table>
-                                <div style="color:#cbd5e1;font-size:0.72rem;margin-top:10px;">{corr_leg}</div>
-                            </div>""",
-                            unsafe_allow_html=True
-                        )
-
-
-            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-
-            # ── 변수 민감도 분석 expander ─────────────────────────────
-            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-            sens_label = "+ Variable Sensitivity Analysis" if is_en else "+ 변수 민감도 분석"
-            with st.expander(sens_label, expanded=False):
-                fi_all_t2 = st.session_state.get('feature_importance', {})
-                models_t2  = st.session_state.get('models', {})
-                scalers_t2 = st.session_state.get('scalers', {})
-                proc_vars  = st.session_state.get('global_process_vars', [])
-                cur_inputs = st.session_state.get('current_inputs', {})
-
-                if not fi_all_t2 or not models_t2 or not proc_vars:
-                    st.info("AI 모델 학습 후 진단/최적화를 먼저 실행해 주세요."
-                            if not is_en else "Please run AI learning and diagnosis first.")
-                else:
-                    sens_tgt_lbl = "불량 항목 선택" if not is_en else "Select Defect Target"
-                    sens_var_lbl = "분석 변수 선택" if not is_en else "Select Variable"
-                    sens_tgt = st.selectbox(
-                        sens_tgt_lbl,
-                        options=list(models_t2.keys()),
-                        format_func=lambda k: TARGET_VARS.get(k, k),
-                        key="sens_tgt_sel"
-                    )
-                    sens_var = st.selectbox(
-                        sens_var_lbl,
-                        options=proc_vars,
-                        key="sens_var_sel"
+                    _conn4 = sqlite3.connect(":memory:")
+                    _df_diff_export.to_sql("ai_vs_test_diff", _conn4, index=False, if_exists="replace")
+                    _df_spec_export.to_sql("spec_judgement", _conn4, index=False, if_exists="replace")
+                    _backup_conn4 = sqlite3.connect("temp_t4_cmp.db")
+                    _conn4.backup(_backup_conn4); _backup_conn4.close(); _conn4.close()
+                    with open("temp_t4_cmp.db", "rb") as f:
+                        _db_bytes4 = f.read()
+                    st.download_button(
+                        label=_dl_btn_lbl4,
+                        data=_db_bytes4,
+                        file_name=f"AI_vs_TEST_comparison_{datetime.now().strftime('%Y%m%d_%H%M')}.db",
+                        mime="application/x-sqlite3",
+                        key="t4_cmp_dl_db"
                     )
 
-                    if sens_tgt and sens_var and sens_tgt in models_t2:
-                        _model  = models_t2[sens_tgt]
-                        _scaler = scalers_t2[sens_tgt]
-                        _bounds = st.session_state.get('global_bounds', {})
-                        v_min, v_max = _bounds.get(sens_var, (0, 100))
-                        v_steps = np.linspace(v_min, v_max, 30)
-
-                        # 현재 입력값 기준, 선택 변수만 변화시켜 리스크 계산
-                        base_vals = [float(cur_inputs.get(v, 0)) for v in proc_vars]
-                        var_idx   = proc_vars.index(sens_var)
-
-                        sens_risks = []
-                        for sv in v_steps:
-                            trial = base_vals.copy()
-                            trial[var_idx] = float(sv)
-                            df_trial = pd.DataFrame([trial], columns=proc_vars)
-                            prob = _model.predict_proba(_scaler.transform(df_trial))[0, 1]
-                            sens_risks.append(prob)
-
-                        # 민감도 지표: 변화 범위 대비 리스크 변화폭
-                        risk_range = max(sens_risks) - min(sens_risks)
-                        cur_risk   = sens_risks[int(len(sens_risks) * (
-                            (cur_inputs.get(sens_var, v_min) - v_min) / max(v_max - v_min, 1e-9)
-                        ))]
-
-                        if is_en:
-                            sens_insight = (
-                                f"Variable: <b style='color:#00e5ff;'>{sens_var}</b> &nbsp;|&nbsp; "
-                                f"Risk range: <b style='color:#ffab00;'>{min(sens_risks)*100:.1f}% ~ {max(sens_risks)*100:.1f}%</b> &nbsp;|&nbsp; "
-                                f"Sensitivity: <b style='color:#{'ff5252' if risk_range>0.3 else 'ffab00' if risk_range>0.1 else '10b981'};'>"
-                                f"{'HIGH' if risk_range>0.3 else 'MED' if risk_range>0.1 else 'LOW'}</b>"
-                            )
-                            sens_advice = (
-                                f"This variable has a {'large' if risk_range>0.3 else 'moderate' if risk_range>0.1 else 'small'} "
-                                f"impact on {TARGET_VARS.get(sens_tgt, sens_tgt)}. "
-                                f"{'Priority control recommended.' if risk_range>0.3 else 'Monitor carefully.' if risk_range>0.1 else 'Low influence on this defect.'}"
-                            )
-                        else:
-                            sens_insight = (
-                                f"변수: <b style='color:#00e5ff;'>{sens_var}</b> &nbsp;|&nbsp; "
-                                f"리스크 범위: <b style='color:#ffab00;'>{min(sens_risks)*100:.1f}% ~ {max(sens_risks)*100:.1f}%</b> &nbsp;|&nbsp; "
-                                f"민감도: <b style='color:#{'ff5252' if risk_range>0.3 else 'ffab00' if risk_range>0.1 else '10b981'};'>"
-                                f"{'높음' if risk_range>0.3 else '보통' if risk_range>0.1 else '낮음'}</b>"
-                            )
-                            sens_advice = (
-                                f"이 변수는 {TARGET_VARS.get(sens_tgt, sens_tgt)} 불량에 "
-                                f"{'큰' if risk_range>0.3 else '보통의' if risk_range>0.1 else '작은'} 영향을 미칩니다. "
-                                f"{'우선 관리 대상입니다.' if risk_range>0.3 else '지속 모니터링을 권장합니다.' if risk_range>0.1 else '이 불량에 대한 영향이 낮습니다.'}"
-                            )
-
-                        st.markdown(
-                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
-                            f"border-left:3px solid #00e5ff;border-radius:6px;"
-                            f"padding:10px 14px;margin-bottom:12px;font-size:0.82rem;'>"
-                            f"<span style='color:#e1e1e1;'>{sens_insight}</span><br>"
-                            f"<span style='color:#cbd5e1;font-size:0.78rem;'>→ {sens_advice}</span>"
-                            f"</div>",
-                            unsafe_allow_html=True
-                        )
-
-                        # SVG 차트 렌더링
-                        W, H, PAD = 860, 200, 40
-                        cur_v   = float(cur_inputs.get(sens_var, v_min))
-                        cur_idx = int((cur_v - v_min) / max(v_max - v_min, 1e-9) * (len(v_steps) - 1))
-                        cur_idx = max(0, min(cur_idx, len(v_steps) - 1))
-
-                        pts = []
-                        for xi, rv in enumerate(sens_risks):
-                            x = PAD + (xi / max(len(sens_risks) - 1, 1)) * (W - 2 * PAD)
-                            y = PAD + (1 - rv) * (H - 2 * PAD)
-                            pts.append((x, y))
-
-                        polyline = " ".join([f"{x:.1f},{y:.1f}" for x, y in pts])
-                        cx, cy   = pts[cur_idx]
-                        threshold_y = PAD + (1 - DEFECT_THRESHOLD) * (H - 2 * PAD)
-
-                        # 안전/위험 구역 배경
-                        zone_safe   = f"<rect x='{PAD}' y='{threshold_y:.1f}' width='{W-2*PAD}' height='{H-PAD-threshold_y:.1f}' fill='rgba(16,185,129,0.06)'/>"
-                        zone_danger = f"<rect x='{PAD}' y='{PAD}' width='{W-2*PAD}' height='{threshold_y-PAD:.1f}' fill='rgba(255,82,82,0.06)'/>"
-
-                        # x축 레이블 (5개)
-                        x_labels = ""
-                        for ti in range(5):
-                            xi2 = int(ti * (len(v_steps) - 1) / 4)
-                            xp  = PAD + (xi2 / max(len(v_steps) - 1, 1)) * (W - 2 * PAD)
-                            xv  = v_steps[xi2]
-                            x_labels += f"<text x='{xp:.1f}' y='{H-PAD+18}' text-anchor='middle' fill='#64748b' font-size='10'>{xv:.1f}</text>"
-
-                        # y축 레이블
-                        y_labels = ""
-                        for yi_pct in [0, 25, 50, 75, 100]:
-                            yp = PAD + (1 - yi_pct / 100) * (H - 2 * PAD)
-                            y_labels += f"<text x='{PAD-6}' y='{yp+4:.1f}' text-anchor='end' fill='#64748b' font-size='10'>{yi_pct}%</text>"
-
-                        chart_title = (
-                            f"{sens_var} → {TARGET_VARS.get(sens_tgt,'').split('(')[0].strip()} Risk Sensitivity"
-                            if is_en else
-                            f"{sens_var} 변화에 따른 {TARGET_VARS.get(sens_tgt,'').split('(')[0].strip()} 불량 리스크"
-                        )
-                        x_axis_lbl  = sens_var
-                        cur_lbl     = f"Current: {cur_v:.1f}" if is_en else f"현재값: {cur_v:.1f}"
-                        thres_lbl   = f"Threshold {int(DEFECT_THRESHOLD*100)}%" if is_en else f"기준선 {int(DEFECT_THRESHOLD*100)}%"
-
-                        svg = f"""
-                        <svg viewBox='0 0 {W} {H+50}' style='width:100%;max-height:280px;background:#12141d;border-radius:10px;border:1px solid #2d3142;'>
-                          {zone_safe}{zone_danger}
-                          <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
-                          <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
-                          <line x1='{PAD}' y1='{threshold_y:.1f}' x2='{W-PAD}' y2='{threshold_y:.1f}'
-                                stroke='#ffab00' stroke-width='1' stroke-dasharray='5,4' opacity='0.7'/>
-                          <text x='{W-PAD+4}' y='{threshold_y+4:.1f}' fill='#ffab00' font-size='10'>{thres_lbl}</text>
-                          <polyline points='{polyline}' fill='none' stroke='#00e5ff' stroke-width='2.5'/>
-                          <circle cx='{cx:.1f}' cy='{cy:.1f}' r='6' fill='#ff5252' stroke='#fff' stroke-width='1.5'/>
-                          <text x='{min(cx+10, W-100):.1f}' y='{max(cy-10, PAD+12):.1f}' fill='#ff5252' font-size='11' font-weight='bold'>{cur_lbl}</text>
-                          {x_labels}{y_labels}
-                          <text x='{W//2}' y='{H+46}' text-anchor='middle' fill='#94a3b8' font-size='11'>{x_axis_lbl}</text>
-                          <text x='{W//2}' y='18' text-anchor='middle' fill='#e1e1e1' font-size='12' font-weight='bold'>{chart_title}</text>
-                        </svg>"""
-                        st.markdown(svg, unsafe_allow_html=True)
-
-            st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-
-            # ── Trend Chart ── expander ───────────────────────────────
-            trend_label = "+ Time-Series Trend Chart" if is_en else "+ 시계열 트렌드 차트"
-            with st.expander(trend_label, expanded=False):
-                target_cols_t  = [c for c in df_view.columns if c in TARGET_VARS]
-                process_cols_t = [c for c in df_view.select_dtypes(include=[np.number]).columns if c not in TARGET_VARS]
-
-                if target_cols_t or process_cols_t:
-                    # 트렌드 인사이트: 불량 리스크 증가/감소 추세 자동 계산
-                    trend_insights = []
-                    for tc in target_cols_t:
-                        tc_data = df_view[tc].dropna()
-                        if len(tc_data) >= 3:
-                            first_half = tc_data.iloc[:len(tc_data)//2].mean()
-                            last_half  = tc_data.iloc[len(tc_data)//2:].mean()
-                            delta      = last_half - first_half
-                            if abs(delta) >= 0.05:
-                                direction = ("↑ increasing" if delta > 0 else "↓ decreasing") if is_en else ("↑ 상승 추세" if delta > 0 else "↓ 하락 추세")
-                                color     = "#ff5252" if delta > 0 else "#10b981"
-                                trend_insights.append(
-                                    f"<b style='color:{color};'>{tc}</b>: {direction} (Δ{delta:+.3f})"
-                                )
-
-                    if trend_insights:
-                        title_txt = "Defect Risk Trend (first half vs. last half of data)" if is_en else "불량 리스크 추세 (데이터 전반부 vs 후반부 평균 비교)"
-                        st.markdown(
-                            f"<div style='background:#1a1c24;border:1px solid #2d3142;"
-                            f"border-left:3px solid #00e5ff;border-radius:6px;"
-                            f"padding:10px 14px;margin-bottom:10px;'>"
-                            f"<div style='font-size:0.78rem;color:#00e5ff;font-weight:600;margin-bottom:6px;'>"
-                            f"▸ {title_txt}</div>"
-                            + "".join([f"<div style='font-size:0.80rem;color:#e1e1e1;padding:2px 0;'>{t}</div>" for t in trend_insights])
-                            + "</div>",
-                            unsafe_allow_html=True
-                        )
-
-                    trend_sel_l = "Select items to view trend (multiple selection)" if is_en else "트렌드 확인할 항목 선택 (복수 선택 가능)"
-                    trend_chart_title = "Trend Chart (Normalized 0~1)" if is_en else "트렌드 차트 (정규화 0~1 표시)"
-                    all_trend_cols = target_cols_t + process_cols_t
-                    trend_sel = st.multiselect(
-                        trend_sel_l,
-                        options=all_trend_cols,
-                        default=target_cols_t[:3] if len(target_cols_t) >= 3 else target_cols_t,
-                        format_func=lambda k: TARGET_VARS.get(k, k),
-                        key="trend_multisel"
-                    )
-                    if trend_sel:
-                        trend_df = df_view[trend_sel].reset_index(drop=True)
-                        trend_df.index = range(1, len(trend_df) + 1)
-
-                        COLORS = ["#00e5ff","#a3e635","#ffab00","#ff5252","#c084fc",
-                                  "#fb923c","#34d399","#f472b6","#60a5fa","#fbbf24"]
-
-                        line_defs = []
-                        for ci, col in enumerate(trend_sel):
-                            col_data = trend_df[col].dropna()
-                            if col_data.empty:
-                                continue
-                            col_min, col_max = col_data.min(), col_data.max()
-                            span = col_max - col_min if col_max != col_min else 1.0
-                            norm = (col_data - col_min) / span
-                            line_defs.append({'col': col, 'data': norm, 'raw': col_data, 'color': COLORS[ci % len(COLORS)]})
-
-                        if line_defs:
-                            W, H, PAD = 900, 260, 40
-                            svg_lines = ""
-                            for ld in line_defs:
-                                pts = []
-                                for xi, (idx_v, y_v) in enumerate(ld['data'].items()):
-                                    x = PAD + (xi / max(len(ld['data']) - 1, 1)) * (W - 2 * PAD)
-                                    y = PAD + (1 - float(y_v)) * (H - 2 * PAD)
-                                    pts.append(f"{x:.1f},{y:.1f}")
-                                if pts:
-                                    svg_lines += f"<polyline points='{' '.join(pts)}' fill='none' stroke='{ld['color']}' stroke-width='2' opacity='0.85'/>"
-                                    last_x, last_y = float(pts[-1].split(',')[0]), float(pts[-1].split(',')[1])
-                                    last_raw = ld['raw'].iloc[-1]
-                                    svg_lines += f"<circle cx='{last_x}' cy='{last_y}' r='4' fill='{ld['color']}'/>"
-                                    svg_lines += f"<text x='{min(last_x+6, W-60)}' y='{last_y+4}' fill='{ld['color']}' font-size='10'>{float(last_raw):.2f}</text>"
-
-                            legend = ""
-                            for li, ld in enumerate(line_defs):
-                                lx = PAD + li * 130
-                                legend += f"<rect x='{lx}' y='{H+8}' width='14' height='8' fill='{ld['color']}' rx='2'/>"
-                                label  = TARGET_VARS.get(ld['col'], ld['col'])[:12]
-                                legend += f"<text x='{lx+18}' y='{H+16}' fill='#cbd5e1' font-size='10'>{label}</text>"
-
-                            svg_h = H + 36
-                            st.markdown(
-                                f"""<div style="background:#12141d;border:1px solid #2d3142;border-radius:10px;padding:16px 20px;margin-top:8px;overflow-x:auto;">
-                                    <div style="color:#e1e1e1;font-size:0.9rem;font-weight:600;margin-bottom:10px;">{trend_chart_title}</div>
-                                    <svg viewBox='0 0 {W} {svg_h}' style='width:100%;max-height:300px;'>
-                                        <line x1='{PAD}' y1='{PAD}' x2='{PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
-                                        <line x1='{PAD}' y1='{H-PAD}' x2='{W-PAD}' y2='{H-PAD}' stroke='#2d3142' stroke-width='1'/>
-                                        {svg_lines}
-                                        {legend}
-                                    </svg>
-                                </div>""",
-                                unsafe_allow_html=True
-                            )
-
-
-            # ── 서브탭 1~4: expander로 이미 위에서 처리됨 (잔여 코드 제거)
+else:
+    st.info(L_G['engine_inactive'])
