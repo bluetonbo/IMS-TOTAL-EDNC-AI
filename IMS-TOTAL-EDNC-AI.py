@@ -529,6 +529,9 @@ LANG_DICT = {
         "algo_mode_auto": "Intelligent Auto-Select (LR / RF / XGBoost / LightGBM comparison)",
         "algo_mode_light": "Lightweight Fixed Model (LogisticRegression — IMS-TOTAL-4 style)",
         "algo_mode_help": "Auto-Select compares multiple algorithms via cross-validation and picks the best one per defect. Lightweight Fixed Model always uses a single LogisticRegression, matching the field-proven IMS-TOTAL-4 approach — often more stable on small datasets.",
+        "algo_guide_title": "❔ Which one should I choose?",
+        "algo_guide_auto": "Best for larger datasets (roughly 100+ rows) with complex, non-linear patterns. Compares 4 algorithms and automatically picks the most accurate one per defect.",
+        "algo_guide_light": "Best for small datasets (roughly 50 rows or fewer). A single, stable LogisticRegression — lower overfitting risk, matches the field-proven IMS-TOTAL-4 approach.",
         "err_load": "Error loading file: ",
         "err_vars": "Could not find 10 defect variables in the uploaded data.",
         "warn_upload": "Please upload the Current Data (1) and either Historical (2) or CAE (3) data.",
@@ -611,6 +614,9 @@ LANG_DICT = {
         "algo_mode_auto": "지능형 자동 선택 (LR / RF / XGBoost / LightGBM 비교)",
         "algo_mode_light": "경량 고정 모델 (LogisticRegression - IMS-TOTAL-4 방식)",
         "algo_mode_help": "자동 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 경량 고정 모델은 항상 단일 LogisticRegression만 사용하며, 현장에서 검증된 IMS-TOTAL-4 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
+        "algo_guide_title": "❔ 어떤 걸 선택해야 하나요?",
+        "algo_guide_auto": "데이터가 많고(대략 100건 이상) 조건별 변화 패턴이 복잡할 때 적합합니다. 4가지 알고리즘을 비교해 불량별로 가장 정확한 모델을 자동으로 고릅니다.",
+        "algo_guide_light": "데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 LogisticRegression으로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 IMS-TOTAL-4 방식과 동일합니다.",
         "err_load": "파일 로드 오류: ",
         "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
@@ -1166,6 +1172,15 @@ with st.sidebar:
             help=L['algo_mode_help'],
             key='algo_mode_radio'
         )
+        with st.expander(L['algo_guide_title'], expanded=False):
+            st.markdown(f"""
+                <div style='font-size:0.78rem; line-height:1.55;'>
+                    <div style='color:#00e5ff; font-weight:700; margin-bottom:2px;'>{L['algo_mode_auto']}</div>
+                    <div style='color:#cbd5e1; margin-bottom:10px;'>{L['algo_guide_auto']}</div>
+                    <div style='color:#00e5ff; font-weight:700; margin-bottom:2px;'>{L['algo_mode_light']}</div>
+                    <div style='color:#cbd5e1;'>{L['algo_guide_light']}</div>
+                </div>
+            """, unsafe_allow_html=True)
         sub_btn = st.form_submit_button(L['run_ai'])
 
     if sub_btn:
