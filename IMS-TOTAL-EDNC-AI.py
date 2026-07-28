@@ -12,6 +12,9 @@ import os
 import time
 from datetime import datetime
 from groq import Groq
+import gspread
+from google.oauth2.service_account import Credentials
+from gspread.exceptions import WorksheetNotFound
 
 try:
     from xgboost import XGBClassifier
@@ -27,52 +30,74 @@ except ImportError:
 
 GROQ_API_KEY = "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"
 
-# ── 임시 비번 파일 기반 영구 저장 함수 ──────────────────────────────
-_TEMP_PWD_FILE = "temp_pwd_store.json"
+# ── 임시 비번 Google Sheets 기반 영구 저장 함수 ──────────────────────
+# (기존 로컬 JSON 파일(temp_pwd_store.json) 방식은 Streamlit Cloud 재부팅 시
+#  컨테이너 파일시스템이 초기화되면서 함께 사라지는 문제가 있어 Google Sheets로 이전)
+_GSHEET_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+_TEMP_PWD_WORKSHEET = "EDNC-AI-A_temp_pwd"
+
+def _get_temp_pwd_worksheet():
+    """secrets에 등록된 서비스 계정으로 인증 후, 임시 비번 저장용 워크시트를 반환.
+    시트가 없으면(최초 1회) 새로 만들고 헤더를 기록함."""
+    creds = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]), scopes=_GSHEET_SCOPES
+    )
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(st.secrets["temp_pwd_sheet_id"])
+    try:
+        ws = sh.worksheet(_TEMP_PWD_WORKSHEET)
+    except WorksheetNotFound:
+        ws = sh.add_worksheet(title=_TEMP_PWD_WORKSHEET, rows=200, cols=3)
+        ws.append_row(["pwd", "expires", "created"])
+    return ws
+
 
 def _load_temp_pwds():
-    """파일에서 임시 비번 목록 로드 — 앱 재시작 후에도 유지"""
-    if not os.path.exists(_TEMP_PWD_FILE):
-        from datetime import timedelta
-        default = {
-            "ednc1234": {
-                "expires": (datetime.now() + timedelta(days=7)).isoformat(),
-                "created": datetime.now().isoformat()
-            }
-        }
-        _save_temp_pwds(default)
-        return {
-            "ednc1234": {
-                "expires": datetime.now() + timedelta(days=7),
-                "created": datetime.now()
-            }
-        }
+    """Google Sheets에서 임시 비번 목록 로드 — 앱 재부팅과 무관하게 유지됨"""
     try:
-        with open(_TEMP_PWD_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        ws = _get_temp_pwd_worksheet()
+        records = ws.get_all_records()  # [{'pwd':..., 'expires':..., 'created':...}, ...]
+
+        if not records:
+            # 시트가 비어있으면(최초 실행) 기본 임시 비번(ednc1234, 7일 만료)으로 초기화
+            from datetime import timedelta
+            default_expires = datetime.now() + timedelta(days=7)
+            default_created = datetime.now()
+            _save_temp_pwds({"ednc1234": {"expires": default_expires, "created": default_created}})
+            return {"ednc1234": {"expires": default_expires, "created": default_created}}
+
         result = {}
-        for pwd, info in raw.items():
+        for row in records:
+            pwd = str(row.get("pwd", "")).strip()
+            if not pwd:
+                continue
+            exp_raw = row.get("expires")
+            cre_raw = row.get("created")
             result[pwd] = {
-                "expires": datetime.fromisoformat(info["expires"]) if info.get("expires") else None,
-                "created": datetime.fromisoformat(info["created"]) if info.get("created") else datetime.now()
+                "expires": datetime.fromisoformat(exp_raw) if exp_raw else None,
+                "created": datetime.fromisoformat(cre_raw) if cre_raw else datetime.now()
             }
         return result
     except Exception:
-        return {}
+        # Sheets 연결 일시 장애 시 세션에 남아있던 값이라도 유지 (완전 초기화 방지)
+        return st.session_state.get('temp_pwd_list', {})
+
 
 def _save_temp_pwds(pwd_dict):
-    """임시 비번 목록을 파일에 저장"""
-    raw = {}
-    for pwd, info in pwd_dict.items():
-        exp = info.get("expires")
-        cre = info.get("created")
-        raw[pwd] = {
-            "expires": exp.isoformat() if isinstance(exp, datetime) else (exp if isinstance(exp, str) else None),
-            "created": cre.isoformat() if isinstance(cre, datetime) else (cre if isinstance(cre, str) else str(datetime.now()))
-        }
+    """임시 비번 목록을 Google Sheets에 저장 (전체 덮어쓰기)"""
     try:
-        with open(_TEMP_PWD_FILE, "w", encoding="utf-8") as f:
-            json.dump(raw, f, ensure_ascii=False, indent=2)
+        ws = _get_temp_pwd_worksheet()
+        rows = [["pwd", "expires", "created"]]
+        for pwd, info in pwd_dict.items():
+            exp = info.get("expires")
+            cre = info.get("created")
+            rows.append([
+                pwd,
+                exp.isoformat() if isinstance(exp, datetime) else (exp if isinstance(exp, str) else ""),
+                cre.isoformat() if isinstance(cre, datetime) else (cre if isinstance(cre, str) else str(datetime.now()))
+            ])
+        ws.clear()
+        ws.update(rows)
     except Exception:
         pass
 
@@ -748,8 +773,8 @@ if not st.session_state.authenticated:
         # ── 비밀번호 설정 ──────────────────────────────────
         OWNER_PWD  = "nt1234"          # 소유자 비번 (항상 유효)
 
-        # 임시 비번은 st.session_state에 저장 (앱 재시작 시 초기화됨)
-        # 영구 보존 원할 시 shelve/파일로 대체 가능
+        # 임시 비번은 Google Sheets에 영구 저장됨 (앱 재부팅과 무관하게 유지)
+        # st.session_state.temp_pwd_list는 그 값을 캐싱해두는 용도
         if 'temp_pwd_list' not in st.session_state:
             st.session_state.temp_pwd_list = {}  # {비번: 만료일(datetime)}
 
