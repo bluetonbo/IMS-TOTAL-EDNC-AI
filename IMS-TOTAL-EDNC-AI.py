@@ -529,7 +529,7 @@ LANG_DICT = {
         "algo_mode_auto": "Intelligent Auto-Select (LR / RF / XGBoost / LightGBM comparison)",
         "algo_mode_light": "Lightweight Fixed Model (LogisticRegression — IMS-TOTAL-4 style)",
         "algo_mode_help": "Auto-Select compares multiple algorithms via cross-validation and picks the best one per defect. Lightweight Fixed Model always uses a single LogisticRegression, matching the field-proven IMS-TOTAL-4 approach — often more stable on small datasets.",
-        "algo_guide_title": "❔ Which one should I choose?",
+        "algo_guide_title": " Which one should I choose?",
         "algo_guide_auto": "Best for larger datasets (roughly 100+ rows) with complex, non-linear patterns. Compares 4 algorithms and automatically picks the most accurate one per defect.",
         "algo_guide_light": "Best for small datasets (roughly 50 rows or fewer). A single, stable LogisticRegression — lower overfitting risk, matches the field-proven IMS-TOTAL-4 approach.",
         "err_load": "Error loading file: ",
