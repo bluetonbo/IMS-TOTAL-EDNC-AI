@@ -610,13 +610,13 @@ LANG_DICT = {
         "upload_2": "2. 누적 이력 데이터",
         "upload_3": "3. CAE 해석 데이터",
         "run_ai": "학습 초기화 및 데이터 통합 학습 실행",
-        "algo_mode_label": "4. AI 알고리즘 선택",
+        "algo_mode_label": "4. AI학습 알고리즘 선택",
         "algo_mode_auto": "지능형 자동 선택 (LR / RF / XGBoost / LightGBM 비교)",
         "algo_mode_light": "경량 고정 모델 (LogisticRegression - IMS-TOTAL-4 방식)",
         "algo_mode_help": "자동 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 경량 고정 모델은 항상 단일 LogisticRegression만 사용하며, 현장에서 검증된 IMS-TOTAL-4 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
-        "algo_guide_title": "❔ 어떤 걸 선택해야 하나요?",
+        "algo_guide_title": "❔ AI 학습 알고리즘 선택 기준",
         "algo_guide_auto": "데이터가 많고(대략 100건 이상) 조건별 변화 패턴이 복잡할 때 적합합니다. 4가지 알고리즘을 비교해 불량별로 가장 정확한 모델을 자동으로 고릅니다.",
-        "algo_guide_light": "데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 LogisticRegression으로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 IMS-TOTAL-4 방식과 동일합니다.",
+        "algo_guide_light": "데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 LogisticRegression으로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 IMS-TOTAL-Ver. 4 방식과 동일합니다.",
         "err_load": "파일 로드 오류: ",
         "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
@@ -1377,12 +1377,14 @@ with st.sidebar:
                                 )
                                 # 참고용 진단 지표: K-fold 교차검증 정확도 (모델 선택에는 사용 안 함)
                                 cv_score = _cross_val_reliability(X_scaled, target_vals, n_pos, n_neg, 1.0)
+                                used_C = 1.0  # IMS-TOTAL-4 방식: 규제값 sklearn 기본(1.0) 고정
                             else:
                                 # LR/RF/XGB/LGBM 4종 자동선택 (알고리즘 진행 콜백 포함)
                                 best_model, best_algo, cv_score, fi = _auto_select_best_model(
                                     X_scaled, target_vals, n_pos, n_neg, chosen_C,
                                     algo_status_fn=_show_algo
                                 )
+                                used_C = chosen_C
 
                             models_dict[target]     = best_model
                             scalers_dict[target]    = scaler
@@ -1398,7 +1400,7 @@ with st.sidebar:
                                 'n_pos': n_pos,
                                 'n_neg': n_neg,
                                 'n_total': n_pos + n_neg,
-                                'C': chosen_C,
+                                'C': used_C,
                                 'low_sample': low_sample,
                                 'algo': best_algo,   # [추가] 선택된 알고리즘 이름
                             }
