@@ -529,9 +529,15 @@ LANG_DICT = {
         "algo_mode_auto": "Intelligent Auto-Select (LR / RF / XGBoost / LightGBM comparison)",
         "algo_mode_light": "Lightweight Fixed Model (LogisticRegression — IMS-TOTAL-4 style)",
         "algo_mode_help": "Auto-Select compares multiple algorithms via cross-validation and picks the best one per defect. Lightweight Fixed Model always uses a single LogisticRegression, matching the field-proven IMS-TOTAL-4 approach — often more stable on small datasets.",
-        "algo_guide_title": " Which one should I choose?",
+        "algo_guide_title": "❔ Which one should I choose?",
         "algo_guide_auto": "Best for larger datasets (roughly 100+ rows) with complex, non-linear patterns. Compares 4 algorithms and automatically picks the most accurate one per defect.",
         "algo_guide_light": "Best for small datasets (roughly 50 rows or fewer). A single, stable LogisticRegression — lower overfitting risk, matches the field-proven IMS-TOTAL-4 approach.",
+        "algo_reco_prefix": "Detected data:",
+        "algo_reco_unit": " rows",
+        "algo_reco_suffix": "Recommended:",
+        "algo_badge_prefix": "Model used:",
+        "algo_badge_auto": "Intelligent Auto-Select",
+        "algo_badge_light": "Lightweight Fixed (IMS-TOTAL-Ver. 4)",
         "err_load": "Error loading file: ",
         "err_vars": "Could not find 10 defect variables in the uploaded data.",
         "warn_upload": "Please upload the Current Data (1) and either Historical (2) or CAE (3) data.",
@@ -614,9 +620,15 @@ LANG_DICT = {
         "algo_mode_auto": "지능형 자동 선택 (LR / RF / XGBoost / LightGBM 비교)",
         "algo_mode_light": "경량 고정 모델 (LogisticRegression - IMS-TOTAL-4 방식)",
         "algo_mode_help": "자동 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 경량 고정 모델은 항상 단일 LogisticRegression만 사용하며, 현장에서 검증된 IMS-TOTAL-4 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
-        "algo_guide_title": " AI 학습 알고리즘 선택 기준",
+        "algo_guide_title": "AI 학습 알고리즘 선택 기준",
         "algo_guide_auto": "데이터가 많고(대략 100건 이상) 조건별 변화 패턴이 복잡할 때 적합합니다. 4가지 알고리즘을 비교해 불량별로 가장 정확한 모델을 자동으로 고릅니다.",
         "algo_guide_light": "데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 LogisticRegression으로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 IMS-TOTAL-Ver. 4 방식과 동일합니다.",
+        "algo_reco_prefix": "감지된 데이터",
+        "algo_reco_unit": "건",
+        "algo_reco_suffix": "추천:",
+        "algo_badge_prefix": "적용 모델:",
+        "algo_badge_auto": "지능형 자동 선택",
+        "algo_badge_light": "경량 고정 (IMS-TOTAL-Ver. 4)",
         "err_load": "파일 로드 오류: ",
         "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
@@ -1160,10 +1172,49 @@ with st.sidebar:
             unsafe_allow_html=True
         )
 
-    with st.sidebar.form(key='data_upload_form'):
-        u1 = st.file_uploader(L['upload_1'], type=['csv', 'xlsx'])
-        u2 = st.file_uploader(L['upload_2'], type=['csv', 'xlsx', 'db'])
-        u3 = st.file_uploader(L['upload_3'], type=['csv', 'xlsx'])
+    u1 = st.sidebar.file_uploader(L['upload_1'], type=['csv', 'xlsx'], key='u1_uploader')
+    u2 = st.sidebar.file_uploader(L['upload_2'], type=['csv', 'xlsx', 'db'], key='u2_uploader')
+    u3 = st.sidebar.file_uploader(L['upload_3'], type=['csv', 'xlsx'], key='u3_uploader')
+
+    # [추가] 업로드된 데이터 건수를 가볍게 미리 훑어서 알고리즘 추천 문구 표시
+    def _quick_row_count(f):
+        """실제 학습 전, 미리보기용으로만 행 수를 셈. 실패해도 조용히 None 반환."""
+        if not f:
+            return None
+        try:
+            f.seek(0)
+            if f.name.endswith('.db'):
+                return None  # DB 파일은 미리보기 생략
+            elif f.name.endswith('csv'):
+                _df_prev = pd.read_csv(f)
+            else:
+                _df_prev = pd.read_excel(f)
+            f.seek(0)  # 실제 학습 시 다시 읽을 수 있도록 포인터 원위치
+            return len(_df_prev)
+        except Exception:
+            try:
+                f.seek(0)
+            except Exception:
+                pass
+            return None
+
+    _row_counts = [c for c in (_quick_row_count(u1), _quick_row_count(u2), _quick_row_count(u3)) if c is not None]
+    _total_rows = sum(_row_counts) if _row_counts else None
+
+    if _total_rows is not None:
+        if _total_rows <= 50:
+            _reco_icon, _reco_label = "🟢", L['algo_mode_light']
+        else:
+            _reco_icon, _reco_label = "🔵", L['algo_mode_auto']
+        st.sidebar.markdown(
+            f"<div style='background:#0d1525;border:1px solid #1e3a5f;border-radius:8px;"
+            f"padding:6px 10px;margin:6px 0 2px 0;font-size:0.76rem;color:#cbd5e1;'>"
+            f"{_reco_icon} {L['algo_reco_prefix']} <b>{_total_rows}{L['algo_reco_unit']}</b> → "
+            f"{L['algo_reco_suffix']} <b style='color:#00e5ff;'>{_reco_label}</b></div>",
+            unsafe_allow_html=True
+        )
+
+    with st.sidebar:
         algo_mode_choice = st.radio(
             L['algo_mode_label'],
             options=['auto', 'light'],
@@ -1181,7 +1232,7 @@ with st.sidebar:
                     <div style='color:#cbd5e1;'>{L['algo_guide_light']}</div>
                 </div>
             """, unsafe_allow_html=True)
-        sub_btn = st.form_submit_button(L['run_ai'])
+        sub_btn = st.button(L['run_ai'], key='run_ai_btn', use_container_width=True)
 
     if sub_btn:
         def load_data(f):
@@ -1424,7 +1475,8 @@ with st.sidebar:
                             if c not in TARGET_VARS.keys() and c != 'vars'
                         ],
                         'prepared_db_file': None,
-                        'data_changed_since_save': True
+                        'data_changed_since_save': True,
+                        'algo_mode_used': algo_mode_choice,    # [추가] 이번 학습에 사용된 모드('auto'/'light')
                     })
 
                     init_row = df_i.iloc[0].to_dict()
@@ -2263,6 +2315,16 @@ if is_active:
             else "▶  Feature Importance 기반 공정 진단 가이드 & AI 전문가 진단  (클릭하여 펼치기 / 닫기)"
         )
         with st.expander(_combined_lbl, expanded=False):
+            _algo_used_e = st.session_state.get('algo_mode_used')
+            _algo_badge_txt_e = (L['algo_badge_light'] if _algo_used_e == 'light'
+                                  else L['algo_badge_auto'] if _algo_used_e == 'auto' else None)
+            if _algo_badge_txt_e:
+                st.markdown(
+                    f"<div style='display:inline-block;background:#0a1628;border:1px solid #1e3a5f;"
+                    f"border-radius:6px;padding:3px 10px;font-size:0.74rem;color:#00e5ff;margin-bottom:10px;'>"
+                    f"🔧 {L['algo_badge_prefix']} {_algo_badge_txt_e}</div>",
+                    unsafe_allow_html=True
+                )
 
             # ── 1) Feature Importance 기반 공정 진단 가이드 ──────────
             if st.session_state.get('last_res_val') is not None:
@@ -2342,12 +2404,20 @@ if is_active:
                                     f'<div style="margin:2px 0 2px 12px; color:#e1e1e1;'
                                     f' font-size:0.88rem; line-height:1.6;">{line}</div>'
                                 )
+                        _algo_used = st.session_state.get('algo_mode_used')
+                        _algo_badge_txt = (L['algo_badge_light'] if _algo_used == 'light'
+                                            else L['algo_badge_auto'] if _algo_used == 'auto' else None)
+                        _algo_badge_html = (
+                            f"<span style='float:right;background:#0a1628;border:1px solid #1e3a5f;"
+                            f"border-radius:6px;padding:2px 8px;font-size:0.72rem;color:#00e5ff;'>"
+                            f"🔧 {L['algo_badge_prefix']} {_algo_badge_txt}</span>"
+                        ) if _algo_badge_txt else ""
                         report_html = f"""
                         <div style="background-color:#12141d; border:1px solid #2d3142;
                                     border-radius:10px; padding:20px 24px; margin-top:12px;
                                     max-height:420px; overflow-y:auto;">
                             <div style="color:#cbd5e1; font-size:0.8rem; margin-bottom:12px;
-                                        letter-spacing:0.05em;">{L['report_box_title']}</div>
+                                        letter-spacing:0.05em;">{L['report_box_title']}{_algo_badge_html}</div>
                             {''.join(html_lines)}
                         </div>"""
                         st.markdown(report_html, unsafe_allow_html=True)
