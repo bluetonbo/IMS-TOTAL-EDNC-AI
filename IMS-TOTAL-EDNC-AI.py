@@ -1999,9 +1999,19 @@ if is_active:
                     .optfill {{height:100%;border-radius:20px;
                         background:linear-gradient(90deg,#00e5ff,#10b981);
                         width:{pct}%;transition:width 0.4s ease;}}
+                    @keyframes opt_modal_spin {{
+                        0%   {{ transform:rotate(0deg);   }}
+                        100% {{ transform:rotate(360deg); }}
+                    }}
+                    .opt_modal_spin_icon {{
+                        display:inline-block;
+                        animation:opt_modal_spin 0.9s linear infinite;
+                    }}
                     </style>
                     <div id="optmbox">
-                        <div style="font-size:2.4rem;margin-bottom:16px;">🔄</div>
+                        <div style="font-size:2.4rem;margin-bottom:16px;">
+                            <span class="opt_modal_spin_icon">🔄</span>
+                        </div>
                         <div style="font-weight:700;color:#38bdf8;font-size:1.15rem;margin-bottom:4px;">
                             {algo_msg}
                         </div>
