@@ -614,7 +614,7 @@ LANG_DICT = {
         "algo_mode_auto": "지능형 자동 선택 (LR / RF / XGBoost / LightGBM 비교)",
         "algo_mode_light": "경량 고정 모델 (LogisticRegression - IMS-TOTAL-4 방식)",
         "algo_mode_help": "자동 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 경량 고정 모델은 항상 단일 LogisticRegression만 사용하며, 현장에서 검증된 IMS-TOTAL-4 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
-        "algo_guide_title": "❔ AI 학습 알고리즘 선택 기준",
+        "algo_guide_title": " AI 학습 알고리즘 선택 기준",
         "algo_guide_auto": "데이터가 많고(대략 100건 이상) 조건별 변화 패턴이 복잡할 때 적합합니다. 4가지 알고리즘을 비교해 불량별로 가장 정확한 모델을 자동으로 고릅니다.",
         "algo_guide_light": "데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 LogisticRegression으로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 IMS-TOTAL-Ver. 4 방식과 동일합니다.",
         "err_load": "파일 로드 오류: ",
