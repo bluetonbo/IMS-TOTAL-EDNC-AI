@@ -27,90 +27,54 @@ except ImportError:
 
 GROQ_API_KEY = "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"
 
-import gspread
-from google.oauth2.service_account import Credentials
-
-# ── 임시 비번 Google Sheets 기반 영구 저장 함수 ─────────────────────
-# Streamlit Cloud는 Reboot/재배포 시 컨테이너 로컬 디스크가 초기화되므로,
-# 로컬 파일 대신 Google Sheets에 저장하여 그 이후에도 유지되도록 함.
-# 필요한 st.secrets 항목:
-#   temp_pwd_sheet_id = "<스프레드시트 ID>"
-#   [gcp_service_account] ... (서비스 계정 JSON 키 내용)
-_TEMP_PWD_WORKSHEET = "temp_pwd_store"
-
-@st.cache_resource(show_spinner=False)
-def _get_temp_pwd_worksheet():
-    """Google Sheets 워크시트 연결 객체를 세션 내에서 재사용(캐싱)"""
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(st.secrets["temp_pwd_sheet_id"])
-    try:
-        ws = sh.worksheet(_TEMP_PWD_WORKSHEET)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=_TEMP_PWD_WORKSHEET, rows=200, cols=3)
-        ws.update([["password", "expires", "created"]])
-    return ws
+# ── 임시 비번 파일 기반 영구 저장 함수 ──────────────────────────────
+_TEMP_PWD_FILE = "temp_pwd_store.json"
 
 def _load_temp_pwds():
-    """Google Sheets에서 임시 비번 목록 로드 — Reboot/재배포 후에도 유지"""
+    """파일에서 임시 비번 목록 로드 — 앱 재시작 후에도 유지"""
+    if not os.path.exists(_TEMP_PWD_FILE):
+        from datetime import timedelta
+        default = {
+            "ednc1234": {
+                "expires": (datetime.now() + timedelta(days=7)).isoformat(),
+                "created": datetime.now().isoformat()
+            }
+        }
+        _save_temp_pwds(default)
+        return {
+            "ednc1234": {
+                "expires": datetime.now() + timedelta(days=7),
+                "created": datetime.now()
+            }
+        }
     try:
-        ws = _get_temp_pwd_worksheet()
-        records = ws.get_all_records()
-        st.session_state['_sheets_last_error'] = None
-        if not records:
-            from datetime import timedelta
-            default = {
-                "ednc1234": {
-                    "expires": (datetime.now() + timedelta(days=7)).isoformat(),
-                    "created": datetime.now().isoformat()
-                }
-            }
-            _save_temp_pwds(default)
-            return {
-                "ednc1234": {
-                    "expires": datetime.now() + timedelta(days=7),
-                    "created": datetime.now()
-                }
-            }
+        with open(_TEMP_PWD_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
         result = {}
-        for row in records:
-            pwd = str(row.get("password", "")).strip()
-            if not pwd:
-                continue
-            exp = row.get("expires")
-            cre = row.get("created")
+        for pwd, info in raw.items():
             result[pwd] = {
-                "expires": datetime.fromisoformat(exp) if exp else None,
-                "created": datetime.fromisoformat(cre) if cre else datetime.now()
+                "expires": datetime.fromisoformat(info["expires"]) if info.get("expires") else None,
+                "created": datetime.fromisoformat(info["created"]) if info.get("created") else datetime.now()
             }
         return result
-    except Exception as e:
-        st.session_state['_sheets_last_error'] = f"[로드 실패] {type(e).__name__}: {e}"
+    except Exception:
         return {}
 
 def _save_temp_pwds(pwd_dict):
-    """임시 비번 목록을 Google Sheets에 저장 (전체 덮어쓰기)"""
+    """임시 비번 목록을 파일에 저장"""
+    raw = {}
+    for pwd, info in pwd_dict.items():
+        exp = info.get("expires")
+        cre = info.get("created")
+        raw[pwd] = {
+            "expires": exp.isoformat() if isinstance(exp, datetime) else (exp if isinstance(exp, str) else None),
+            "created": cre.isoformat() if isinstance(cre, datetime) else (cre if isinstance(cre, str) else str(datetime.now()))
+        }
     try:
-        ws = _get_temp_pwd_worksheet()
-        rows = [["password", "expires", "created"]]
-        for pwd, info in pwd_dict.items():
-            exp = info.get("expires")
-            cre = info.get("created")
-            rows.append([
-                pwd,
-                exp.isoformat() if isinstance(exp, datetime) else (exp if isinstance(exp, str) else ""),
-                cre.isoformat() if isinstance(cre, datetime) else (cre if isinstance(cre, str) else str(datetime.now()))
-            ])
-        ws.clear()
-        ws.update(rows)
-        st.session_state['_sheets_last_error'] = None
-        return True
-    except Exception as e:
-        st.session_state['_sheets_last_error'] = f"[저장 실패] {type(e).__name__}: {e}"
-        return False
+        with open(_TEMP_PWD_FILE, "w", encoding="utf-8") as f:
+            json.dump(raw, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 #  AI 리포트 핵심 조치 사항 개수 — 원하는 숫자로 변경하세요
 NUM_ACTIONS = 3
@@ -213,6 +177,20 @@ def _auto_select_best_model(X, y, n_pos, n_neg, C, algo_status_fn=None):
 
     cv_score = best_score if best_score >= 0 else None
     return best_model, best_name, cv_score, fi
+
+
+def _fit_model_fixed(X, y, algo_status_fn=None):
+    """[IMS-TOTAL-4 알고리즘] LogisticRegression(max_iter=1000) 단일 모델로 고정 학습.
+    (표본 수에 따른 규제 자동 조정이나 RF/XGB/LGBM 등 타 알고리즘과의 비교선택은 하지 않음.
+    현장에서 검증된 IMS-TOTAL-4와 동일한 방식)
+    반환: (fitted_model, algo_name, feature_importances_or_None)"""
+    if algo_status_fn:
+        algo_status_fn("Final fit: LogisticRegression (IMS-TOTAL-4) ✓", 1, 1)
+
+    model = LogisticRegression(max_iter=1000).fit(X, y)
+    fi = np.abs(model.coef_[0]) if hasattr(model, 'coef_') else None
+
+    return model, 'LogisticRegression (IMS-TOTAL-4)', fi
 
 
 def _build_fact_block(defect_results):
@@ -547,6 +525,10 @@ LANG_DICT = {
         "upload_2": "2. Historical Cumulative Data",
         "upload_3": "3. CAE Analysis Data",
         "run_ai": "Run AI Learning & Solution",
+        "algo_mode_label": "4. AI Algorithm",
+        "algo_mode_auto": "Intelligent Auto-Select (LR / RF / XGBoost / LightGBM comparison)",
+        "algo_mode_light": "Lightweight Fixed Model (LogisticRegression — IMS-TOTAL-4 style)",
+        "algo_mode_help": "Auto-Select compares multiple algorithms via cross-validation and picks the best one per defect. Lightweight Fixed Model always uses a single LogisticRegression, matching the field-proven IMS-TOTAL-4 approach — often more stable on small datasets.",
         "err_load": "Error loading file: ",
         "err_vars": "Could not find 10 defect variables in the uploaded data.",
         "warn_upload": "Please upload the Current Data (1) and either Historical (2) or CAE (3) data.",
@@ -625,6 +607,10 @@ LANG_DICT = {
         "upload_2": "2. 누적 이력 데이터",
         "upload_3": "3. CAE 해석 데이터",
         "run_ai": "학습 초기화 및 데이터 통합 학습 실행",
+        "algo_mode_label": "4. AI 알고리즘 선택",
+        "algo_mode_auto": "지능형 자동 선택 (LR / RF / XGBoost / LightGBM 비교)",
+        "algo_mode_light": "경량 고정 모델 (LogisticRegression - IMS-TOTAL-4 방식)",
+        "algo_mode_help": "자동 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 경량 고정 모델은 항상 단일 LogisticRegression만 사용하며, 현장에서 검증된 IMS-TOTAL-4 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
         "err_load": "파일 로드 오류: ",
         "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
@@ -1172,6 +1158,14 @@ with st.sidebar:
         u1 = st.file_uploader(L['upload_1'], type=['csv', 'xlsx'])
         u2 = st.file_uploader(L['upload_2'], type=['csv', 'xlsx', 'db'])
         u3 = st.file_uploader(L['upload_3'], type=['csv', 'xlsx'])
+        algo_mode_choice = st.radio(
+            L['algo_mode_label'],
+            options=['auto', 'light'],
+            format_func=lambda x: L['algo_mode_auto'] if x == 'auto' else L['algo_mode_light'],
+            index=0,
+            help=L['algo_mode_help'],
+            key='algo_mode_radio'
+        )
         sub_btn = st.form_submit_button(L['run_ai'])
 
     if sub_btn:
@@ -1361,11 +1355,19 @@ with st.sidebar:
                                         unsafe_allow_html=True
                                     )
 
-                            # LR/RF/XGB/LGBM 4종 자동선택 (알고리즘 진행 콜백 포함)
-                            best_model, best_algo, cv_score, fi = _auto_select_best_model(
-                                X_scaled, target_vals, n_pos, n_neg, chosen_C,
-                                algo_status_fn=_show_algo
-                            )
+                            if algo_mode_choice == 'light':
+                                # [IMS-TOTAL-4 알고리즘] LogisticRegression 단일 모델 고정 학습
+                                best_model, best_algo, fi = _fit_model_fixed(
+                                    X_scaled, target_vals, algo_status_fn=_show_algo
+                                )
+                                # 참고용 진단 지표: K-fold 교차검증 정확도 (모델 선택에는 사용 안 함)
+                                cv_score = _cross_val_reliability(X_scaled, target_vals, n_pos, n_neg, 1.0)
+                            else:
+                                # LR/RF/XGB/LGBM 4종 자동선택 (알고리즘 진행 콜백 포함)
+                                best_model, best_algo, cv_score, fi = _auto_select_best_model(
+                                    X_scaled, target_vals, n_pos, n_neg, chosen_C,
+                                    algo_status_fn=_show_algo
+                                )
 
                             models_dict[target]     = best_model
                             scalers_dict[target]    = scaler
@@ -1473,21 +1475,6 @@ with st.sidebar:
             ("임시 비번 관리" if _is_ko_sb else "Temp Password Manager") + "</div>",
             unsafe_allow_html=True
         )
-        # ── Google Sheets 연결 상태: 마지막 에러가 있으면 계속 표시 (rerun에도 안 사라짐) ──
-        _sheets_err = st.session_state.get('_sheets_last_error')
-        if _sheets_err:
-            st.sidebar.error(f"⚠️ Google Sheets 오류\n\n{_sheets_err}")
-        else:
-            st.sidebar.caption("🟢 Google Sheets 연결 정상")
-        if st.sidebar.button("🔄 Sheets 연결 테스트", key="sb_test_sheets"):
-            try:
-                _test_ws = _get_temp_pwd_worksheet()
-                _test_ws.get_all_records()
-                st.session_state['_sheets_last_error'] = None
-                st.sidebar.success("✅ Sheets 연결 성공")
-            except Exception as _e_test:
-                st.session_state['_sheets_last_error'] = f"[테스트 실패] {type(_e_test).__name__}: {_e_test}"
-                st.sidebar.error(f"⚠️ {st.session_state['_sheets_last_error']}")
         # 새 임시 비번 추가
         _new_tp = st.sidebar.text_input(
             "새 임시 비번" if _is_ko_sb else "New Temp Password",
@@ -1518,12 +1505,8 @@ with st.sidebar:
                     'expires': _exp_dt_sb,
                     'created': _dtnow2.now()
                 }
-                _saved_ok = _save_temp_pwds(st.session_state.temp_pwd_list)
-                if _saved_ok:
-                    st.sidebar.success(("추가됨: " if _is_ko_sb else "Added: ") + _new_tp)
-                else:
-                    st.sidebar.error("⚠️ Sheets 저장 실패 — 위 오류 메시지를 확인하세요" if _is_ko_sb
-                                      else "⚠️ Sheets save failed — check the error message above")
+                _save_temp_pwds(st.session_state.temp_pwd_list)
+                st.sidebar.success(("추가됨: " if _is_ko_sb else "Added: ") + _new_tp)
                 st.rerun()
             elif _new_tp == "nt1234":
                 st.sidebar.error("소유자 비번은 사용 불가" if _is_ko_sb else "Cannot use owner password.")
