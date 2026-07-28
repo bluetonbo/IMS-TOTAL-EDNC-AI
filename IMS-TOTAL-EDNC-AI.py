@@ -790,12 +790,13 @@ if not st.session_state.authenticated:
                 return True
             return datetime.now() < info['expires']
 
-        col_pwd, col_btn = st.columns([4, 1])
-        with col_pwd:
-            pwd = st.text_input(L['enter_pwd'], type="password")
-        with col_btn:
-            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-            _connect_clicked = st.button(L['connect_sys'], use_container_width=True)
+        _pwd_l, _pwd_mid, _pwd_r = st.columns([1, 4, 1])
+        with _pwd_mid:
+            col_pwd, col_btn = st.columns([4, 1], vertical_alignment="bottom")
+            with col_pwd:
+                pwd = st.text_input(L['enter_pwd'], type="password")
+            with col_btn:
+                _connect_clicked = st.button(L['connect_sys'], use_container_width=True)
         if _connect_clicked:
             if pwd == OWNER_PWD:
                 st.session_state.authenticated = True
