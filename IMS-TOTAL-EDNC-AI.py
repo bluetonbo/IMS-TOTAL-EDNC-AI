@@ -1244,7 +1244,7 @@ with st.sidebar:
             L['algo_mode_label'],
             options=['auto', 'light'],
             format_func=lambda x: L['algo_mode_auto'] if x == 'auto' else L['algo_mode_light'],
-            index=0,
+            index=1,  # 기본값: 경량 고정형 자동 선택
             help=L['algo_mode_help'],
             key='algo_mode_radio'
         )
@@ -1310,9 +1310,19 @@ with st.sidebar:
                 background:linear-gradient(90deg,#00e5ff,#10b981);
                 transition:width 0.4s ease;
             }}
+            @keyframes train_modal_spin {{
+                0%   {{ transform:rotate(0deg);   }}
+                100% {{ transform:rotate(360deg); }}
+            }}
+            .train_modal_spin_icon {{
+                display:inline-block;
+                animation:train_modal_spin 0.9s linear infinite;
+            }}
             </style>
             <div id="train_modal_box">
-                <div style="font-size:1.8rem;margin-bottom:12px;">🔄</div>
+                <div style="font-size:1.8rem;margin-bottom:12px;">
+                    <span class="train_modal_spin_icon">🔄</span>
+                </div>
                 <div style="font-weight:700;color:#00e5ff;font-size:1.1rem;margin-bottom:6px;">
                     {msg}
                 </div>
