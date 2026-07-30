@@ -1520,7 +1520,11 @@ with st.sidebar:
 
                     init_row = df_i.iloc[0].to_dict()
                     for v in vars_list:
-                        st.session_state['current_inputs'][v] = int(round(float(init_row.get(v, 0))))
+                        _reset_val = int(round(float(init_row.get(v, 0))))
+                        st.session_state['current_inputs'][v] = _reset_val
+                        # [수정] 슬라이더/숫자입력 위젯 키도 함께 동기화 (안 하면 위젯이 예전 값에 멈춰있음)
+                        st.session_state[f"ni_a_{v}"] = float(_reset_val)
+                        st.session_state[f"sl_{v}_{st.session_state['ver']}"] = float(_reset_val)
 
                     load_prog.progress(100, text="✅ All done! AI engine ready." if st.session_state.lang == "en" else "✅ 모든 학습 완료! AI 준비 완료.")
                     load_status.markdown("✅ **AI Engine ready.**" if st.session_state.lang == "en" else "✅ **AI 엔진 준비 완료.**")
@@ -2110,6 +2114,9 @@ if is_active:
                     # 최적화된 파라미터 값을 현재 입력 상태에 덮어씌우고 버전을 올려 슬라이더 연동 처리
                     st.session_state['current_inputs'].update(opt_dict)
                     st.session_state['ver'] += 1
+                    # [수정] 숫자입력(Value) 위젯 키는 버전 접미사가 없어 ver만으로는 갱신되지 않으므로 직접 동기화
+                    for _v, _val in opt_dict.items():
+                        st.session_state[f"ni_a_{_v}"] = float(_val)
 
                     new_row = {v: opt_dict.get(v, 0) for v in all_v}
                     for target_key, r_val in st.session_state['last_defect_risks'].items():
