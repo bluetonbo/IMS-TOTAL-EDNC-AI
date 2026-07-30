@@ -879,8 +879,13 @@ if 'models' not in st.session_state:
 _pending_sync = st.session_state.pop('_pending_ni_sync', None)
 if _pending_sync:
     for _pv, _pval in _pending_sync.items():
-        st.session_state[f"ni_a_{_pv}"] = float(_pval)
-        st.session_state[f"sl_{_pv}_{st.session_state['ver']}"] = float(_pval)
+        _pb = st.session_state.get('global_bounds', {}).get(_pv, (0.0, 100.0))
+        _pmin, _pmax = float(_pb[0]), float(_pb[1])
+        if _pmin == _pmax:
+            _pmax = _pmin + 1.0
+        _pclamped = float(max(_pmin, min(float(_pval), _pmax)))
+        st.session_state[f"ni_a_{_pv}"] = _pclamped
+        st.session_state[f"sl_{_pv}_{st.session_state['ver']}"] = _pclamped
 
 st.markdown("""
     <style>
@@ -1533,8 +1538,13 @@ with st.sidebar:
                         _reset_val = int(round(float(init_row.get(v, 0))))
                         st.session_state['current_inputs'][v] = _reset_val
                         # [수정] 슬라이더/숫자입력 위젯 키도 함께 동기화 (안 하면 위젯이 예전 값에 멈춰있음)
-                        st.session_state[f"ni_a_{v}"] = float(_reset_val)
-                        st.session_state[f"sl_{v}_{st.session_state['ver']}"] = float(_reset_val)
+                        _rb = bounds_dict.get(v, (0.0, 100.0))
+                        _rmin, _rmax = float(_rb[0]), float(_rb[1])
+                        if _rmin == _rmax:
+                            _rmax = _rmin + 1.0
+                        _rclamped = float(max(_rmin, min(float(_reset_val), _rmax)))
+                        st.session_state[f"ni_a_{v}"] = _rclamped
+                        st.session_state[f"sl_{v}_{st.session_state['ver']}"] = _rclamped
 
                     load_prog.progress(100, text="✅ All done! AI engine ready." if st.session_state.lang == "en" else "✅ 모든 학습 완료! AI 준비 완료.")
                     load_status.markdown("✅ **AI Engine ready.**" if st.session_state.lang == "en" else "✅ **AI 엔진 준비 완료.**")
