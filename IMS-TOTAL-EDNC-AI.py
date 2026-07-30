@@ -1952,12 +1952,17 @@ if is_active:
                     _gmin, _gmax = float(_gb[0]), float(_gb[1])
                     if _gmin == _gmax:
                         _gmax = _gmin + 1.0
+                    # [수정] 슬라이더/Min-Max 입력 허용범위를 데이터 관측 범위보다 위아래 20%씩 넓힘.
+                    # 전문가가 학습 데이터에 없던 값(예: 데이터에 없던 더 넓은/좁은 안전범위)도
+                    # 설정할 수 있도록 하기 위함.
+                    _margin = (_gmax - _gmin) * 0.2
+                    _wmin, _wmax = _gmin - _margin, _gmax + _margin
 
                     _existing = st.session_state['expert_constraints'].get(v_name)
                     if _existing and 'min' in _existing and 'max' in _existing:
-                        # 이미 범위로 설정된 값이 있으면 그대로 유지 (데이터 범위를 벗어나지 않게 클램프)
-                        _def_min = max(_gmin, min(float(_existing['min']), _gmax))
-                        _def_max = max(_gmin, min(float(_existing['max']), _gmax))
+                        # 이미 범위로 설정된 값이 있으면 그대로 유지 (넓힌 허용범위 안에서 클램프)
+                        _def_min = max(_wmin, min(float(_existing['min']), _wmax))
+                        _def_max = max(_wmin, min(float(_existing['max']), _wmax))
                         if _def_min > _def_max:
                             _def_min, _def_max = _gmin, _gmax
                     else:
@@ -1980,32 +1985,32 @@ if is_active:
                     with _sl_col:
                         _rng = st.slider(
                             f"{v_name}{L['lbl_target_range']}",
-                            min_value=_gmin, max_value=_gmax,
+                            min_value=_wmin, max_value=_wmax,
                             value=(_def_min, _def_max),
                             key=f"expert_range_{v_name}",
                             on_change=_on_expert_range_change,
-                            args=(v_name, _gmin, _gmax)
+                            args=(v_name, _wmin, _wmax)
                         )
                     st.session_state['expert_constraints'][v_name] = {'min': float(_rng[0]), 'max': float(_rng[1])}
 
-                    # [수정] Min/Max 직접 키인 입력란을 슬라이더 옆으로 배치
+                    # [수정] Min/Max 직접 키인 입력란을 슬라이더 옆으로 배치 (넓힌 허용범위 적용)
                     with _kmin_col:
                         st.number_input(
-                            "Min", min_value=_gmin, max_value=_gmax,
-                            step=max((_gmax - _gmin) / 100.0, 0.1),
+                            "Min", min_value=_wmin, max_value=_wmax,
+                            step=max((_wmax - _wmin) / 100.0, 0.1),
                             format="%.2f",
                             key=f"expert_min_{v_name}",
                             on_change=_on_expert_minmax_change,
-                            args=(v_name, _gmin, _gmax)
+                            args=(v_name, _wmin, _wmax)
                         )
                     with _kmax_col:
                         st.number_input(
-                            "Max", min_value=_gmin, max_value=_gmax,
-                            step=max((_gmax - _gmin) / 100.0, 0.1),
+                            "Max", min_value=_wmin, max_value=_wmax,
+                            step=max((_wmax - _wmin) / 100.0, 0.1),
                             format="%.2f",
                             key=f"expert_max_{v_name}",
                             on_change=_on_expert_minmax_change,
-                            args=(v_name, _gmin, _gmax)
+                            args=(v_name, _wmin, _wmax)
                         )
         st.session_state['expert_reliability'] = (
             st.slider(L['lbl_expert_rel'], 0, 100, int(st.session_state['expert_reliability'] * 100)) / 100.0
