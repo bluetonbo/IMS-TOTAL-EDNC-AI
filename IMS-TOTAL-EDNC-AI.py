@@ -279,7 +279,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         return st.session_state.pop(_result_key, None)
 
     _uid = task_key.replace("-", "_").replace(".", "_")
-    _BOX_W = 240
+    _BOX_W = 380
 
     # ── 공통 스타일 + backdrop ──────────────────────────────────
     st.markdown(f"""<style>
