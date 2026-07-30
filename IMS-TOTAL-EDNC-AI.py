@@ -2057,7 +2057,12 @@ if is_active:
                 _cmin, _cmax = c.get('min'), c.get('max')
                 if _cmin is None or _cmax is None:
                     continue  # 구버전 데이터(목표값 방식) 잔재는 무시
-                _crange = max(_cmax - _cmin, 1e-9)
+                # [수정] min=max(또는 폭이 거의 0)로 설정하면 벌점이 순식간에 폭발해 위험도가
+                # 바로 100%로 튀는 문제가 있어, 그 변수의 데이터 관측범위의 5%를 최소 폭(floor)으로
+                # 깔아둠 -> "정확히 이 값"으로 설정해도 완만하게(급격하지 않게) 벌점이 증가하도록 함
+                _gb = st.session_state['global_bounds'].get(v, (_cmin, _cmax))
+                _floor = max(abs(float(_gb[1]) - float(_gb[0])) * 0.05, 1e-6)
+                _crange = max(_cmax - _cmin, _floor)
                 if _val < _cmin:
                     penalty += (_cmin - _val) / _crange
                 elif _val > _cmax:
