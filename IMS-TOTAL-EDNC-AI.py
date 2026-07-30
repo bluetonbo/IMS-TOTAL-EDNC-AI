@@ -1928,7 +1928,8 @@ if is_active:
             selected_expert_vars = st.multiselect(
                 L['lbl_constant'],
                 options=st.session_state['ui_display_vars'],
-                default=list(st.session_state['expert_constraints'].keys())
+                default=list(st.session_state['expert_constraints'].keys()),
+                key="expert_ms_vars"
             )
 
         # [추가] 슬라이더 ↔ Min/Max 숫자입력 콜백 (섹션 A와 동일한 방식으로 양방향 동기화)
