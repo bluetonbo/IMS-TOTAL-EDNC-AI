@@ -300,7 +300,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         box-shadow:0 14px 45px rgba(0,0,0,0.95);
         width:{_BOX_W}px;max-width:80vw;
         box-sizing:border-box;
-        padding:30px 20px 30px 20px;
+        padding:24px 20px 34px 20px;
         text-align:center;
     }}
     .modal_icon_{_uid} {{
@@ -373,13 +373,13 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         # 모달 박스: 메시지만 (버튼 영역은 아래 여백으로 비워둠)
         st.markdown(f"""
         <div id="mbox_{_uid}">
-            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:48px;">{done_msg}</div>
+            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:70px;">{done_msg}</div>
         </div>
         <style>
         /* Streamlit 확인 버튼을 모달 박스 하단 위에 완전히 겹치도록 고정 */
         div[data-testid="stButton"]:has(> button[kind="primary"]) {{
             position: fixed !important;
-            top: calc(50% + 28px) !important;
+            top: calc(50% - 12px) !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
             width: {_BOX_W - 40}px !important;
@@ -1938,6 +1938,8 @@ if is_active:
         # D. 최적화 및 지능형 진단
         def calculate_total_risk(input_vals_list):
             all_v = st.session_state['global_process_vars']
+            # [수정] 어디서 들어오든 부동소수점 미세 오차를 여기서 최종적으로 한 번 더 정리
+            input_vals_list = [round(float(v), 2) for v in input_vals_list]
             df_input = pd.DataFrame([input_vals_list], columns=all_v)
             total_weighted_risk = 0.0
             weight_sum = 0.0
@@ -1959,6 +1961,8 @@ if is_active:
 
         def get_individual_risks(input_vals_list):
             all_v = st.session_state['global_process_vars']
+            # [수정] calculate_total_risk와 동일하게 최종 방어적 반올림 적용 (두 함수 결과가 항상 일치하도록)
+            input_vals_list = [round(float(v), 2) for v in input_vals_list]
             df_input = pd.DataFrame([input_vals_list], columns=all_v)
             risks = {}
             for target_key, model in st.session_state['models'].items():
