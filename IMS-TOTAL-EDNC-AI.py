@@ -2048,7 +2048,9 @@ if is_active:
             avg_defect_risk = total_weighted_risk / weight_sum
             # [수정] 목표값(정확히 일치해야 0점) 방식 -> 허용범위(min~max) 방식으로 변경.
             # 범위 안이면 벌점 0, 범위를 벗어나면 벗어난 거리에 비례해 완만하게(선형) 증가.
-            # 벌점은 범위 폭으로 정규화해 변수마다 스케일이 달라도 공평하게 비교됨.
+            # [수정] 벌점은 전문가가 설정한 (좁을 수 있는) 범위폭이 아니라, 그 변수의 전체 데이터
+            # 관측범위로 정규화함. 전문가 범위를 좁게 잡을수록 벌점이 더 가팔라지던 문제를 없애기 위함
+            # -> 범위를 얼마나 좁게 잡든 벌점 민감도는 그 변수 고유의 스케일에서 항상 일정하게 유지됨.
             penalty = 0.0
             for v, c in st.session_state['expert_constraints'].items():
                 if v not in all_v:
@@ -2057,16 +2059,12 @@ if is_active:
                 _cmin, _cmax = c.get('min'), c.get('max')
                 if _cmin is None or _cmax is None:
                     continue  # 구버전 데이터(목표값 방식) 잔재는 무시
-                # [수정] min=max(또는 폭이 거의 0)로 설정하면 벌점이 순식간에 폭발해 위험도가
-                # 바로 100%로 튀는 문제가 있어, 그 변수의 데이터 관측범위의 5%를 최소 폭(floor)으로
-                # 깔아둠 -> "정확히 이 값"으로 설정해도 완만하게(급격하지 않게) 벌점이 증가하도록 함
                 _gb = st.session_state['global_bounds'].get(v, (_cmin, _cmax))
-                _floor = max(abs(float(_gb[1]) - float(_gb[0])) * 0.05, 1e-6)
-                _crange = max(_cmax - _cmin, _floor)
+                _normrange = max(abs(float(_gb[1]) - float(_gb[0])), 1e-6)
                 if _val < _cmin:
-                    penalty += (_cmin - _val) / _crange
+                    penalty += (_cmin - _val) / _normrange
                 elif _val > _cmax:
-                    penalty += (_val - _cmax) / _crange
+                    penalty += (_val - _cmax) / _normrange
                 # 범위 안이면 벌점 0
             return min(1.0, avg_defect_risk + (penalty * st.session_state['expert_reliability']))
 
