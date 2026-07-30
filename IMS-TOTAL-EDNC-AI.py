@@ -1976,18 +1976,19 @@ if is_active:
                     if f"expert_max_{v_name}" not in st.session_state:
                         st.session_state[f"expert_max_{v_name}"] = _def_max
 
-                    _rng = st.slider(
-                        f"{v_name}{L['lbl_target_range']}",
-                        min_value=_gmin, max_value=_gmax,
-                        value=(_def_min, _def_max),
-                        key=f"expert_range_{v_name}",
-                        on_change=_on_expert_range_change,
-                        args=(v_name, _gmin, _gmax)
-                    )
+                    _sl_col, _kmin_col, _kmax_col = st.columns([2, 1, 1])
+                    with _sl_col:
+                        _rng = st.slider(
+                            f"{v_name}{L['lbl_target_range']}",
+                            min_value=_gmin, max_value=_gmax,
+                            value=(_def_min, _def_max),
+                            key=f"expert_range_{v_name}",
+                            on_change=_on_expert_range_change,
+                            args=(v_name, _gmin, _gmax)
+                        )
                     st.session_state['expert_constraints'][v_name] = {'min': float(_rng[0]), 'max': float(_rng[1])}
 
-                    # [추가] Min/Max 직접 키인 입력란
-                    _kmin_col, _kmax_col = st.columns(2)
+                    # [수정] Min/Max 직접 키인 입력란을 슬라이더 옆으로 배치
                     with _kmin_col:
                         st.number_input(
                             "Min", min_value=_gmin, max_value=_gmax,
