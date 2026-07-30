@@ -370,10 +370,9 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         _ok_label = "OK" if _is_en_task else "확인"
         _ok_key   = f"_modal_ok_{task_key}"
 
-        # 모달 박스: 아이콘 + 메시지만 (버튼 영역은 아래 여백으로 비워둠)
+        # 모달 박스: 메시지만 (버튼 영역은 아래 여백으로 비워둠)
         st.markdown(f"""
         <div id="mbox_{_uid}">
-            <span class="modal_icon_{_uid}">✅</span>
             <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:48px;">{done_msg}</div>
         </div>
         <style>
@@ -1855,12 +1854,14 @@ if is_active:
             def _on_sl_a_change(var, ver):
                 val = st.session_state.get(f"sl_{var}_{ver}")
                 if val is not None:
+                    # [수정] 슬라이더 step 스냅 과정의 부동소수점 미세 오차 제거 (예: 244.99999999999997 -> 245.0)
+                    val = round(float(val), 4)
                     st.session_state['current_inputs'][var] = val
-                    st.session_state[f"ni_a_{var}"] = float(val)
+                    st.session_state[f"ni_a_{var}"] = val
 
             def _on_ni_a_change(var, sl_min, sl_max, ver):
                 raw = st.session_state.get(f"ni_a_{var}", sl_min)
-                clamped = float(max(sl_min, min(raw, sl_max)))
+                clamped = round(float(max(sl_min, min(raw, sl_max))), 4)
                 st.session_state['current_inputs'][var] = clamped
                 st.session_state[f"sl_{var}_{ver}"] = clamped
 
@@ -1881,7 +1882,7 @@ if is_active:
 
                     sl_col, ni_col = st.columns([3, 1])
                     with sl_col:
-                        st.session_state['current_inputs'][var] = st.slider(
+                        _sl_val = st.slider(
                             f"{var}",
                             sl_min, sl_max, curr_clamped,
                             step=step_v,
@@ -1889,6 +1890,8 @@ if is_active:
                             on_change=_on_sl_a_change,
                             args=(var, st.session_state['ver'])
                         )
+                        # [수정] step 스냅 부동소수점 노이즈 제거 후 저장
+                        st.session_state['current_inputs'][var] = round(float(_sl_val), 4)
                     with ni_col:
                         ni_val = st.number_input(
                             "Value",
@@ -1901,7 +1904,8 @@ if is_active:
                             args=(var, sl_min, sl_max, st.session_state['ver']),
                             label_visibility="visible"
                         )
-                        st.session_state['current_inputs'][var] = ni_val
+                        # [수정] 동일하게 부동소수점 노이즈 제거
+                        st.session_state['current_inputs'][var] = round(float(ni_val), 4)
 
         # B. 전문가 추천 조건 설정
         st.markdown(
