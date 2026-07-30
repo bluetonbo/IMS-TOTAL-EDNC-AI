@@ -1954,7 +1954,7 @@ if is_active:
                     # [수정] 슬라이더/Min-Max 입력 허용범위를 데이터 관측 범위보다 위아래 20%씩 넓힘.
                     # 전문가가 학습 데이터에 없던 값(예: 데이터에 없던 더 넓은/좁은 안전범위)도
                     # 설정할 수 있도록 하기 위함.
-                    _margin = (_gmax - _gmin) * 0.2
+                    _margin = (_gmax - _gmin) * 0.5
                     _wmin, _wmax = _gmin - _margin, _gmax + _margin
 
                     _existing = st.session_state['expert_constraints'].get(v_name)
