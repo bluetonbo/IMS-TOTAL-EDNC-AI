@@ -1914,7 +1914,7 @@ if is_active:
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_b_expert"]}</div>',
             unsafe_allow_html=True
         )
-        _ms_col, _, _ = st.columns([1, 1, 1])
+        _ms_col, _ctrl_col = st.columns([1, 3])
         with _ms_col:
             selected_expert_vars = st.multiselect(
                 L['lbl_constant'],
@@ -1945,9 +1945,8 @@ if is_active:
             st.session_state[f"expert_max_{v_name}"] = _mx
 
         if selected_expert_vars:
-            cols_b = st.columns(3)
-            for i, v_name in enumerate(selected_expert_vars):
-                with cols_b[i % 3]:
+            with _ctrl_col:
+                for v_name in selected_expert_vars:
                     _gb = st.session_state['global_bounds'].get(v_name, (0.0, 100.0))
                     _gmin, _gmax = float(_gb[0]), float(_gb[1])
                     if _gmin == _gmax:
