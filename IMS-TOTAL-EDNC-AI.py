@@ -1921,6 +1921,29 @@ if is_active:
                 options=st.session_state['ui_display_vars'],
                 default=list(st.session_state['expert_constraints'].keys())
             )
+
+        # [추가] 슬라이더 ↔ Min/Max 숫자입력 콜백 (섹션 A와 동일한 방식으로 양방향 동기화)
+        def _on_expert_range_change(v_name, gmin, gmax):
+            _rv = st.session_state.get(f"expert_range_{v_name}")
+            if _rv is not None:
+                _mn, _mx = round(float(_rv[0]), 4), round(float(_rv[1]), 4)
+                st.session_state['expert_constraints'][v_name] = {'min': _mn, 'max': _mx}
+                st.session_state[f"expert_min_{v_name}"] = _mn
+                st.session_state[f"expert_max_{v_name}"] = _mx
+
+        def _on_expert_minmax_change(v_name, gmin, gmax):
+            _mn = float(st.session_state.get(f"expert_min_{v_name}", gmin))
+            _mx = float(st.session_state.get(f"expert_max_{v_name}", gmax))
+            _mn = max(gmin, min(_mn, gmax))
+            _mx = max(gmin, min(_mx, gmax))
+            if _mn > _mx:
+                _mn, _mx = _mx, _mn
+            _mn, _mx = round(_mn, 4), round(_mx, 4)
+            st.session_state['expert_constraints'][v_name] = {'min': _mn, 'max': _mx}
+            st.session_state[f"expert_range_{v_name}"] = (_mn, _mx)
+            st.session_state[f"expert_min_{v_name}"] = _mn
+            st.session_state[f"expert_max_{v_name}"] = _mx
+
         if selected_expert_vars:
             cols_b = st.columns(3)
             for i, v_name in enumerate(selected_expert_vars):
@@ -1938,17 +1961,51 @@ if is_active:
                         if _def_min > _def_max:
                             _def_min, _def_max = _gmin, _gmax
                     else:
-                        # [수정] 기본값은 학습 데이터에서 실제로 관측된 범위(전체) — 임의의 숫자를 추측해서
-                        # 넣지 않고, 사용자가 직접 좁혀가도록 안전하게 전체 범위로 시작
-                        _def_min, _def_max = _gmin, _gmax
+                        # [수정] 기본값은 '현재(초기) 조건값'을 중심으로 데이터 범위의 ±10%를 폭으로 잡음
+                        # -> 슬라이더 중간이 항상 초기 조건값이 되도록
+                        _center = float(st.session_state['current_inputs'].get(v_name, (_gmin + _gmax) / 2))
+                        _center = max(_gmin, min(_center, _gmax))
+                        _span = max((_gmax - _gmin) * 0.1, 1e-6)
+                        _def_min = max(_gmin, _center - _span)
+                        _def_max = min(_gmax, _center + _span)
+                        if _def_min >= _def_max:
+                            _def_min, _def_max = _gmin, _gmax
+
+                    if f"expert_min_{v_name}" not in st.session_state:
+                        st.session_state[f"expert_min_{v_name}"] = _def_min
+                    if f"expert_max_{v_name}" not in st.session_state:
+                        st.session_state[f"expert_max_{v_name}"] = _def_max
 
                     _rng = st.slider(
                         f"{v_name}{L['lbl_target_range']}",
                         min_value=_gmin, max_value=_gmax,
                         value=(_def_min, _def_max),
-                        key=f"expert_range_{v_name}"
+                        key=f"expert_range_{v_name}",
+                        on_change=_on_expert_range_change,
+                        args=(v_name, _gmin, _gmax)
                     )
                     st.session_state['expert_constraints'][v_name] = {'min': float(_rng[0]), 'max': float(_rng[1])}
+
+                    # [추가] Min/Max 직접 키인 입력란
+                    _kmin_col, _kmax_col = st.columns(2)
+                    with _kmin_col:
+                        st.number_input(
+                            "Min", min_value=_gmin, max_value=_gmax,
+                            step=max((_gmax - _gmin) / 100.0, 0.1),
+                            format="%.2f",
+                            key=f"expert_min_{v_name}",
+                            on_change=_on_expert_minmax_change,
+                            args=(v_name, _gmin, _gmax)
+                        )
+                    with _kmax_col:
+                        st.number_input(
+                            "Max", min_value=_gmin, max_value=_gmax,
+                            step=max((_gmax - _gmin) / 100.0, 0.1),
+                            format="%.2f",
+                            key=f"expert_max_{v_name}",
+                            on_change=_on_expert_minmax_change,
+                            args=(v_name, _gmin, _gmax)
+                        )
         st.session_state['expert_reliability'] = (
             st.slider(L['lbl_expert_rel'], 0, 100, int(st.session_state['expert_reliability'] * 100)) / 100.0
         )
