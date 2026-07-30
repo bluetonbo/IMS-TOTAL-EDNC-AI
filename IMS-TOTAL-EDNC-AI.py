@@ -1862,25 +1862,35 @@ if is_active:
                     st.session_state[f"ni_a_{var}"] = val
 
             def _on_ni_a_change(var, sl_min, sl_max, ver):
+                # [수정] 더 이상 sl_min~sl_max로 강제 클램프하지 않음 (자유 입력 허용)
                 raw = st.session_state.get(f"ni_a_{var}", sl_min)
-                clamped = round(float(max(sl_min, min(raw, sl_max))), 4)
-                st.session_state['current_inputs'][var] = clamped
-                st.session_state[f"sl_{var}_{ver}"] = clamped
+                val = round(float(raw), 4)
+                st.session_state['current_inputs'][var] = val
+                st.session_state[f"sl_{var}_{ver}"] = val
 
             cols = st.columns(3)
             for i, var in enumerate(st.session_state['ui_display_vars']):
                 with cols[i % 3]:
                     curr_val = st.session_state['current_inputs'].get(var, 0)
                     bounds   = st.session_state['global_bounds'].get(var, (0.0, 100.0))
-                    sl_min   = float(bounds[0])
-                    sl_max   = float(bounds[1])
-                    if sl_min == sl_max:
-                        sl_max = sl_min + 1.0
-                    curr_clamped = float(max(sl_min, min(float(curr_val), sl_max)))
-                    step_v = max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1)
+                    base_min = float(bounds[0])
+                    base_max = float(bounds[1])
+                    if base_min == base_max:
+                        base_max = base_min + 1.0
 
                     if f"ni_a_{var}" not in st.session_state:
-                        st.session_state[f"ni_a_{var}"] = curr_clamped
+                        st.session_state[f"ni_a_{var}"] = float(max(base_min, min(float(curr_val), base_max)))
+
+                    # [수정] 키인한 값이 데이터 관측범위를 벗어나면 슬라이더 범위 자체가 그 값을
+                    # 포함하도록 자동으로 넓어지게 함 (Value 입력란은 자유 입력, 슬라이더는 항상 동기화)
+                    _cur_ni_val = float(st.session_state.get(f"ni_a_{var}", curr_val))
+                    sl_min = min(base_min, _cur_ni_val, float(curr_val))
+                    sl_max = max(base_max, _cur_ni_val, float(curr_val))
+                    if sl_min >= sl_max:
+                        sl_min, sl_max = base_min, base_max
+
+                    curr_clamped = float(max(sl_min, min(float(curr_val), sl_max)))
+                    step_v = max((sl_max - sl_min) / 100.0, 1.0) if (sl_max - sl_min) >= 100 else max((sl_max - sl_min) / 100.0, 0.1)
 
                     sl_col, ni_col = st.columns([3, 1])
                     with sl_col:
@@ -1897,7 +1907,6 @@ if is_active:
                     with ni_col:
                         ni_val = st.number_input(
                             "Value",
-                            min_value=sl_min, max_value=sl_max,
                             value=float(st.session_state['current_inputs'].get(var, curr_clamped)),
                             step=step_v,
                             format="%.2f",
