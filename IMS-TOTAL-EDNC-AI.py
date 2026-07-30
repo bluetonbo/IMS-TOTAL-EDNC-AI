@@ -588,6 +588,7 @@ LANG_DICT = {
         "sec_c_sub2": "C. Expert Recommended Condition Settings",
         "lbl_constant": "Select Variables to Keep Constant",
         "lbl_target": " Target",
+        "lbl_target_range": " Safe Range",
         "lbl_expert_rel": "Expert Guideline Reliability (%)",
         "sec_d": "D. Optimization & Intelligent Diagnosis",
         "btn_diagnose": "Diagnose Current Risk",
@@ -679,6 +680,7 @@ LANG_DICT = {
         "sec_c_sub2": "C. 전문가 추천 조건 설정",
         "lbl_constant": "고정 상태를 유지할 변수 선택",
         "lbl_target": " 목표치",
+        "lbl_target_range": " 허용범위",
         "lbl_expert_rel": "전문가 가이드라인 신뢰도 (%)",
         "sec_d": "D. 최적화 및 지능형 진단",
         "btn_diagnose": "현재 리스크 진단",
@@ -1907,7 +1909,7 @@ if is_active:
                         # [수정] 동일하게 부동소수점 노이즈 제거
                         st.session_state['current_inputs'][var] = round(float(ni_val), 4)
 
-        # B. 전문가 추천 조건 설정
+        # B. 전문가 추천 조건 설정 (허용범위 방식)
         st.markdown(
             f'<div class="section-title"><span class="square-icon"></span>{L["sec_b_expert"]}</div>',
             unsafe_allow_html=True
@@ -1923,14 +1925,30 @@ if is_active:
             cols_b = st.columns(3)
             for i, v_name in enumerate(selected_expert_vars):
                 with cols_b[i % 3]:
-                    st.session_state['expert_constraints'].setdefault(
-                        v_name, {'limit': st.session_state['current_inputs'].get(v_name, 0)}
+                    _gb = st.session_state['global_bounds'].get(v_name, (0.0, 100.0))
+                    _gmin, _gmax = float(_gb[0]), float(_gb[1])
+                    if _gmin == _gmax:
+                        _gmax = _gmin + 1.0
+
+                    _existing = st.session_state['expert_constraints'].get(v_name)
+                    if _existing and 'min' in _existing and 'max' in _existing:
+                        # 이미 범위로 설정된 값이 있으면 그대로 유지 (데이터 범위를 벗어나지 않게 클램프)
+                        _def_min = max(_gmin, min(float(_existing['min']), _gmax))
+                        _def_max = max(_gmin, min(float(_existing['max']), _gmax))
+                        if _def_min > _def_max:
+                            _def_min, _def_max = _gmin, _gmax
+                    else:
+                        # [수정] 기본값은 학습 데이터에서 실제로 관측된 범위(전체) — 임의의 숫자를 추측해서
+                        # 넣지 않고, 사용자가 직접 좁혀가도록 안전하게 전체 범위로 시작
+                        _def_min, _def_max = _gmin, _gmax
+
+                    _rng = st.slider(
+                        f"{v_name}{L['lbl_target_range']}",
+                        min_value=_gmin, max_value=_gmax,
+                        value=(_def_min, _def_max),
+                        key=f"expert_range_{v_name}"
                     )
-                    st.session_state['expert_constraints'][v_name]['limit'] = st.number_input(
-                        f"{v_name}{L['lbl_target']}",
-                        value=int(st.session_state['expert_constraints'][v_name]['limit']),
-                        step=1
-                    )
+                    st.session_state['expert_constraints'][v_name] = {'min': float(_rng[0]), 'max': float(_rng[1])}
         st.session_state['expert_reliability'] = (
             st.slider(L['lbl_expert_rel'], 0, 100, int(st.session_state['expert_reliability'] * 100)) / 100.0
         )
@@ -1952,11 +1970,23 @@ if is_active:
                     weight_sum += weight
             weight_sum = weight_sum if weight_sum > 0 else 1e-9
             avg_defect_risk = total_weighted_risk / weight_sum
-            penalty = sum(
-                abs(input_vals_list[list(all_v).index(v)] - c['limit']) / (c['limit'] + 1e-9)
-                for v, c in st.session_state['expert_constraints'].items()
-                if v in all_v
-            )
+            # [수정] 목표값(정확히 일치해야 0점) 방식 -> 허용범위(min~max) 방식으로 변경.
+            # 범위 안이면 벌점 0, 범위를 벗어나면 벗어난 거리에 비례해 완만하게(선형) 증가.
+            # 벌점은 범위 폭으로 정규화해 변수마다 스케일이 달라도 공평하게 비교됨.
+            penalty = 0.0
+            for v, c in st.session_state['expert_constraints'].items():
+                if v not in all_v:
+                    continue
+                _val = input_vals_list[list(all_v).index(v)]
+                _cmin, _cmax = c.get('min'), c.get('max')
+                if _cmin is None or _cmax is None:
+                    continue  # 구버전 데이터(목표값 방식) 잔재는 무시
+                _crange = max(_cmax - _cmin, 1e-9)
+                if _val < _cmin:
+                    penalty += (_cmin - _val) / _crange
+                elif _val > _cmax:
+                    penalty += (_val - _cmax) / _crange
+                # 범위 안이면 벌점 0
             return min(1.0, avg_defect_risk + (penalty * st.session_state['expert_reliability']))
 
         def get_individual_risks(input_vals_list):
