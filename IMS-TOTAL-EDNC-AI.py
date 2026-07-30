@@ -300,7 +300,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         box-shadow:0 14px 45px rgba(0,0,0,0.95);
         width:{_BOX_W}px;max-width:80vw;
         box-sizing:border-box;
-        padding:20px 20px 30px 20px;
+        padding:30px 20px 30px 20px;
         text-align:center;
     }}
     .modal_icon_{_uid} {{
