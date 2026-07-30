@@ -872,6 +872,16 @@ if 'models' not in st.session_state:
         'algo_summary': {}   # [추가] 학습 완료 후 알고리즘 선택 결과 요약
     })
 
+# [수정] 슬라이더/숫자입력 위젯이 이미 이번 실행(run)에서 생성된 뒤에는
+# st.session_state[key]를 직접 재할당할 수 없으므로(StreamlitAPIException),
+# 최적화/재학습 직후에는 '대기용' 딕셔너리에만 값을 담아두고 st.rerun()으로 넘어가서,
+# 위젯이 아직 생성되지 않은 이번 스크립트 최상단(여기)에서 안전하게 반영한다.
+_pending_sync = st.session_state.pop('_pending_ni_sync', None)
+if _pending_sync:
+    for _pv, _pval in _pending_sync.items():
+        st.session_state[f"ni_a_{_pv}"] = float(_pval)
+        st.session_state[f"sl_{_pv}_{st.session_state['ver']}"] = float(_pval)
+
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Noto+Sans+KR:wght@300;400;700&display=swap');
@@ -2114,9 +2124,11 @@ if is_active:
                     # 최적화된 파라미터 값을 현재 입력 상태에 덮어씌우고 버전을 올려 슬라이더 연동 처리
                     st.session_state['current_inputs'].update(opt_dict)
                     st.session_state['ver'] += 1
-                    # [수정] 숫자입력(Value) 위젯 키는 버전 접미사가 없어 ver만으로는 갱신되지 않으므로 직접 동기화
-                    for _v, _val in opt_dict.items():
-                        st.session_state[f"ni_a_{_v}"] = float(_val)
+                    # [수정] 이 시점에는 숫자입력 위젯이 이미 이번 실행에서 생성된 뒤라
+                    # st.session_state[key] 직접 재할당이 불가능(StreamlitAPIException).
+                    # 대기용 딕셔너리에 저장해두고, 바로 아래 st.rerun() 이후
+                    # 스크립트 최상단에서 안전하게 반영되도록 한다.
+                    st.session_state['_pending_ni_sync'] = {v: float(val) for v, val in opt_dict.items()}
 
                     new_row = {v: opt_dict.get(v, 0) for v in all_v}
                     for target_key, r_val in st.session_state['last_defect_risks'].items():
