@@ -1934,8 +1934,6 @@ if is_active:
         def _on_expert_minmax_change(v_name, gmin, gmax):
             _mn = float(st.session_state.get(f"expert_min_{v_name}", gmin))
             _mx = float(st.session_state.get(f"expert_max_{v_name}", gmax))
-            _mn = max(gmin, min(_mn, gmax))
-            _mx = max(gmin, min(_mx, gmax))
             if _mn > _mx:
                 _mn, _mx = _mx, _mn
             _mn, _mx = round(_mn, 4), round(_mx, 4)
@@ -1951,19 +1949,16 @@ if is_active:
                     _gmin, _gmax = float(_gb[0]), float(_gb[1])
                     if _gmin == _gmax:
                         _gmax = _gmin + 1.0
-                    # [수정] 슬라이더/Min-Max 입력 허용범위를 데이터 관측 범위보다 위아래 20%씩 넓힘.
-                    # 전문가가 학습 데이터에 없던 값(예: 데이터에 없던 더 넓은/좁은 안전범위)도
-                    # 설정할 수 있도록 하기 위함.
+                    # [수정] 슬라이더 기본 허용범위: 데이터 관측 범위보다 위아래 50%씩 넓게 시작
                     _margin = (_gmax - _gmin) * 0.5
-                    _wmin, _wmax = _gmin - _margin, _gmax + _margin
+                    _bmin, _bmax = _gmin - _margin, _gmax + _margin
 
                     _existing = st.session_state['expert_constraints'].get(v_name)
                     if _existing and 'min' in _existing and 'max' in _existing:
-                        # 이미 범위로 설정된 값이 있으면 그대로 유지 (넓힌 허용범위 안에서 클램프)
-                        _def_min = max(_wmin, min(float(_existing['min']), _wmax))
-                        _def_max = max(_wmin, min(float(_existing['max']), _wmax))
+                        _def_min = float(_existing['min'])
+                        _def_max = float(_existing['max'])
                         if _def_min > _def_max:
-                            _def_min, _def_max = _gmin, _gmax
+                            _def_min, _def_max = _def_max, _def_min
                     else:
                         # [수정] 기본값은 '현재(초기) 조건값'을 중심으로 데이터 범위의 ±10%를 폭으로 잡음
                         # -> 슬라이더 중간이 항상 초기 조건값이 되도록
@@ -1980,6 +1975,15 @@ if is_active:
                     if f"expert_max_{v_name}" not in st.session_state:
                         st.session_state[f"expert_max_{v_name}"] = _def_max
 
+                    # [수정] 키인 값(위/기본 범위 포함)이 기본 슬라이더 범위를 벗어나면
+                    # 슬라이더 자체가 그 값을 포함하도록 자동으로 넓어지게 함 (범위 자유 입력 지원)
+                    _cur_min_val = float(st.session_state.get(f"expert_min_{v_name}", _def_min))
+                    _cur_max_val = float(st.session_state.get(f"expert_max_{v_name}", _def_max))
+                    _wmin = min(_bmin, _cur_min_val, _def_min)
+                    _wmax = max(_bmax, _cur_max_val, _def_max)
+                    if _wmin >= _wmax:
+                        _wmin, _wmax = _bmin, _bmax
+
                     _sl_col, _kmin_col, _kmax_col = st.columns([2, 1, 1])
                     with _sl_col:
                         _rng = st.slider(
@@ -1992,10 +1996,10 @@ if is_active:
                         )
                     st.session_state['expert_constraints'][v_name] = {'min': float(_rng[0]), 'max': float(_rng[1])}
 
-                    # [수정] Min/Max 직접 키인 입력란을 슬라이더 옆으로 배치 (넓힌 허용범위 적용)
+                    # [수정] Min/Max 직접 키인 입력란: 상하한 제한 완전 제거 (자유 입력)
                     with _kmin_col:
                         st.number_input(
-                            "Min", min_value=_wmin, max_value=_wmax,
+                            "Min",
                             step=max((_wmax - _wmin) / 100.0, 0.1),
                             format="%.2f",
                             key=f"expert_min_{v_name}",
@@ -2004,7 +2008,7 @@ if is_active:
                         )
                     with _kmax_col:
                         st.number_input(
-                            "Max", min_value=_wmin, max_value=_wmax,
+                            "Max",
                             step=max((_wmax - _wmin) / 100.0, 0.1),
                             format="%.2f",
                             key=f"expert_max_{v_name}",
