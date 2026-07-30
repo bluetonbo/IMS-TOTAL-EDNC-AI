@@ -300,7 +300,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         box-shadow:0 14px 45px rgba(0,0,0,0.95);
         width:{_BOX_W}px;max-width:80vw;
         box-sizing:border-box;
-        padding:20px 20px 18px 20px;
+        padding:20px 20px 30px 20px;
         text-align:center;
     }}
     .modal_icon_{_uid} {{
@@ -374,7 +374,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         st.markdown(f"""
         <div id="mbox_{_uid}">
             <span class="modal_icon_{_uid}">✅</span>
-            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:38px;">{done_msg}</div>
+            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:48px;">{done_msg}</div>
         </div>
         <style>
         /* Streamlit 확인 버튼을 모달 박스 하단 위에 완전히 겹치도록 고정 */
@@ -2122,8 +2122,13 @@ if is_active:
                     ]
                     opt_dict = {v: int(round(val)) for v, val in zip(all_v, final_x)}
 
-                    st.session_state['last_res_val'] = calculate_total_risk(final_x)
-                    st.session_state['last_defect_risks'] = get_individual_risks(final_x)
+                    # [수정] 표시되는 최적화 위험도는 반드시 '실제로 적용되는(반올림된) 값' 기준으로 계산해야
+                    # 함. 연속값(final_x) 기준으로 계산하면, 반올림된 조건으로 재진단했을 때
+                    # 다른 위험도가 나와 사용자가 혼란스러워짐 (예: 최적화 직후 10% -> 재진단 시 15%)
+                    final_x_rounded = [opt_dict[v] for v in all_v]
+
+                    st.session_state['last_res_val'] = calculate_total_risk(final_x_rounded)
+                    st.session_state['last_defect_risks'] = get_individual_risks(final_x_rounded)
                     st.session_state['last_opt_df'] = pd.DataFrame([
                         {v: opt_dict.get(v, 0) for v in st.session_state['ui_display_vars']}
                     ])
@@ -2583,7 +2588,9 @@ if is_active:
                         return None
                     _fx = [np.clip(v, _bnds[i][0], _bnds[i][1]) for i, v in enumerate(_best_res.x)]
                     _opt_dict = {v: int(round(val)) for v, val in zip(_all_v, _fx)}
-                    _df_res = pd.DataFrame([_fx], columns=_all_v)
+                    # [수정] 반올림된(실제 적용) 값 기준으로 달성 위험도를 계산해 재진단 시 값이 안 맞는 문제 방지
+                    _fx_rounded = [_opt_dict[v] for v in _all_v]
+                    _df_res = pd.DataFrame([_fx_rounded], columns=_all_v)
                     _achieved = {}
                     for _tk2, _mdl in st.session_state['models'].items():
                         _sc = st.session_state['scalers'][_tk2]
