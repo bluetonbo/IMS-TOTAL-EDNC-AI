@@ -279,7 +279,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         return st.session_state.pop(_result_key, None)
 
     _uid = task_key.replace("-", "_").replace(".", "_")
-    _BOX_W = 460
+    _BOX_W = 240
 
     # ── 공통 스타일 + backdrop ──────────────────────────────────
     st.markdown(f"""<style>
@@ -296,35 +296,35 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         z-index:99995;
         background:#0d1525;
         border:1px solid #1e3a5f;
-        border-radius:18px;
-        box-shadow:0 28px 90px rgba(0,0,0,0.95);
-        width:{_BOX_W}px;max-width:92vw;
+        border-radius:12px;
+        box-shadow:0 14px 45px rgba(0,0,0,0.95);
+        width:{_BOX_W}px;max-width:80vw;
         box-sizing:border-box;
-        padding:44px 44px 40px 44px;
+        padding:20px 20px 18px 20px;
         text-align:center;
     }}
     .modal_icon_{_uid} {{
-        font-size:2.6rem;
-        margin-bottom:18px;
+        font-size:1.4rem;
+        margin-bottom:8px;
         display:block;
     }}
     .modal_msg_{_uid} {{
         font-weight:700;
-        font-size:1.18rem;
-        line-height:1.5;
-        margin-bottom:4px;
+        font-size:0.78rem;
+        line-height:1.4;
+        margin-bottom:2px;
     }}
     .modal_sub_{_uid} {{
         color:#64748b;
-        font-size:0.82rem;
-        margin-top:8px;
+        font-size:0.6rem;
+        margin-top:5px;
     }}
     .mprog_track_{_uid} {{
-        width:100%;height:8px;
+        width:100%;height:5px;
         background:#1e293b;
         border-radius:20px;
         overflow:hidden;
-        margin:20px 0 8px 0;
+        margin:10px 0 5px 0;
     }}
     .mprog_fill_{_uid} {{
         height:100%;border-radius:20px;
@@ -332,25 +332,25 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         transition:width 0.4s ease;
     }}
     .mpct_{_uid} {{
-        color:#94a3b8;font-size:0.8rem;
+        color:#94a3b8;font-size:0.6rem;
         margin-bottom:0;
     }}
     /* 확인 버튼 위치 고정 */
     [data-modal-ok="{_uid}"] {{
         position:fixed !important;
-        top:calc(50% + 90px) !important;
+        top:calc(50% + 44px) !important;
         left:50% !important;
         transform:translateX(-50%) !important;
-        width:{_BOX_W - 88}px !important;
-        max-width:calc(92vw - 88px) !important;
+        width:{_BOX_W - 40}px !important;
+        max-width:calc(80vw - 40px) !important;
         z-index:99996 !important;
     }}
     [data-modal-ok="{_uid}"] button {{
         width:100% !important;
-        padding:16px !important;
-        font-size:1.05rem !important;
+        padding:8px !important;
+        font-size:0.75rem !important;
         font-weight:700 !important;
-        border-radius:12px !important;
+        border-radius:8px !important;
         background:linear-gradient(135deg,#10b981,#059669) !important;
         border:none !important;
     }}
@@ -374,26 +374,26 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         st.markdown(f"""
         <div id="mbox_{_uid}">
             <span class="modal_icon_{_uid}">✅</span>
-            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:80px;">{done_msg}</div>
+            <div class="modal_msg_{_uid}" style="color:#10b981; margin-bottom:38px;">{done_msg}</div>
         </div>
         <style>
         /* Streamlit 확인 버튼을 모달 박스 하단 위에 완전히 겹치도록 고정 */
         div[data-testid="stButton"]:has(> button[kind="primary"]) {{
             position: fixed !important;
-            top: calc(50% + 60px) !important;
+            top: calc(50% + 28px) !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
-            width: {_BOX_W - 88}px !important;
-            max-width: calc(92vw - 80px) !important;
+            width: {_BOX_W - 40}px !important;
+            max-width: calc(80vw - 36px) !important;
             z-index: 99999 !important;
             pointer-events: all !important;
         }}
         div[data-testid="stButton"]:has(> button[kind="primary"]) > button {{
             width: 100% !important;
-            padding: 18px 0 !important;
-            font-size: 1.08rem !important;
+            padding: 9px 0 !important;
+            font-size: 0.78rem !important;
             font-weight: 700 !important;
-            border-radius: 12px !important;
+            border-radius: 8px !important;
             background: linear-gradient(135deg, #10b981, #059669) !important;
             border: none !important;
             cursor: pointer !important;
@@ -2021,11 +2021,11 @@ if is_active:
                     /* backdrop: body::before 방식 사용 */
                     #optmbox {{position:fixed;top:50%;left:50%;
                         transform:translate(-50%,-50%);z-index:99995;
-                        background:#0d1525;border:1px solid #1e3a5f;border-radius:18px;
-                        box-shadow:0 28px 90px rgba(0,0,0,0.95);
-                        width:480px;max-width:92vw;padding:44px 44px 40px;text-align:center;}}
-                    .optprog {{width:100%;height:8px;background:#1e293b;border-radius:20px;
-                        overflow:hidden;margin:20px 0 8px 0;}}
+                        background:#0d1525;border:1px solid #1e3a5f;border-radius:12px;
+                        box-shadow:0 14px 45px rgba(0,0,0,0.95);
+                        width:250px;max-width:80vw;padding:20px 20px 18px;text-align:center;}}
+                    .optprog {{width:100%;height:5px;background:#1e293b;border-radius:20px;
+                        overflow:hidden;margin:10px 0 5px 0;}}
                     .optfill {{height:100%;border-radius:20px;
                         background:linear-gradient(90deg,#00e5ff,#10b981);
                         width:{pct}%;transition:width 0.4s ease;}}
@@ -2039,15 +2039,15 @@ if is_active:
                     }}
                     </style>
                     <div id="optmbox">
-                        <div style="font-size:2.4rem;margin-bottom:16px;">
+                        <div style="font-size:1.3rem;margin-bottom:8px;">
                             <span class="opt_modal_spin_icon">🔄</span>
                         </div>
-                        <div style="font-weight:700;color:#38bdf8;font-size:1.15rem;margin-bottom:4px;">
+                        <div style="font-weight:700;color:#38bdf8;font-size:0.76rem;margin-bottom:2px;">
                             {algo_msg}
                         </div>
                         <div class="optprog"><div class="optfill"></div></div>
-                        <div style="color:#94a3b8;font-size:0.8rem;margin-bottom:6px;">{pct}%</div>
-                        <div style="color:#64748b;font-size:0.78rem;">{detail_msg}</div>
+                        <div style="color:#94a3b8;font-size:0.6rem;margin-bottom:4px;">{pct}%</div>
+                        <div style="color:#64748b;font-size:0.58rem;">{detail_msg}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
