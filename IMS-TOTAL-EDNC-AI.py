@@ -379,7 +379,7 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
         /* Streamlit 확인 버튼을 모달 박스 하단 위에 완전히 겹치도록 고정 */
         div[data-testid="stButton"]:has(> button[kind="primary"]) {{
             position: fixed !important;
-            top: calc(50% - 12px) !important;
+            top: calc(50% + 6px) !important;
             left: 50% !important;
             transform: translateX(-50%) !important;
             width: {_BOX_W - 40}px !important;
@@ -1314,16 +1314,16 @@ with st.sidebar:
                 position:fixed;top:50%;left:50%;
                 transform:translate(-50%,-50%);
                 z-index:99999;background:#0d1525;
-                border:1px solid #1e3a5f;border-radius:16px;
-                box-shadow:0 24px 80px rgba(0,0,0,0.9);
-                width:480px;max-width:92vw;
+                border:1px solid #1e3a5f;border-radius:12px;
+                box-shadow:0 12px 40px rgba(0,0,0,0.9);
+                width:250px;max-width:80vw;
                 box-sizing:border-box;
-                padding:40px 40px 36px 40px;
+                padding:20px 20px 18px 20px;
                 text-align:center;pointer-events:all;
             }}
             .train_prog_track {{
-                width:100%;height:8px;background:#1e293b;
-                border-radius:20px;overflow:hidden;margin:16px 0 10px 0;
+                width:100%;height:5px;background:#1e293b;
+                border-radius:20px;overflow:hidden;margin:8px 0 5px 0;
             }}
             .train_prog_fill {{
                 height:100%;border-radius:20px;
@@ -1340,17 +1340,17 @@ with st.sidebar:
             }}
             </style>
             <div id="train_modal_box">
-                <div style="font-size:1.8rem;margin-bottom:12px;">
+                <div style="font-size:1.0rem;margin-bottom:7px;">
                     <span class="train_modal_spin_icon">🔄</span>
                 </div>
-                <div style="font-weight:700;color:#00e5ff;font-size:1.1rem;margin-bottom:6px;">
+                <div style="font-weight:700;color:#00e5ff;font-size:0.7rem;margin-bottom:4px;">
                     {msg}
                 </div>
                 <div class="train_prog_track">
                     <div class="train_prog_fill" style="width:{pct}%;"></div>
                 </div>
-                <div style="color:#94a3b8;font-size:0.8rem;margin-bottom:6px;">{pct}%</div>
-                <div style="color:#64748b;font-size:0.78rem;">{detail}</div>
+                <div style="color:#94a3b8;font-size:0.62rem;margin-bottom:4px;">{pct}%</div>
+                <div style="color:#64748b;font-size:0.6rem;">{detail}</div>
             </div>
             """, unsafe_allow_html=True)
 
