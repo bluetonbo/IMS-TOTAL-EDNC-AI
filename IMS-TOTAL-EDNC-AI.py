@@ -1924,6 +1924,7 @@ if is_active:
                             f"{var}",
                             sl_min, sl_max, curr_clamped,
                             step=step_v,
+                            format="%.1f",
                             key=f"sl_{var}_{st.session_state['ver']}",
                             on_change=_on_sl_a_change,
                             args=(var, st.session_state['ver'])
@@ -2026,6 +2027,7 @@ if is_active:
                             f"{v_name}{L['lbl_target_range']}",
                             min_value=_wmin, max_value=_wmax,
                             value=(_def_min, _def_max),
+                            format="%.1f",
                             key=f"expert_range_{v_name}",
                             on_change=_on_expert_range_change,
                             args=(v_name, _wmin, _wmax)
@@ -2515,6 +2517,7 @@ if is_active:
                             "", 0.0, 10.0,
                             value=st.session_state[f"wsld_{target_key}"],
                             step=0.5, disabled=not is_on,
+                            format="%.1f",
                             key=f"wsld_{target_key}",
                             on_change=_on_wgt_sld_change,
                             args=(target_key,)
