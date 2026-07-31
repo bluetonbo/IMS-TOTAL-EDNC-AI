@@ -205,17 +205,17 @@ def _auto_select_best_model(X, y, n_pos, n_neg, C, algo_status_fn=None):
 
 
 def _fit_model_fixed(X, y, algo_status_fn=None):
-    """[IMS-TOTAL-4 알고리즘] LogisticRegression(max_iter=1000) 단일 모델로 고정 학습.
+    """LogisticRegression(max_iter=1000) 단일 모델로 고정 학습.
     (표본 수에 따른 규제 자동 조정이나 RF/XGB/LGBM 등 타 알고리즘과의 비교선택은 하지 않음.
-    현장에서 검증된 IMS-TOTAL-4와 동일한 방식)
+    현장에서 검증된 방식)
     반환: (fitted_model, algo_name, feature_importances_or_None)"""
     if algo_status_fn:
-        algo_status_fn("Final fit: LogisticRegression (IMS-TOTAL-4) ✓", 1, 1)
+        algo_status_fn("Final fit: LogisticRegression ✓", 1, 1)
 
     model = LogisticRegression(max_iter=1000).fit(X, y)
     fi = np.abs(model.coef_[0]) if hasattr(model, 'coef_') else None
 
-    return model, 'LogisticRegression (IMS-TOTAL-4)', fi
+    return model, 'LogisticRegression', fi
 
 
 def _build_fact_block(defect_results):
@@ -551,11 +551,11 @@ LANG_DICT = {
         "run_ai": "Run AI Learning & Solution",
         "algo_mode_label": "4. AI Algorithm",
         "algo_mode_auto": "Intelligent Auto-Select (LR / RF / XGBoost / LightGBM comparison)",
-        "algo_mode_light": "Lightweight Fixed Model (LogisticRegression — IMS-TOTAL-4 style)",
-        "algo_mode_help": "Auto-Select compares multiple algorithms via cross-validation and picks the best one per defect. Lightweight Fixed Model always uses a single LogisticRegression, matching the field-proven IMS-TOTAL-4 approach — often more stable on small datasets.",
+        "algo_mode_light": "Lightweight Fixed Model (single LogisticRegression)",
+        "algo_mode_help": "Auto-Select compares multiple algorithms via cross-validation and picks the best one per defect. Lightweight Fixed Model always uses a single LogisticRegression — often more stable on small datasets.",
         "algo_guide_title": "❔ Which one should I choose?",
         "algo_guide_auto": "Best for larger datasets (roughly 100+ rows) with complex, non-linear patterns. Compares 4 algorithms and automatically picks the most accurate one per defect.",
-        "algo_guide_light": "Best for small datasets (roughly 50 rows or fewer). A single, stable LogisticRegression — lower overfitting risk, matches the field-proven IMS-TOTAL-4 approach.",
+        "algo_guide_light": "Best for small datasets (roughly 50 rows or fewer). A single, stable LogisticRegression — lower overfitting risk.",
         "algo_reco_prefix": "Detected data:",
         "algo_reco_unit": " rows",
         "algo_reco_suffix": "Recommended:",
@@ -1536,13 +1536,13 @@ with st.sidebar:
                                     )
 
                             if algo_mode_choice == 'light':
-                                # [IMS-TOTAL-4 알고리즘] LogisticRegression 단일 모델 고정 학습
+                                # LogisticRegression 단일 모델 고정 학습
                                 best_model, best_algo, fi = _fit_model_fixed(
                                     X_scaled, target_vals, algo_status_fn=_show_algo
                                 )
                                 # 참고용 진단 지표: K-fold 교차검증 정확도 (모델 선택에는 사용 안 함)
                                 cv_score = _cross_val_reliability(X_scaled, target_vals, n_pos, n_neg, 1.0)
-                                used_C = 1.0  # IMS-TOTAL-4 방식: 규제값 sklearn 기본(1.0) 고정
+                                used_C = 1.0  # 규제값 sklearn 기본(1.0) 고정
                             else:
                                 # LR/RF/XGB/LGBM 4종 자동선택 (알고리즘 진행 콜백 포함)
                                 best_model, best_algo, cv_score, fi = _auto_select_best_model(
