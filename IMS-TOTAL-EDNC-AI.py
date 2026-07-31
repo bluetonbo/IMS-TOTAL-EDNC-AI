@@ -579,6 +579,8 @@ LANG_DICT = {
         "tab_diag": "▶  Diagnostic & Optimization",
         "tab_master": "▶  Master Data & Analytics",
         "sec_a": "A. Current Injection Parameters",
+        "btn_reset_initial": "↺ Reset to Initial Conditions",
+        "lbl_initial_val": "Initial",
         "sec_b_expert": "B. Expert Recommended Condition Settings",
         "sec_c_result": "C. Optimized Process Conditions",
         "sec_d_diag": "C. Optimized Process Conditions",
@@ -671,6 +673,8 @@ LANG_DICT = {
         "tab_diag": "▶  진단 및 최적화",
         "tab_master": "▶  마스터 데이터 & 분석",
         "sec_a": "A. 현재 사출 조건 파라미터",
+        "btn_reset_initial": "↺ 초기 조건으로 되돌리기",
+        "lbl_initial_val": "초기값",
         "sec_b_expert": "B. 전문가 추천 조건 설정",
         "sec_c_result": "C. 최적 공정 조건",
         "sec_d_diag": "C. 최적 공정 조건",
@@ -861,6 +865,7 @@ if 'models' not in st.session_state:
         'defect_weights': {k: 1.0 for k in TARGET_VARS.keys()},
         'defect_switches': {k: True for k in TARGET_VARS.keys()},
         'ver': 0,
+        'initial_inputs': {},
         'expert_reliability': 0.0,
         'last_res_val': None,
         'last_defect_risks': {},
@@ -1535,6 +1540,7 @@ with st.sidebar:
                     })
 
                     init_row = df_i.iloc[0].to_dict()
+                    _initial_inputs_snapshot = {}
                     for v in vars_list:
                         _reset_val = int(round(float(init_row.get(v, 0))))
                         st.session_state['current_inputs'][v] = _reset_val
@@ -1546,6 +1552,9 @@ with st.sidebar:
                         _rclamped = float(max(_rmin, min(float(_reset_val), _rmax)))
                         st.session_state[f"ni_a_{v}"] = _rclamped
                         st.session_state[f"sl_{v}_{st.session_state['ver']}"] = _rclamped
+                        _initial_inputs_snapshot[v] = _rclamped
+                    # [추가] "초기 조건으로 되돌리기" 버튼 및 참고 표시용으로 초기값 스냅샷 저장
+                    st.session_state['initial_inputs'] = _initial_inputs_snapshot
 
                     load_prog.progress(100, text="✅ All done! AI engine ready." if st.session_state.lang == "en" else "✅ 모든 학습 완료! AI 준비 완료.")
                     load_status.markdown("✅ **AI Engine ready.**" if st.session_state.lang == "en" else "✅ **AI 엔진 준비 완료.**")
@@ -1852,6 +1861,15 @@ if is_active:
                      if st.session_state.lang == 'en'
                      else "▶  " + L["sec_a"] + "  (클릭하여 펼치기 / 닫기)")
         with st.expander(_seca_lbl, expanded=False):
+            # [추가] 초기 조건으로 되돌리기 버튼 — 재학습 없이 바로 초기값으로 복원
+            if st.session_state.get('initial_inputs'):
+                if st.button(L['btn_reset_initial'], key='btn_reset_to_initial'):
+                    for _iv, _ival in st.session_state['initial_inputs'].items():
+                        _ival = float(_ival)
+                        st.session_state['current_inputs'][_iv] = _ival
+                        st.session_state[f"ni_a_{_iv}"] = _ival
+                        st.session_state[f"sl_{_iv}_{st.session_state['ver']}"] = _ival
+
             # [추가] 섹션 A 슬라이더 ↔ Min/Max 숫자입력 콜백 함수
             def _on_sl_a_change(var, ver):
                 val = st.session_state.get(f"sl_{var}_{ver}")
@@ -1894,6 +1912,14 @@ if is_active:
 
                     sl_col, ni_col = st.columns([3, 1])
                     with sl_col:
+                        # [추가] 초기값 참고 표시 (작은 회색 텍스트)
+                        _init_val = st.session_state.get('initial_inputs', {}).get(var)
+                        if _init_val is not None:
+                            st.markdown(
+                                f"<div style='color:#64748b;font-size:0.7rem;margin-bottom:-6px;'>"
+                                f"{L['lbl_initial_val']}: {_init_val:.2f}</div>",
+                                unsafe_allow_html=True
+                            )
                         _sl_val = st.slider(
                             f"{var}",
                             sl_min, sl_max, curr_clamped,
