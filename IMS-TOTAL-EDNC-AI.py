@@ -1315,17 +1315,17 @@ with st.sidebar:
     with st.sidebar:
         algo_mode_choice = st.radio(
             L['algo_mode_label'],
-            options=['auto', 'light'],
+            options=['light', 'auto'],
             format_func=lambda x: L['algo_mode_auto'] if x == 'auto' else L['algo_mode_light'],
-            index=1,  # 기본값: 기준 모델 비교 선택
+            index=0,  # 기본값: 기준 모델 비교 선택
             help=L['algo_mode_help'],
             key='algo_mode_radio'
         )
         with st.expander(L['algo_guide_title'], expanded=False):
             st.markdown(f"""
                 <div style='font-size:0.78rem; line-height:1.55;'>
-                    <div style='color:#cbd5e1; margin-bottom:10px;'>🔵 {L['algo_guide_auto']}</div>
-                    <div style='color:#cbd5e1;'>🟢 {L['algo_guide_light']}</div>
+                    <div style='color:#cbd5e1; margin-bottom:10px;'>🟢 {L['algo_guide_light']}</div>
+                    <div style='color:#cbd5e1;'>🔵 {L['algo_guide_auto']}</div>
                 </div>
             """, unsafe_allow_html=True)
         sub_btn = st.button(L['run_ai'], key='run_ai_btn', use_container_width=True)
