@@ -578,7 +578,7 @@ LANG_DICT = {
         "info_standby": "Please upload the converted data in the sidebar and start AI learning.",
         "tab_diag": "▶  Diagnostic & Optimization",
         "tab_master": "▶  Master Data & Analytics",
-        "sec_a": "A. Current Injection Parameters",
+        "sec_a": "A. Current Conditions & Adjust",
         "btn_reset_initial": "↺ Reset to Initial Conditions",
         "lbl_initial_val": "Initial",
         "sec_b_expert": "B. Expert Recommended Condition Settings",
@@ -672,7 +672,7 @@ LANG_DICT = {
         "info_standby": "사이드바에 변환된 데이터를 업로드하고 AI 학습을 시작해 주세요.",
         "tab_diag": "▶  진단 및 최적화",
         "tab_master": "▶  마스터 데이터 & 분석",
-        "sec_a": "A. 현재 사출 조건 파라미터",
+        "sec_a": "A. 현재 사출 조건 & 조건 변경",
         "btn_reset_initial": "↺ 초기 조건으로 되돌리기",
         "lbl_initial_val": "초기값",
         "sec_b_expert": "B. 전문가 추천 조건 설정",
@@ -832,6 +832,34 @@ TARGET_VARS = {
     'Void': 'Void (Void)',
     'Warpage': 'Warpage (Warpage)'
 }
+
+# [추가] 공정변수 접두어별 설명 (예: SP_0 -> SP_0 (스크류 위치 0) / SP_0 (Screw Position 0))
+_VAR_DESC_KO = {
+    'SP': '스크류 위치', 'IV': '사출 속도', 'VP': 'VP', 'PP': '보압', 'PT': '보압 시간',
+    'CT': '냉각 시간', 'NT': '노즐 온도', 'MTU': '금형 온도 상측', 'MTD': '금형 온도 하측',
+    'MTUM': '금형 온도 상측 실측', 'MTDM': '금형 온도 하측 실측',
+    'BP': '배압', 'BV': '배압 속도', 'SB': '흘름방지',
+    'HP': '히트 파이프', 'HR': '핫 런너',
+}
+_VAR_DESC_EN = {
+    'SP': 'Screw Position', 'IV': 'Injection Velocity', 'VP': 'VP', 'PP': 'Packing Pressure',
+    'PT': 'Packing Time', 'CT': 'Cooling Time', 'NT': 'Nozzle Temp.', 'MTU': 'Mold Temp. Upper',
+    'MTD': 'Mold Temp. Down', 'MTUM': 'Mold Temp Upper Measure', 'MTDM': 'Mold Temp Down Measure',
+    'BP': 'Back Pressure', 'BV': 'Back Velocity', 'SB': 'Suck Back',
+    'HP': 'Heat Pipe', 'HR': 'Hot Runner',
+}
+
+def _var_label(var_name, lang):
+    """변수명을 'SP_0 (스크류 위치 0)' / 'SP_0 (Screw Position 0)' 형태로 변환.
+    매핑에 없는 변수(예: HP_1)는 원래 이름 그대로 반환."""
+    desc_map = _VAR_DESC_EN if lang == 'en' else _VAR_DESC_KO
+    if var_name in desc_map:
+        return f"{var_name} ({desc_map[var_name]})"
+    if '_' in var_name:
+        prefix, _, suffix = var_name.partition('_')
+        if prefix in desc_map:
+            return f"{var_name} ({desc_map[prefix]} {suffix})"
+    return var_name
 
 OLD_TO_NEW_MAP = {
     'Y_Melt_Short': 'Short_Shot',
@@ -1419,6 +1447,10 @@ with st.sidebar:
             else:
                 df_comb.dropna(subset=available_targets, inplace=True)
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
+                # [수정] 전부 N/A(결측)인 변수는 표시/계산에서 완전히 제외
+                # (예: PP_3~5, PT_3~5, HP_1~2, HR_1~4처럼 데이터 없는 컬럼은 슬라이더에도 안 뜨고
+                #  모델 학습(scaler.fit 등)에도 포함되지 않음)
+                vars_list = [c for c in vars_list if not df_comb[c].isna().all()]
 
                 if not vars_list or df_comb.empty:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다." if st.session_state.lang != "en" else "No analyzable variables found or data is empty.")
@@ -1921,7 +1953,7 @@ if is_active:
                                 unsafe_allow_html=True
                             )
                         _sl_val = st.slider(
-                            f"{var}",
+                            _var_label(var, st.session_state.lang),
                             sl_min, sl_max, curr_clamped,
                             step=step_v,
                             format="%.1f",
