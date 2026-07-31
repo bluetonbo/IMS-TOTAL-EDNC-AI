@@ -2026,7 +2026,11 @@ if is_active:
                             args=(v_name, _wmin, _wmax)
                         )
         st.session_state['expert_reliability'] = (
-            st.slider(L['lbl_expert_rel'], 0, 100, int(st.session_state['expert_reliability'] * 100)) / 100.0
+            st.slider(
+                L['lbl_expert_rel'], 0, 100,
+                int(st.session_state['expert_reliability'] * 100),
+                key="expert_reliability_sld"
+            ) / 100.0
         )
 
         # D. 최적화 및 지능형 진단
@@ -2061,11 +2065,14 @@ if is_active:
                     continue  # 구버전 데이터(목표값 방식) 잔재는 무시
                 _gb = st.session_state['global_bounds'].get(v, (_cmin, _cmax))
                 _normrange = max(abs(float(_gb[1]) - float(_gb[0])), 1e-6)
-                if _val < _cmin:
+                # [수정] 슬라이더 step 스냅/반올림 등에서 생기는 미세한 부동소수점 오차가
+                # "범위를 살짝 벗어난 것"으로 오인되지 않도록 경계에 작은 허용오차(tolerance)를 둠
+                _eps = max(_normrange * 1e-4, 1e-3)
+                if _val < _cmin - _eps:
                     penalty += (_cmin - _val) / _normrange
-                elif _val > _cmax:
+                elif _val > _cmax + _eps:
                     penalty += (_val - _cmax) / _normrange
-                # 범위 안이면 벌점 0
+                # 범위 안(또는 허용오차 이내)이면 벌점 0
             return min(1.0, avg_defect_risk + (penalty * st.session_state['expert_reliability']))
 
         def get_individual_risks(input_vals_list):
