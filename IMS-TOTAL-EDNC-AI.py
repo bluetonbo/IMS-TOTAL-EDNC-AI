@@ -1463,7 +1463,11 @@ with st.sidebar:
             if not available_targets:
                 st.sidebar.error(L['err_vars'])
             else:
-                df_comb.dropna(subset=available_targets, inplace=True)
+                # [수정] 기존엔 subset=전체 타겟으로 dropna 해서, 10개 불량 중 하나라도
+                # N/A면 그 행이 통째로 삭제됨 (예: 시트마다 불량 1개씩만 기록한 경우 전부 삭제되는 버그).
+                # how='all'로 바꿔서 "모든 타겟이 다 N/A인 행"만 제거하고,
+                # 일부 타겟만 값이 있는 행은 살려서 각 타겟별 학습에 활용되게 함.
+                df_comb.dropna(subset=available_targets, how='all', inplace=True)
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
                 # [수정] N/A(결측) 비율이 절반을 넘는 변수는 표시/계산에서 완전히 제외
                 # (완전 N/A뿐 아니라, 예를 들어 16행 중 15행이 N/A인 것처럼 "대부분 N/A"인
@@ -1500,20 +1504,25 @@ with st.sidebar:
                         _step(70 + int(pct * 0.28), f"Training model {idx+1}/{total_targets}: {target}", "", done_steps)
                         time.sleep(0.1) # 시각적 피드백을 위한 짧은 대기
 
-                        t_series = (
+                        # [수정] 이 타겟(target) 값이 있는 행만 골라서 그 모델 학습에 사용.
+                        # (다른 9개 타겟이 N/A여도 상관없음 — 타겟마다 독립적으로 학습)
+                        _tgt_col = (
                             df_comb[target].iloc[:, 0]
                             if isinstance(df_comb[target], pd.DataFrame)
                             else df_comb[target]
                         )
+                        _tgt_mask = _tgt_col.notna()
+                        df_t = df_comb[_tgt_mask]
+                        t_series = _tgt_col[_tgt_mask]
                         target_vals = np.where(t_series >= DEFECT_THRESHOLD, 1, 0)
 
-                        if vars_list and (len(np.unique(target_vals)) >= 2):
+                        if vars_list and len(df_t) > 0 and (len(np.unique(target_vals)) >= 2):
                             n_pos = int(target_vals.sum())
                             n_neg = int(len(target_vals) - n_pos)
 
                             chosen_C = _choose_regularization(n_pos, n_neg)
-                            scaler   = MinMaxScaler().fit(df_comb[vars_list])
-                            X_scaled = scaler.transform(df_comb[vars_list])
+                            scaler   = MinMaxScaler().fit(df_t[vars_list])
+                            X_scaled = scaler.transform(df_t[vars_list])
 
                             # [추가] 알고리즘별 진행 상황 콜백 정의
                             def _show_algo(algo_name, a_idx, a_total, _t=target):
