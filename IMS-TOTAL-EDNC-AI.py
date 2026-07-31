@@ -644,9 +644,9 @@ LANG_DICT = {
         "upload_3": "3. CAE 해석 데이터",
         "run_ai": "학습 초기화 및 데이터 통합 학습 실행",
         "algo_mode_label": "4. AI학습 알고리즘 선택",
-        "algo_mode_auto": "지능형 자동 선택",
-        "algo_mode_light": "경량 고정형 자동 선택",
-        "algo_mode_help": "자동 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 경량 고정형 자동 선택은 항상 단일 모델만 사용하며, 현장에서 검증된 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
+        "algo_mode_auto": "다중 모델 비교 선택",
+        "algo_mode_light": "기준 모델 비교 선택",
+        "algo_mode_help": "다중 모델 비교 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 기준 모델 비교 선택은 항상 단일 모델만 사용하며, 현장에서 검증된 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
         "algo_guide_title": "AI 학습 알고리즘 선택 기준",
         "algo_guide_auto": "데이터가 많고(대략 100건 이상) 조건별 변화 패턴이 복잡할 때 적합합니다. 4가지 알고리즘을 비교해 불량별로 가장 정확한 모델을 자동으로 고릅니다.",
         "algo_guide_light": "데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 모델로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 방식과 동일합니다.",
@@ -654,8 +654,8 @@ LANG_DICT = {
         "algo_reco_unit": "건",
         "algo_reco_suffix": "추천:",
         "algo_badge_prefix": "적용 모델:",
-        "algo_badge_auto": "지능형 자동 선택",
-        "algo_badge_light": "경량 고정형 자동 선택",
+        "algo_badge_auto": "다중 모델 비교 선택",
+        "algo_badge_light": "기준 모델 비교 선택",
         "err_load": "파일 로드 오류: ",
         "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
@@ -1317,7 +1317,7 @@ with st.sidebar:
             L['algo_mode_label'],
             options=['auto', 'light'],
             format_func=lambda x: L['algo_mode_auto'] if x == 'auto' else L['algo_mode_light'],
-            index=1,  # 기본값: 경량 고정형 자동 선택
+            index=1,  # 기본값: 기준 모델 비교 선택
             help=L['algo_mode_help'],
             key='algo_mode_radio'
         )
@@ -1469,6 +1469,11 @@ with st.sidebar:
                 # 일부 타겟만 값이 있는 행은 살려서 각 타겟별 학습에 활용되게 함.
                 df_comb.dropna(subset=available_targets, how='all', inplace=True)
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
+                # [수정] 공정변수 컬럼에 숫자로 변환 안 되는 값(오타, 이상한 텍스트 등)이 섞여 있으면
+                # 그 컬럼 전체가 object(텍스트)형이 되어 뒤의 median()/fillna()에서
+                # "TypeError: cannot convert the series to <class 'float'>" 류의 크래시가 났음.
+                # 숫자로 못 바꾸는 값은 전부 결측치(NaN)로 강제 변환해서 항상 순수 숫자형만 남도록 함.
+                df_comb[vars_list] = df_comb[vars_list].apply(pd.to_numeric, errors='coerce')
                 # [수정] N/A(결측) 비율이 절반을 넘는 변수는 표시/계산에서 완전히 제외
                 # (완전 N/A뿐 아니라, 예를 들어 16행 중 15행이 N/A인 것처럼 "대부분 N/A"인
                 #  변수도 신뢰할 수 없는 데이터로 보고 슬라이더/모델 학습에서 빠지도록 함)
