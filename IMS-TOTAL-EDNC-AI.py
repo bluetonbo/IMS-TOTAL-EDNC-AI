@@ -636,7 +636,7 @@ LANG_DICT = {
     },
     "ko": {
         "page_title": "통합 사출 불량 AI 솔루션 시스템",
-        "access_title": "<span style='color:#00e5ff !important;'>AI 머신 러닝</span><span style='color:#FFFFFF !important;'>을 통한 </span><span style='color:#00e5ff !important;'>사출</span><span style='color:#FFFFFF !important;'> 공정 조건 최적화 시스템</span>",
+        "access_title": "<span class='title-blue'>AI 머신 러닝</span><span class='title-white'>을 통한 </span><span class='title-blue'>사출</span><span class='title-white'> 공정 조건 최적화 시스템</span>",
         "enter_pwd": "비밀번호 입력",
         "connect_sys": "시스템 연결",
         "invalid_pwd": "비밀번호가 올바르지 않습니다. 다시 시도해 주세요.",
@@ -759,6 +759,9 @@ if not st.session_state.authenticated:
             font-weight: 700 !important;
             border: 1px solid #1976d2 !important;
         }
+        /* [추가] 타이틀 색상 지정용 클래스 (h2의 전역 파란색 규칙보다 우선 적용) */
+        h2 .title-blue { color: #00e5ff !important; }
+        h2 .title-white { color: #ffffff !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -1060,6 +1063,10 @@ st.markdown("""
         border: 1px solid #2e7d32 !important;
     }
     h1 { color: #ffffff !important; font-weight: 800 !important; letter-spacing: -0.04em; }
+    /* [추가] 타이틀 색상 지정용 클래스 (span 인라인 style이 걸러지는 문제를 피하기 위해
+       클래스+스타일블록 방식으로 대체) */
+    .title-blue { color: #00e5ff !important; }
+    .title-white { color: #ffffff !important; }
     /* 탭 opacity 전역 차단 — Streamlit 기본 테마가 비활성 탭을 흐리게 하는 것 방지 */
     [data-baseweb="tab"] { opacity: 1 !important; }
     [data-baseweb="tab-highlight"] { background-color: #00e5ff !important; }
@@ -1874,10 +1881,10 @@ with col_title:
     st.markdown(
         f"<h1 style='text-align: center; margin-bottom: 0; margin-top: 0; line-height: 1.2; "
         f"padding-top: 0; font-size: 2rem;'>"
-        f"<span style='color:#00e5ff !important;'>{L['main_title_1']}</span>"
-        f"<span style='color:#FFFFFF !important;'>{L['main_title_2']}</span>"
-        f"<span style='color:#00e5ff !important;'>{L['main_title_3']}</span>"
-        f"<span style='color:#FFFFFF !important;'>{L['main_title_4']}</span></h1>",
+        f"<span class='title-blue'>{L['main_title_1']}</span>"
+        f"<span class='title-white'>{L['main_title_2']}</span>"
+        f"<span class='title-blue'>{L['main_title_3']}</span>"
+        f"<span class='title-white'>{L['main_title_4']}</span></h1>",
         unsafe_allow_html=True
     )
     st.markdown(
