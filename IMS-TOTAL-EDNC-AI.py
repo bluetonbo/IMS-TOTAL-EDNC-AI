@@ -1917,7 +1917,7 @@ if is_active:
                         if _init_val is not None:
                             st.markdown(
                                 f"<div style='color:#64748b;font-size:0.7rem;margin-bottom:-6px;'>"
-                                f"{L['lbl_initial_val']}: {_init_val:.2f}</div>",
+                                f"{L['lbl_initial_val']}: {_init_val:.1f}</div>",
                                 unsafe_allow_html=True
                             )
                         _sl_val = st.slider(
@@ -1935,7 +1935,7 @@ if is_active:
                             "Value",
                             value=float(st.session_state['current_inputs'].get(var, curr_clamped)),
                             step=step_v,
-                            format="%.2f",
+                            format="%.1f",
                             key=f"ni_a_{var}",
                             on_change=_on_ni_a_change,
                             args=(var, sl_min, sl_max, st.session_state['ver']),
@@ -2037,7 +2037,7 @@ if is_active:
                         st.number_input(
                             "Min",
                             step=max((_wmax - _wmin) / 100.0, 0.1),
-                            format="%.2f",
+                            format="%.1f",
                             key=f"expert_min_{v_name}",
                             on_change=_on_expert_minmax_change,
                             args=(v_name, _wmin, _wmax)
@@ -2046,7 +2046,7 @@ if is_active:
                         st.number_input(
                             "Max",
                             step=max((_wmax - _wmin) / 100.0, 0.1),
-                            format="%.2f",
+                            format="%.1f",
                             key=f"expert_max_{v_name}",
                             on_change=_on_expert_minmax_change,
                             args=(v_name, _wmin, _wmax)
