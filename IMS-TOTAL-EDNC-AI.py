@@ -648,8 +648,8 @@ LANG_DICT = {
         "algo_mode_light": "기준 모델 비교 선택",
         "algo_mode_help": "다중 모델 비교 선택은 여러 알고리즘을 교차검증으로 비교해 불량별로 가장 좋은 모델을 고릅니다. 기준 모델 비교 선택은 항상 단일 모델만 사용하며, 현장에서 검증된 방식과 동일합니다 — 표본이 적을 때 더 안정적일 수 있습니다.",
         "algo_guide_title": "AI 학습 알고리즘 선택 기준",
-        "algo_guide_auto": "데이터가 많고(대략 100건 이상) 조건별 변화 패턴이 복잡할 때 적합합니다. 4가지 알고리즘을 비교해 불량별로 가장 정확한 모델을 자동으로 고릅니다.",
-        "algo_guide_light": "데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 모델로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 방식과 동일합니다.",
+        "algo_guide_auto": "다중 모델 비교 : 데이터가 많고(대략 100건 이상) 조건별 변화 패턴이 복잡할 때 적합합니다. 4가지 알고리즘을 비교해 불량별로 가장 정확한 모델을 자동으로 고릅니다.",
+        "algo_guide_light": "기준 모델 비교 : 데이터가 적을 때(대략 50건 이하) 적합합니다. 단일 모델로 과적합 위험이 낮고 안정적이며, 현장에서 검증된 방식과 동일합니다.",
         "algo_reco_prefix": "감지된 데이터",
         "algo_reco_unit": "건",
         "algo_reco_suffix": "추천:",
@@ -1313,6 +1313,18 @@ with st.sidebar:
         )
 
     with st.sidebar:
+        # [추가] 라디오 옵션 글자색을 아래 가이드 점 색상과 맞춤
+        # (순서: 1번째=기준 모델 비교 선택=녹색, 2번째=다중 모델 비교 선택=파란색)
+        st.markdown("""
+            <style>
+            div[data-testid="stRadio"] div[role="radiogroup"] label:nth-of-type(1) p {
+                color: #10b981 !important;
+            }
+            div[data-testid="stRadio"] div[role="radiogroup"] label:nth-of-type(2) p {
+                color: #3b82f6 !important;
+            }
+            </style>
+        """, unsafe_allow_html=True)
         algo_mode_choice = st.radio(
             L['algo_mode_label'],
             options=['light', 'auto'],
