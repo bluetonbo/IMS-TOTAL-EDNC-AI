@@ -861,6 +861,24 @@ def _var_label(var_name, lang):
             return f"{var_name} ({desc_map[prefix]} {suffix})"
     return var_name
 
+def _var_label_html(var_name, lang):
+    """_var_label과 동일하지만, 괄호로 묶인 설명 부분만 2/3 크기로 렌더링하는 HTML 반환.
+    (커스텀 라벨을 st.markdown으로 슬라이더 위에 그리고, st.slider 자체 라벨은 숨길 때 사용)"""
+    desc_map = _VAR_DESC_EN if lang == 'en' else _VAR_DESC_KO
+    desc = None
+    if var_name in desc_map:
+        desc = desc_map[var_name]
+    elif '_' in var_name:
+        prefix, _, suffix = var_name.partition('_')
+        if prefix in desc_map:
+            desc = f"{desc_map[prefix]} {suffix}"
+    if desc is None:
+        return var_name
+    return (
+        f"{var_name} "
+        f"<span style='font-size:0.67em;'>({desc})</span>"
+    )
+
 OLD_TO_NEW_MAP = {
     'Y_Melt_Short': 'Short_Shot',
     'Y_Flash': 'Flash',
@@ -1956,6 +1974,11 @@ if is_active:
                                 f"{L['lbl_initial_val']}: {_init_val:.1f}</div>",
                                 unsafe_allow_html=True
                             )
+                        st.markdown(
+                            f"<div style='color:#FFFFFF;font-weight:400;font-size:1.05rem;"
+                            f"margin-bottom:-8px;'>{_var_label_html(var, st.session_state.lang)}</div>",
+                            unsafe_allow_html=True
+                        )
                         _sl_val = st.slider(
                             _var_label(var, st.session_state.lang),
                             sl_min, sl_max, curr_clamped,
@@ -1963,7 +1986,8 @@ if is_active:
                             format="%.1f",
                             key=f"sl_{var}_{st.session_state['ver']}",
                             on_change=_on_sl_a_change,
-                            args=(var, st.session_state['ver'])
+                            args=(var, st.session_state['ver']),
+                            label_visibility="collapsed"
                         )
                         # [수정] step 스냅 부동소수점 노이즈 제거 후 저장
                         st.session_state['current_inputs'][var] = round(float(_sl_val), 4)
