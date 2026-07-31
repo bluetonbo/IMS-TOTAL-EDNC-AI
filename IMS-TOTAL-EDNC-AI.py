@@ -566,7 +566,9 @@ LANG_DICT = {
         "err_vars": "Could not find 10 defect variables in the uploaded data.",
         "warn_upload": "Please upload the Current Data (1) and either Historical (2) or CAE (3) data.",
         "main_title_1": "Total Injection ",
-        "main_title_2": "AI Solution System",
+        "main_title_2": "",
+        "main_title_3": "AI Solution System",
+        "main_title_4": "",
         "main_desc_txt": "Comprehensive Defect Diagnostic & Multi-Objective Optimization System (10 Key Defects)",
         "main_desc": "Comprehensive Defect Diagnostic & Multi-Objective Optimization System v6.6 (10 Key Defects)",
         "m_status": "System Status",
@@ -634,7 +636,7 @@ LANG_DICT = {
     },
     "ko": {
         "page_title": "통합 사출 불량 AI 솔루션 시스템",
-        "access_title": "사출 성형 AI 시스템 접속",
+        "access_title": "<span style='color:#00e5ff;'>AI 머신 러닝</span>을 통한 <span style='color:#00e5ff;'>사출 공정 조건 최적화</span> 시스템",
         "enter_pwd": "비밀번호 입력",
         "connect_sys": "시스템 연결",
         "invalid_pwd": "비밀번호가 올바르지 않습니다. 다시 시도해 주세요.",
@@ -659,8 +661,10 @@ LANG_DICT = {
         "err_load": "파일 로드 오류: ",
         "err_vars": "업로드된 데이터에서 10대 불량 변수를 찾을 수 없습니다.",
         "warn_upload": "현재 데이터(1)와 함께 이력 데이터(2) 또는 CAE 데이터(3)를 업로드해 주세요.",
-        "main_title_1": "통합 사출 ",
-        "main_title_2": "AI 솔루션 시스템",
+        "main_title_1": "AI 머신 러닝",
+        "main_title_2": "을 통한 ",
+        "main_title_3": "사출 공정 조건 최적화",
+        "main_title_4": " 시스템",
         "main_desc_txt": "종합 불량 진단 및 다목적 최적화 시스템 (10대 핵심 불량)",
         "main_desc": "종합 불량 진단 및 다목적 최적화 시스템 v6.6 (10대 핵심 불량)",
         "m_status": "시스템 상태",
@@ -1869,7 +1873,8 @@ with col_logo:
 with col_title:
     st.markdown(
         f"<h1 style='text-align: center; margin-bottom: 0; margin-top: 0; line-height: 1.1; padding-top: 0;'>"
-        f"{L['main_title_1']}<span style='color:#00e5ff;'>{L['main_title_2']}</span></h1>",
+        f"<span style='color:#00e5ff;'>{L['main_title_1']}</span>{L['main_title_2']}"
+        f"<span style='color:#00e5ff;'>{L['main_title_3']}</span>{L['main_title_4']}</h1>",
         unsafe_allow_html=True
     )
     st.markdown(
