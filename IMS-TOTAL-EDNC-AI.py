@@ -2516,19 +2516,19 @@ if is_active:
                     f"<div style='background:#0a1628;border:1px solid #1e3a5f;border-radius:8px;"
                     f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
                     f"<span style='color:#94a3b8;'>"
-                    + ("📊 Based on latest " + _result_type + " result. " if _is_d_en
-                       else f"📊 최근 {_result_type} 결과 기준. ")
+                    + ("Based on latest " + _result_type + " result. " if _is_d_en
+                       else f"최근 {_result_type} 결과 기준. ")
                     + ("Total risk (weighted): " if _is_d_en else "종합 위험도 (가중평균): ")
                     + f"<b style='color:#{'ff5252' if _total_risk_pct>=70 else 'ffab00' if _total_risk_pct>=30 else '10b981'}'>{_total_risk_pct}%</b>"
                     + (f" &nbsp;|&nbsp; Unweighted avg: <b>{_d_unweighted_pct}%</b>" if _is_d_en
                        else f" &nbsp;|&nbsp; 단순평균: <b>{_d_unweighted_pct}%</b>")
                     + ("</span><br><span style='color:#64748b;font-size:0.76rem;'>"
-                       + ("ℹ️ Individual defect risk reflects each model's prediction probability. "
+                       + ("Individual defect risk reflects each model's prediction probability. "
                           "Changing weights affects only the weighted total — re-run diagnosis/optimization to recalculate. "
                           "Because it's a weighted average, raising the weight on an already-risky defect can push the "
                           "weighted total up even if that defect's own risk improved — compare individual defect risks "
                           "or the unweighted average when comparing different weight settings, not the weighted total alone." if _is_d_en
-                          else "ℹ️ 개별 불량 위험도는 각 모델의 예측 확률입니다. "
+                          else "개별 불량 위험도는 각 모델의 예측 확률입니다. "
                                "가중치 변경은 가중평균 종합 위험도에만 반영되며, 새 위험도를 보려면 진단/최적화를 다시 실행하세요. "
                                "가중평균 방식이라 이미 위험한 항목의 가중치를 올리면 그 항목 위험도 자체가 개선돼도 "
                                "종합 수치는 오히려 올라갈 수 있습니다 — 서로 다른 가중치 설정을 비교할 때는 "
