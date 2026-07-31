@@ -2537,10 +2537,12 @@ if is_active:
                     unsafe_allow_html=True
                 )
                 _d_wgt_rows = []
+                _d_rec_wgt_map = {}   # [추가] tk -> 추천 가중치 (자동 적용 버튼에서 사용)
                 for _d_tk in _d_models.keys():
                     _d_risk_v = _d_last_risks.get(_d_tk, 0)
                     _d_risk_pct = _d_risk_v * 100
                     _d_rec_wgt = round((1.0 + (_d_risk_v / max(_d_last_risks.values(), default=1) * 9)) / 3, 1)
+                    _d_rec_wgt_map[_d_tk] = _d_rec_wgt
                     _d_cur_wgt = st.session_state['defect_weights'].get(_d_tk, 1.0)
                     _d_status = "🔴 High" if _d_risk_pct >= 70 else ("🟡 Med" if _d_risk_pct >= 30 else "🟢 Low")
                     # 가중치가 이미 추천값 이상이면 "현재 적용 중"으로 표시
@@ -2566,6 +2568,48 @@ if is_active:
                                if _is_d_en else
                                "💡 가중치를 변경한 후 C섹션에서 진단 또는 최적화를 다시 실행하면 새 위험도와 추천값이 갱신됩니다.")
                 st.caption(_rerun_note)
+
+                # ── [추가] 추천 가중치를 실제 가중치 설정에 자동 반영 ──
+                def _apply_rec_weights(tk_list):
+                    for tk in tk_list:
+                        _v = max(0.0, min(10.0, round(float(_d_rec_wgt_map.get(tk, 1.0)), 1)))
+                        st.session_state['defect_weights'][tk] = _v
+                        st.session_state[f"wsld_{tk}"] = _v
+                        st.session_state[f"wnum_{tk}"] = _v
+
+                _d_name_to_tk = {TARGET_VARS.get(tk, tk): tk for tk in _d_models.keys()}
+                # 이미 추천값 이상으로 세팅된(= "OK") 항목은 기본 선택에서 제외
+                _d_needs_action = [
+                    tk for tk in _d_models.keys()
+                    if st.session_state['defect_weights'].get(tk, 1.0) < _d_rec_wgt_map.get(tk, 1.0) - 0.3
+                ]
+                _apply_col1, _apply_col2 = st.columns([1, 2])
+                with _apply_col1:
+                    if st.button(
+                        "Apply all recommended" if _is_d_en else "추천값 전체 적용",
+                        key="btn_apply_all_rec_wgt",
+                        use_container_width=True
+                    ):
+                        _apply_rec_weights(list(_d_models.keys()))
+                        st.rerun()
+                with _apply_col2:
+                    _d_sel_names = st.multiselect(
+                        "Select defects to apply recommended weight" if _is_d_en else "추천값을 적용할 불량 선택",
+                        options=list(_d_name_to_tk.keys()),
+                        default=[TARGET_VARS.get(tk, tk) for tk in _d_needs_action],
+                        key="ms_apply_sel_wgt",
+                        label_visibility="collapsed"
+                    )
+                    if st.button(
+                        "Apply to selected" if _is_d_en else "선택 항목만 적용",
+                        key="btn_apply_sel_rec_wgt"
+                    ):
+                        _sel_tks = [_d_name_to_tk[n] for n in _d_sel_names if n in _d_name_to_tk]
+                        if _sel_tks:
+                            _apply_rec_weights(_sel_tks)
+                            st.rerun()
+                        else:
+                            st.warning("적용할 항목을 먼저 선택하세요." if not _is_d_en else "Please select at least one defect first.")
 
         # ── D-2. 가중치 설정 ───────────────────────────────────────
         # 핵심 원칙: defect_weights[tk]를 단일 진실의 원천(single source of truth)으로 사용
