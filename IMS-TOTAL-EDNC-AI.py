@@ -1985,7 +1985,7 @@ if is_active:
                             )
                         st.markdown(
                             f"<div style='color:#FFFFFF;font-weight:400;font-size:1.05rem;"
-                            f"margin-bottom:-8px;'>{_var_label_html(var, st.session_state.lang)}</div>",
+                            f"margin-bottom:6px;'>{_var_label_html(var, st.session_state.lang)}</div>",
                             unsafe_allow_html=True
                         )
                         _sl_val = st.slider(
