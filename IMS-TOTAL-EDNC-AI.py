@@ -2577,7 +2577,7 @@ if is_active:
                         st.session_state[f"wsld_{tk}"] = _v
                         st.session_state[f"wnum_{tk}"] = _v
 
-                _d_apply_btn_col, _d_apply_note_col = st.columns([1.1, 3], gap="small")
+                _d_apply_btn_col, _d_apply_note_col = st.columns([1, 5], gap="small")
                 with _d_apply_btn_col:
                     _d_apply_clicked = st.button(
                         "Apply all recommended" if _is_d_en else "추천값 전체 적용",
@@ -2592,7 +2592,7 @@ if is_active:
                     )
                     st.markdown(
                         "<div style='display:flex;align-items:center;height:2.5rem;"
-                        "color:#FFFFFF;font-size:1rem;font-weight:700;'>"
+                        "margin-left:-0.8rem;color:#FFFFFF;font-size:1rem;font-weight:700;'>"
                         f"[{_d_apply_note_txt}]"
                         "</div>",
                         unsafe_allow_html=True
@@ -2691,7 +2691,7 @@ if is_active:
                 st.markdown(
                     f"<div style='display:inline-block;background:#0a1628;border:1px solid #1e3a5f;"
                     f"border-radius:6px;padding:3px 10px;font-size:0.74rem;color:#00e5ff;margin-bottom:10px;'>"
-                    f"🔧 {L['algo_badge_prefix']} {_algo_badge_txt_e}</div>",
+                    f"{L['algo_badge_prefix']} {_algo_badge_txt_e}</div>",
                     unsafe_allow_html=True
                 )
 
@@ -2779,7 +2779,7 @@ if is_active:
                         _algo_badge_html = (
                             f"<span style='float:right;background:#0a1628;border:1px solid #1e3a5f;"
                             f"border-radius:6px;padding:2px 8px;font-size:0.72rem;color:#00e5ff;'>"
-                            f"🔧 {L['algo_badge_prefix']} {_algo_badge_txt}</span>"
+                            f"{L['algo_badge_prefix']} {_algo_badge_txt}</span>"
                         ) if _algo_badge_txt else ""
                         report_html = f"""
                         <div style="background-color:#12141d; border:1px solid #2d3142;
