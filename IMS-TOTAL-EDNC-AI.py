@@ -2577,39 +2577,13 @@ if is_active:
                         st.session_state[f"wsld_{tk}"] = _v
                         st.session_state[f"wnum_{tk}"] = _v
 
-                _d_name_to_tk = {TARGET_VARS.get(tk, tk): tk for tk in _d_models.keys()}
-                # 이미 추천값 이상으로 세팅된(= "OK") 항목은 기본 선택에서 제외
-                _d_needs_action = [
-                    tk for tk in _d_models.keys()
-                    if st.session_state['defect_weights'].get(tk, 1.0) < _d_rec_wgt_map.get(tk, 1.0) - 0.3
-                ]
-                _apply_col1, _apply_col2 = st.columns([1, 2])
-                with _apply_col1:
-                    if st.button(
-                        "Apply all recommended" if _is_d_en else "추천값 전체 적용",
-                        key="btn_apply_all_rec_wgt",
-                        use_container_width=True
-                    ):
-                        _apply_rec_weights(list(_d_models.keys()))
-                        st.rerun()
-                with _apply_col2:
-                    _d_sel_names = st.multiselect(
-                        "Select defects to apply recommended weight" if _is_d_en else "추천값을 적용할 불량 선택",
-                        options=list(_d_name_to_tk.keys()),
-                        default=[TARGET_VARS.get(tk, tk) for tk in _d_needs_action],
-                        key="ms_apply_sel_wgt",
-                        label_visibility="collapsed"
-                    )
-                    if st.button(
-                        "Apply to selected" if _is_d_en else "선택 항목만 적용",
-                        key="btn_apply_sel_rec_wgt"
-                    ):
-                        _sel_tks = [_d_name_to_tk[n] for n in _d_sel_names if n in _d_name_to_tk]
-                        if _sel_tks:
-                            _apply_rec_weights(_sel_tks)
-                            st.rerun()
-                        else:
-                            st.warning("적용할 항목을 먼저 선택하세요." if not _is_d_en else "Please select at least one defect first.")
+                if st.button(
+                    "Apply all recommended" if _is_d_en else "추천값 전체 적용",
+                    key="btn_apply_all_rec_wgt"
+                ):
+                    _apply_rec_weights(list(_d_models.keys()))
+                    st.rerun()
+
 
         # ── D-2. 가중치 설정 ───────────────────────────────────────
         # 핵심 원칙: defect_weights[tk]를 단일 진실의 원천(single source of truth)으로 사용
