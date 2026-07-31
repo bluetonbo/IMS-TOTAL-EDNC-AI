@@ -3460,9 +3460,13 @@ if is_active:
 
                         # 민감도 지표: 변화 범위 대비 리스크 변화폭
                         risk_range = max(sens_risks) - min(sens_risks)
-                        cur_risk   = sens_risks[int(len(sens_risks) * (
-                            (cur_inputs.get(sens_var, v_min) - v_min) / max(v_max - v_min, 1e-9)
-                        ))]
+                        # [수정] 현재값이 v_max와 같거나 그 이상이면 비율이 1.0(또는 초과)이 되어
+                        # int(len*1.0)=len(범위 밖 인덱스)이 나와 IndexError가 나던 버그.
+                        # 비율을 0~1로 먼저 clamp하고, 인덱스도 0~len-1로 clamp.
+                        _sens_ratio = (cur_inputs.get(sens_var, v_min) - v_min) / max(v_max - v_min, 1e-9)
+                        _sens_ratio = max(0.0, min(1.0, _sens_ratio))
+                        _sens_idx = min(int(len(sens_risks) * _sens_ratio), len(sens_risks) - 1)
+                        cur_risk   = sens_risks[_sens_idx]
 
                         if is_en:
                             sens_insight = (
