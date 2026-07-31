@@ -2579,6 +2579,9 @@ if is_active:
             st.session_state['defect_weights'][tk] = snapped
             # 슬라이더 위젯 상태도 직접 갱신 → 다음 rerun에 반영
             st.session_state[f"wsld_{tk}"] = snapped
+            # [수정] 입력창 자신도 스냅된 값으로 되돌려야 함 (안 하면 "3.2" 입력 후
+            # 실제 저장/슬라이더는 3.0으로 스냅되는데 입력창만 3.2로 남아 값이 어긋나 보임)
+            st.session_state[f"wnum_{tk}"] = snapped
 
         def _on_wgt_sld_change(tk):
             val = _wgt_clamp(st.session_state.get(f"wsld_{tk}", 1.0))
