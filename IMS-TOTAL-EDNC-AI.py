@@ -636,7 +636,7 @@ LANG_DICT = {
     },
     "ko": {
         "page_title": "통합 사출 불량 AI 솔루션 시스템",
-        "access_title": "<span style='color:#00e5ff;'>AI 머신 러닝</span>을 통한 <span style='color:#00e5ff;'>사출 공정 조건 최적화</span> 시스템",
+        "access_title": "<span style='color:#00e5ff !important;'>AI 머신 러닝</span><span style='color:#FFFFFF !important;'>을 통한 </span><span style='color:#00e5ff !important;'>사출 공정 조건 최적화</span><span style='color:#FFFFFF !important;'> 시스템</span>",
         "enter_pwd": "비밀번호 입력",
         "connect_sys": "시스템 연결",
         "invalid_pwd": "비밀번호가 올바르지 않습니다. 다시 시도해 주세요.",
@@ -1873,9 +1873,11 @@ with col_logo:
 with col_title:
     st.markdown(
         f"<h1 style='text-align: center; margin-bottom: 0; margin-top: 0; line-height: 1.2; "
-        f"padding-top: 0; color:#FFFFFF; font-size: 2rem;'>"
-        f"<span style='color:#00e5ff;'>{L['main_title_1']}</span>{L['main_title_2']}"
-        f"<span style='color:#00e5ff;'>{L['main_title_3']}</span>{L['main_title_4']}</h1>",
+        f"padding-top: 0; font-size: 2rem;'>"
+        f"<span style='color:#00e5ff !important;'>{L['main_title_1']}</span>"
+        f"<span style='color:#FFFFFF !important;'>{L['main_title_2']}</span>"
+        f"<span style='color:#00e5ff !important;'>{L['main_title_3']}</span>"
+        f"<span style='color:#FFFFFF !important;'>{L['main_title_4']}</span></h1>",
         unsafe_allow_html=True
     )
     st.markdown(
