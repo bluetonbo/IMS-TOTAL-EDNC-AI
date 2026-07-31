@@ -1594,9 +1594,18 @@ with st.sidebar:
                     })
 
                     init_row = df_i.iloc[0].to_dict()
+                    # [수정] init_row(원본 File 1의 첫 행)에 N/A가 남아있으면
+                    # int(round(float(nan)))에서 크래시하던 버그 수정.
+                    # df_comb는 이미 중앙값으로 결측 채움이 끝난 상태이므로, 그 중앙값을 폴백으로 사용.
+                    _median_fallback = df_comb[vars_list].median() if vars_list else None
                     _initial_inputs_snapshot = {}
                     for v in vars_list:
-                        _reset_val = int(round(float(init_row.get(v, 0))))
+                        _raw_v = init_row.get(v, 0)
+                        _raw_f = float(_raw_v) if _raw_v is not None else float('nan')
+                        if pd.isna(_raw_f):
+                            _fallback = _median_fallback.get(v, 0) if _median_fallback is not None else 0
+                            _raw_f = 0.0 if pd.isna(_fallback) else float(_fallback)
+                        _reset_val = int(round(_raw_f))
                         st.session_state['current_inputs'][v] = _reset_val
                         # [수정] 슬라이더/숫자입력 위젯 키도 함께 동기화 (안 하면 위젯이 예전 값에 멈춰있음)
                         _rb = bounds_dict.get(v, (0.0, 100.0))
