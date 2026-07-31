@@ -2569,18 +2569,16 @@ if is_active:
 
         # ── D-2. 가중치 설정 ───────────────────────────────────────
         # 핵심 원칙: defect_weights[tk]를 단일 진실의 원천(single source of truth)으로 사용
-        # 슬라이더는 0.5 스냅, number_input은 자유 입력 후 0.5 반올림하여 저장
+        # [수정] 0.5 단위 스냅 제거 — 키인한 값이 그대로 슬라이더 값이 되도록 함 (소수 1자리까지만 정리)
         def _wgt_clamp(v):
-            return max(0.0, min(10.0, round(round(float(v) / 0.5) * 0.5, 1)))
+            return max(0.0, min(10.0, round(float(v), 1)))
 
         def _on_wgt_num_change(tk):
             raw = st.session_state.get(f"wnum_{tk}", 1.0)
             snapped = _wgt_clamp(raw)
             st.session_state['defect_weights'][tk] = snapped
-            # 슬라이더 위젯 상태도 직접 갱신 → 다음 rerun에 반영
+            # [수정] 키인한 값이 그대로 슬라이더 값이 되도록 동기화 (0.5 스냅 없이 소수 1자리 그대로)
             st.session_state[f"wsld_{tk}"] = snapped
-            # [수정] 입력창 자신도 스냅된 값으로 되돌려야 함 (안 하면 "3.2" 입력 후
-            # 실제 저장/슬라이더는 3.0으로 스냅되는데 입력창만 3.2로 남아 값이 어긋나 보임)
             st.session_state[f"wnum_{tk}"] = snapped
 
         def _on_wgt_sld_change(tk):
@@ -2616,7 +2614,7 @@ if is_active:
                         st.slider(
                             "", 0.0, 10.0,
                             value=st.session_state[f"wsld_{target_key}"],
-                            step=0.5, disabled=not is_on,
+                            step=0.1, disabled=not is_on,
                             format="%.1f",
                             key=f"wsld_{target_key}",
                             on_change=_on_wgt_sld_change,
@@ -2626,7 +2624,7 @@ if is_active:
                         st.number_input(
                             "", 0.0, 10.0,
                             value=st.session_state[f"wnum_{target_key}"],
-                            step=0.5,
+                            step=0.1,
                             format="%.1f",
                             disabled=not is_on,
                             key=f"wnum_{target_key}",
