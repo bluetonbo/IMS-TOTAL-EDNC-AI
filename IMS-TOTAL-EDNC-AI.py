@@ -1447,10 +1447,14 @@ with st.sidebar:
             else:
                 df_comb.dropna(subset=available_targets, inplace=True)
                 vars_list = [c for c in df_comb.columns if c not in TARGET_VARS.keys() and c != 'vars']
-                # [수정] 전부 N/A(결측)인 변수는 표시/계산에서 완전히 제외
-                # (예: PP_3~5, PT_3~5, HP_1~2, HR_1~4처럼 데이터 없는 컬럼은 슬라이더에도 안 뜨고
-                #  모델 학습(scaler.fit 등)에도 포함되지 않음)
-                vars_list = [c for c in vars_list if not df_comb[c].isna().all()]
+                # [수정] N/A(결측) 비율이 절반을 넘는 변수는 표시/계산에서 완전히 제외
+                # (완전 N/A뿐 아니라, 예를 들어 16행 중 15행이 N/A인 것처럼 "대부분 N/A"인
+                #  변수도 신뢰할 수 없는 데이터로 보고 슬라이더/모델 학습에서 빠지도록 함)
+                _n_rows = max(len(df_comb), 1)
+                vars_list = [c for c in vars_list if df_comb[c].isna().sum() / _n_rows <= 0.5]
+                # [추가] 절반 이하로 N/A가 남아있는 변수는 학습이 깨지지 않도록 중앙값으로 채움
+                if vars_list:
+                    df_comb[vars_list] = df_comb[vars_list].fillna(df_comb[vars_list].median())
 
                 if not vars_list or df_comb.empty:
                     st.sidebar.error("데이터에 분석 가능한 변수가 없거나 데이터가 비어 있습니다." if st.session_state.lang != "en" else "No analyzable variables found or data is empty.")
