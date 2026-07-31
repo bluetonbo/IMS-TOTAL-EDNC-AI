@@ -1566,10 +1566,10 @@ with st.sidebar:
                         'df_injection': df_comb,
                         'global_process_vars': vars_list,
                         'global_bounds': bounds_dict,
-                        'ui_display_vars': [
-                            c for c in df_comb.columns
-                            if c not in TARGET_VARS.keys() and c != 'vars'
-                        ],
+                        # [수정] N/A 50% 초과로 제외된 변수가 화면에 다시 나타나던 버그 수정
+                        # (기존에는 df_comb.columns 전체를 다시 긁어와서 필터가 무효화됨)
+                        # → 학습에 실제로 쓰인 vars_list와 항상 동일하게 맞춤
+                        'ui_display_vars': vars_list,
                         'prepared_db_file': None,
                         'data_changed_since_save': True,
                         'algo_mode_used': algo_mode_choice,    # [추가] 이번 학습에 사용된 모드('auto'/'light')
