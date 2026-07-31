@@ -2388,6 +2388,20 @@ if is_active:
                 else "#ffab00" if total_risk_percent < 70
                 else "#ff5252"
             )
+            # [추가] 가중치 없는 단순평균(개별 불량 위험도들의 산술평균)도 함께 표시.
+            # 가중치 설정에 따라 "가중평균" 종합 위험도가 크게 달라질 수 있어서,
+            # 서로 다른 가중치 설정으로 얻은 결과를 비교할 때 기준이 흔들릴 수 있음.
+            # 단순평균은 가중치와 무관하게 항상 같은 기준이라 설정 간 비교에 더 적합함.
+            _active_risks = [
+                r for k, r in st.session_state['last_defect_risks'].items()
+                if st.session_state['defect_switches'].get(k, True)
+            ]
+            _unweighted_pct = round((sum(_active_risks) / len(_active_risks)) * 100, 1) if _active_risks else None
+            _unweighted_note = (
+                (f"Unweighted avg (for comparing across weight settings): {_unweighted_pct}%"
+                 if st.session_state.lang == 'en' else f"단순평균 (가중치 설정 간 비교용): {_unweighted_pct}%")
+                if _unweighted_pct is not None else ""
+            )
             st.markdown(
                 f"""<div style='background-color:#12141d; padding:25px; border-radius:10px;
                     border:1px solid {total_color}44;'>
@@ -2395,6 +2409,7 @@ if is_active:
                     <h2 style='color:{total_color}; font-size:3rem; margin:0;'>
                         {total_risk_percent}<span style='font-size:1.2rem;'>%</span>
                     </h2>
+                    {f"<div style='color:#64748b;font-size:0.78rem;margin-top:4px;'>{_unweighted_note}</div>" if _unweighted_note else ""}
                 </div>""",
                 unsafe_allow_html=True
             )
@@ -2492,19 +2507,32 @@ if is_active:
                 _last_res_val = st.session_state.get('last_res_val')
                 _result_type = ("Optimization" if _last_opt_is_done else "Diagnosis") if _is_d_en else ("최적화 후" if _last_opt_is_done else "진단 후")
                 _total_risk_pct = round(_last_res_val * 100, 1) if _last_res_val is not None else 0.0
+                _d_active_risks = [
+                    r for k, r in _d_last_risks.items()
+                    if st.session_state['defect_switches'].get(k, True)
+                ]
+                _d_unweighted_pct = round((sum(_d_active_risks) / len(_d_active_risks)) * 100, 1) if _d_active_risks else 0.0
                 st.markdown(
                     f"<div style='background:#0a1628;border:1px solid #1e3a5f;border-radius:8px;"
                     f"padding:10px 14px;margin-bottom:10px;font-size:0.82rem;'>"
                     f"<span style='color:#94a3b8;'>"
                     + ("📊 Based on latest " + _result_type + " result. " if _is_d_en
                        else f"📊 최근 {_result_type} 결과 기준. ")
-                    + ("Total risk: " if _is_d_en else "종합 위험도: ")
+                    + ("Total risk (weighted): " if _is_d_en else "종합 위험도 (가중평균): ")
                     + f"<b style='color:#{'ff5252' if _total_risk_pct>=70 else 'ffab00' if _total_risk_pct>=30 else '10b981'}'>{_total_risk_pct}%</b>"
+                    + (f" &nbsp;|&nbsp; Unweighted avg: <b>{_d_unweighted_pct}%</b>" if _is_d_en
+                       else f" &nbsp;|&nbsp; 단순평균: <b>{_d_unweighted_pct}%</b>")
                     + ("</span><br><span style='color:#64748b;font-size:0.76rem;'>"
                        + ("ℹ️ Individual defect risk reflects each model's prediction probability. "
-                          "Changing weights affects only the total weighted risk — re-run diagnosis/optimization to recalculate." if _is_d_en
+                          "Changing weights affects only the weighted total — re-run diagnosis/optimization to recalculate. "
+                          "Because it's a weighted average, raising the weight on an already-risky defect can push the "
+                          "weighted total up even if that defect's own risk improved — compare individual defect risks "
+                          "or the unweighted average when comparing different weight settings, not the weighted total alone." if _is_d_en
                           else "ℹ️ 개별 불량 위험도는 각 모델의 예측 확률입니다. "
-                               "가중치 변경은 종합 위험도에만 반영되며, 새 위험도를 보려면 진단/최적화를 다시 실행하세요.")
+                               "가중치 변경은 가중평균 종합 위험도에만 반영되며, 새 위험도를 보려면 진단/최적화를 다시 실행하세요. "
+                               "가중평균 방식이라 이미 위험한 항목의 가중치를 올리면 그 항목 위험도 자체가 개선돼도 "
+                               "종합 수치는 오히려 올라갈 수 있습니다 — 서로 다른 가중치 설정을 비교할 때는 "
+                               "가중평균 하나만 보지 말고 개별 불량 위험도나 단순평균을 함께 비교하세요.")
                        + "</span></div>"),
                     unsafe_allow_html=True
                 )
@@ -2512,7 +2540,7 @@ if is_active:
                 for _d_tk in _d_models.keys():
                     _d_risk_v = _d_last_risks.get(_d_tk, 0)
                     _d_risk_pct = _d_risk_v * 100
-                    _d_rec_wgt = round(1.0 + (_d_risk_v / max(_d_last_risks.values(), default=1) * 9), 1)
+                    _d_rec_wgt = round((1.0 + (_d_risk_v / max(_d_last_risks.values(), default=1) * 9)) / 3, 1)
                     _d_cur_wgt = st.session_state['defect_weights'].get(_d_tk, 1.0)
                     _d_status = "🔴 High" if _d_risk_pct >= 70 else ("🟡 Med" if _d_risk_pct >= 30 else "🟢 Low")
                     # 가중치가 이미 추천값 이상이면 "현재 적용 중"으로 표시
@@ -2954,7 +2982,7 @@ if is_active:
                     for _tk2 in _models.keys():
                         _risk_v = _last_risks.get(_tk2, 0)
                         _risk_pct = _risk_v * 100
-                        _rec_wgt = round(1.0 + (_risk_v / max(_last_risks.values(), default=1) * 9), 1)
+                        _rec_wgt = round((1.0 + (_risk_v / max(_last_risks.values(), default=1) * 9)) / 3, 1)
                         _cur_wgt = st.session_state['defect_weights'].get(_tk2, 1.0)
                         _status = "🔴 High" if _risk_pct >= 70 else ("🟡 Med" if _risk_pct >= 30 else "🟢 Low")
                         _wgt_rows.append({
