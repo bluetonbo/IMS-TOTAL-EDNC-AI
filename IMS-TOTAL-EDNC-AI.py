@@ -2577,20 +2577,24 @@ if is_active:
                         st.session_state[f"wsld_{tk}"] = _v
                         st.session_state[f"wnum_{tk}"] = _v
 
-                _d_apply_btn_col, _d_apply_note_col = st.columns([1, 2.5])
+                _d_apply_btn_col, _d_apply_note_col = st.columns([1.1, 3], gap="small")
                 with _d_apply_btn_col:
                     _d_apply_clicked = st.button(
                         "Apply all recommended" if _is_d_en else "추천값 전체 적용",
                         key="btn_apply_all_rec_wgt"
                     )
                 with _d_apply_note_col:
+                    _d_apply_note_txt = (
+                        "The recommended value is a reference figure suggesting the risk level of each defect "
+                        "and which items need attention during optimization."
+                        if _is_d_en else
+                        "추천값은 각 불량 항목에 대한 위험도와 최적화 시 주의해야 할 항목을 제안하는 참고 수치입니다."
+                    )
                     st.markdown(
-                        "<div style='color:#64748b;font-size:0.8rem;padding-top:8px;'>"
-                        + ("The recommended value is a reference figure suggesting the risk level of each defect "
-                           "and which items need attention during optimization."
-                           if _is_d_en else
-                           "추천값은 각 불량 항목에 대한 위험도와 최적화 시 주의해야 할 항목을 제안하는 참고 수치입니다.")
-                        + "</div>",
+                        "<div style='display:flex;align-items:center;height:2.5rem;"
+                        "color:#FFFFFF;font-size:1rem;font-weight:700;'>"
+                        f"[{_d_apply_note_txt}]"
+                        "</div>",
                         unsafe_allow_html=True
                     )
                 if _d_apply_clicked:
