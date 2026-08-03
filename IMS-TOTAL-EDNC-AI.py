@@ -28,7 +28,10 @@ try:
 except ImportError:
     _HAS_LGBM = False
 
-GROQ_API_KEY = "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"
+# [수정] API 키를 코드에 하드코딩하면 GitHub 등에 노출되어 자동으로 무효화될 수 있음
+# (실제로 이 문제로 401 Invalid API Key 에러가 발생했음).
+# Streamlit Cloud의 Secrets(Settings > Secrets)에 GROQ_API_KEY를 등록해서 사용.
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
 # ── 임시 비번 Google Sheets 기반 영구 저장 함수 ──────────────────────
 # (기존 로컬 JSON 파일(temp_pwd_store.json) 방식은 Streamlit Cloud 재부팅 시
@@ -437,6 +440,14 @@ def run_blocking_task(task_key, run_fn, running_msg, done_msg=None, trigger=Fals
 
 
 def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko", is_optimized=True):
+    if not GROQ_API_KEY:
+        return (
+            "GROQ_API_KEY가 설정되지 않았습니다. Streamlit Cloud의 "
+            "Settings > Secrets에 GROQ_API_KEY를 등록해 주세요."
+            if lang != "en" else
+            "GROQ_API_KEY is not set. Please add GROQ_API_KEY under "
+            "Streamlit Cloud > Settings > Secrets."
+        )
     try:
         client = Groq(api_key=GROQ_API_KEY)
 
