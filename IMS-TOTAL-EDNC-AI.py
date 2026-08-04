@@ -1103,11 +1103,21 @@ st.markdown("""
         justify-content: space-between !important;
         transition: none !important;
     }
+    .st-key-lang_btn_main button * {
+        text-align: left !important;
+        width: auto !important;
+        flex: none !important;
+    }
     .st-key-lang_btn_main button::after {
-        content: "⌄" !important;
-        font-size: 0.9rem !important;
-        color: #fafafa !important;
-        line-height: 1 !important;
+        content: "" !important;
+        display: block !important;
+        width: 10px !important;
+        height: 10px !important;
+        flex-shrink: 0 !important;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fafafa' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
+        background-size: contain !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
     }
     .stDownloadButton>button {
         background: linear-gradient(180deg, #2e7d32 0%, #1b5e20 100%) !important;
