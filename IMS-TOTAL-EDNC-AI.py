@@ -762,14 +762,28 @@ if not st.session_state.authenticated:
             font-weight: 700 !important;
             border: 1px solid #1976d2 !important;
         }
-        /* [추가] 언어 선택 드롭다운(KO) 크기 고정: 40px x 36px */
+        /* [추가] 언어 선택 드롭다운(KO) 크기 고정: 최대너비 90px, 최소높이 30px, 글자 0.78rem */
+        .st-key-lang_sel_auth {
+            max-width: 90px !important;
+            flex: none !important;
+        }
+        .st-key-lang_sel_auth > div {
+            max-width: 90px !important;
+        }
         .st-key-lang_sel_auth [data-baseweb="select"] {
-            width: 40px !important;
-            min-width: 40px !important;
+            max-width: 90px !important;
+            flex: none !important;
         }
         .st-key-lang_sel_auth [data-baseweb="select"] > div {
-            height: 36px !important;
-            min-height: 36px !important;
+            max-width: 90px !important;
+            min-height: 30px !important;
+            font-size: 0.78rem !important;
+            flex: none !important;
+            padding-left: 8px !important;
+            padding-right: 4px !important;
+        }
+        .st-key-lang_sel_auth [data-baseweb="select"] svg {
+            margin-left: 0 !important;
         }
         /* [추가] 타이틀 색상 지정용 클래스 (h2의 전역 파란색 규칙보다 우선 적용) */
         h2 .title-blue { color: #00e5ff !important; }
@@ -1072,18 +1086,28 @@ st.markdown("""
     }
     /* [추가] 상단 언어 전환 버튼: 로그인 화면 드롭다운(KO)과 동일한 크기/스타일로 고정 */
     .st-key-lang_btn_main button {
-        width: 40px !important;
-        min-width: 40px !important;
-        height: 36px !important;
-        min-height: 36px !important;
-        padding: 0 4px !important;
+        max-width: 90px !important;
+        min-height: 30px !important;
+        padding: 0 10px !important;
         background: #262730 !important;
         border: 1px solid rgba(250,250,250,0.2) !important;
         border-radius: 8px !important;
         color: #fafafa !important;
         font-weight: 400 !important;
-        font-size: 0.65rem !important;
+        font-size: 0.78rem !important;
+        white-space: nowrap !important;
+        text-align: left !important;
+        position: relative !important;
         transition: none !important;
+    }
+    .st-key-lang_btn_main button::after {
+        content: "⌄" !important;
+        position: absolute !important;
+        right: 8px !important;
+        top: 50% !important;
+        transform: translateY(-52%) !important;
+        font-size: 0.9rem !important;
+        color: #fafafa !important;
     }
     .stDownloadButton>button {
         background: linear-gradient(180deg, #2e7d32 0%, #1b5e20 100%) !important;
@@ -1919,7 +1943,8 @@ with col_title:
         unsafe_allow_html=True
     )
 with col_lang_switch:
-    if st.button("KO / EN", key="lang_btn_main"):
+    _cur_lang_main = "KO" if st.session_state.lang == "ko" else "EN"
+    if st.button(_cur_lang_main, key="lang_btn_main"):
         st.session_state.lang = "ko" if st.session_state.lang == "en" else "en"
         st.rerun()
 
