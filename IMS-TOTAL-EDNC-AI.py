@@ -1094,42 +1094,38 @@ st.markdown("""
         padding: 0.7rem;
         transition: all 0.3s ease;
     }
-    /* [추가] 상단 언어 전환 버튼: 로그인 화면 드롭다운(KO)과 동일한 크기/스타일로 고정 */
-    .st-key-lang_btn_main button {
+    /* [추가] 상단 언어 선택 드롭다운: 로그인 화면 드롭다운(KO)과 완전히 동일한 크기/스타일 */
+    .st-key-lang_sel_main {
+        width: 90px !important;
+        max-width: 90px !important;
+        flex: none !important;
+    }
+    .st-key-lang_sel_main > div {
+        width: 90px !important;
+        max-width: 90px !important;
+    }
+    .st-key-lang_sel_main [data-baseweb="select"] {
+        width: 90px !important;
+        max-width: 90px !important;
+        flex: none !important;
+    }
+    .st-key-lang_sel_main [data-baseweb="select"] > div {
         box-sizing: border-box !important;
         width: 90px !important;
-        min-width: 90px !important;
         max-width: 90px !important;
         min-height: 30px !important;
         height: 30px !important;
-        padding: 0 8px 0 12px !important;
         background: #262730 !important;
         border: 1px solid rgba(250,250,250,0.2) !important;
         border-radius: 8px !important;
         color: #fafafa !important;
-        font-weight: 400 !important;
         font-size: 0.78rem !important;
-        white-space: nowrap !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: space-between !important;
-        transition: none !important;
-    }
-    .st-key-lang_btn_main button * {
-        text-align: left !important;
-        width: auto !important;
         flex: none !important;
+        padding-left: 12px !important;
+        padding-right: 8px !important;
     }
-    .st-key-lang_btn_main button::after {
-        content: "" !important;
-        display: block !important;
-        width: 10px !important;
-        height: 10px !important;
-        flex-shrink: 0 !important;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fafafa' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
-        background-size: contain !important;
-        background-repeat: no-repeat !important;
-        background-position: center !important;
+    .st-key-lang_sel_main [data-baseweb="select"] svg {
+        margin-left: 0 !important;
     }
     .stDownloadButton>button {
         background: linear-gradient(180deg, #2e7d32 0%, #1b5e20 100%) !important;
@@ -1965,9 +1961,13 @@ with col_title:
         unsafe_allow_html=True
     )
 with col_lang_switch:
+    _lang_opt_main = ["KO", "EN"]
     _cur_lang_main = "KO" if st.session_state.lang == "ko" else "EN"
-    if st.button(_cur_lang_main, key="lang_btn_main"):
-        st.session_state.lang = "ko" if st.session_state.lang == "en" else "en"
+    _sel_lang_main = st.selectbox("🌐", _lang_opt_main,
+        index=_lang_opt_main.index(_cur_lang_main),
+        label_visibility="collapsed", key="lang_sel_main")
+    if (_sel_lang_main == "KO") != (st.session_state.lang == "ko"):
+        st.session_state.lang = "ko" if _sel_lang_main == "KO" else "en"
         st.rerun()
 
 is_active = len(st.session_state.get('models', {})) > 0
