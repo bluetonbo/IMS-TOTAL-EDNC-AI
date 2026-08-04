@@ -762,25 +762,34 @@ if not st.session_state.authenticated:
             font-weight: 700 !important;
             border: 1px solid #1976d2 !important;
         }
-        /* [추가] 언어 선택 드롭다운(KO) 크기 고정: 최대너비 90px, 최소높이 30px, 글자 0.78rem */
+        /* [추가] 언어 선택 드롭다운(KO) 크기/스타일 고정: 메인 화면 버튼과 완전히 동일한 값 사용 */
         .st-key-lang_sel_auth {
+            width: 90px !important;
             max-width: 90px !important;
             flex: none !important;
         }
         .st-key-lang_sel_auth > div {
+            width: 90px !important;
             max-width: 90px !important;
         }
         .st-key-lang_sel_auth [data-baseweb="select"] {
+            width: 90px !important;
             max-width: 90px !important;
             flex: none !important;
         }
         .st-key-lang_sel_auth [data-baseweb="select"] > div {
+            width: 90px !important;
             max-width: 90px !important;
             min-height: 30px !important;
+            height: 30px !important;
+            background: #262730 !important;
+            border: 1px solid rgba(250,250,250,0.2) !important;
+            border-radius: 8px !important;
+            color: #fafafa !important;
             font-size: 0.78rem !important;
             flex: none !important;
-            padding-left: 8px !important;
-            padding-right: 4px !important;
+            padding-left: 12px !important;
+            padding-right: 8px !important;
         }
         .st-key-lang_sel_auth [data-baseweb="select"] svg {
             margin-left: 0 !important;
@@ -1090,6 +1099,7 @@ st.markdown("""
         min-width: 90px !important;
         max-width: 90px !important;
         min-height: 30px !important;
+        height: 30px !important;
         padding: 0 8px 0 12px !important;
         background: #262730 !important;
         border: 1px solid rgba(250,250,250,0.2) !important;
