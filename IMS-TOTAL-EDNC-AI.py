@@ -1086,9 +1086,11 @@ st.markdown("""
     }
     /* [추가] 상단 언어 전환 버튼: 로그인 화면 드롭다운(KO)과 동일한 크기/스타일로 고정 */
     .st-key-lang_btn_main button {
+        width: 90px !important;
+        min-width: 90px !important;
         max-width: 90px !important;
         min-height: 30px !important;
-        padding: 0 10px !important;
+        padding: 0 8px 0 12px !important;
         background: #262730 !important;
         border: 1px solid rgba(250,250,250,0.2) !important;
         border-radius: 8px !important;
@@ -1096,18 +1098,16 @@ st.markdown("""
         font-weight: 400 !important;
         font-size: 0.78rem !important;
         white-space: nowrap !important;
-        text-align: left !important;
-        position: relative !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
         transition: none !important;
     }
     .st-key-lang_btn_main button::after {
         content: "⌄" !important;
-        position: absolute !important;
-        right: 8px !important;
-        top: 50% !important;
-        transform: translateY(-52%) !important;
         font-size: 0.9rem !important;
         color: #fafafa !important;
+        line-height: 1 !important;
     }
     .stDownloadButton>button {
         background: linear-gradient(180deg, #2e7d32 0%, #1b5e20 100%) !important;
