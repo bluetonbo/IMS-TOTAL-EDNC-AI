@@ -778,6 +778,7 @@ if not st.session_state.authenticated:
             flex: none !important;
         }
         .st-key-lang_sel_auth [data-baseweb="select"] > div {
+            box-sizing: border-box !important;
             width: 90px !important;
             max-width: 90px !important;
             min-height: 30px !important;
@@ -1095,6 +1096,7 @@ st.markdown("""
     }
     /* [추가] 상단 언어 전환 버튼: 로그인 화면 드롭다운(KO)과 동일한 크기/스타일로 고정 */
     .st-key-lang_btn_main button {
+        box-sizing: border-box !important;
         width: 90px !important;
         min-width: 90px !important;
         max-width: 90px !important;
