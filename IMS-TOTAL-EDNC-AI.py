@@ -762,14 +762,14 @@ if not st.session_state.authenticated:
             font-weight: 700 !important;
             border: 1px solid #1976d2 !important;
         }
-        /* [추가] 언어 선택 드롭다운(KO) 크기 고정: 70px x 26px */
+        /* [추가] 언어 선택 드롭다운(KO) 크기 고정: 40px x 36px */
         .st-key-lang_sel_auth [data-baseweb="select"] {
-            width: 70px !important;
-            min-width: 70px !important;
+            width: 40px !important;
+            min-width: 40px !important;
         }
         .st-key-lang_sel_auth [data-baseweb="select"] > div {
-            height: 26px !important;
-            min-height: 26px !important;
+            height: 36px !important;
+            min-height: 36px !important;
         }
         /* [추가] 타이틀 색상 지정용 클래스 (h2의 전역 파란색 규칙보다 우선 적용) */
         h2 .title-blue { color: #00e5ff !important; }
@@ -1072,17 +1072,17 @@ st.markdown("""
     }
     /* [추가] 상단 언어 전환 버튼: 로그인 화면 드롭다운(KO)과 동일한 크기/스타일로 고정 */
     .st-key-lang_btn_main button {
-        width: 70px !important;
-        min-width: 70px !important;
-        height: 26px !important;
-        min-height: 26px !important;
-        padding: 0 6px !important;
+        width: 40px !important;
+        min-width: 40px !important;
+        height: 36px !important;
+        min-height: 36px !important;
+        padding: 0 4px !important;
         background: #262730 !important;
         border: 1px solid rgba(250,250,250,0.2) !important;
         border-radius: 8px !important;
         color: #fafafa !important;
         font-weight: 400 !important;
-        font-size: 0.78rem !important;
+        font-size: 0.65rem !important;
         transition: none !important;
     }
     .stDownloadButton>button {
