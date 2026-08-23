@@ -492,7 +492,7 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko
         # → 두 언어의 수치·결론·구조가 항상 100% 일치합니다.
         # ---------------------------------------------------------
         model_ko = genai.GenerativeModel(
-            "gemini-2.5-flash",
+            "gemini-3.6-flash",
             system_instruction=(
                 "당신은 한국어로만 대화하는 사출 성형 전문가입니다. 반드시 한국어로만 답변하세요. "
                 "영어를 절대 사용하지 마세요. 제공된 데이터에 없는 사실을 추측하거나 지어내지 마세요."
@@ -514,7 +514,7 @@ def generate_ai_report(defect_results, optimized_params, num_actions=3, lang="ko
 {report_ko}"""
 
         model_en = genai.GenerativeModel(
-            "gemini-2.5-flash",
+            "gemini-3.6-flash",
             system_instruction=(
                 "You are a professional technical translator. Translate the given Korean text "
                 "into English precisely and faithfully. Do not add, omit, reinterpret, or change "
