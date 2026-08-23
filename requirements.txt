@@ -3,9 +3,8 @@ pandas
 numpy
 scikit-learn
 scipy
-google-generativeai
-openpyxl
-groq
 xgboost
+lightgbm
+google-generativeai
 gspread
 google-auth
